@@ -536,3 +536,77 @@ Replaced the local stdio-based Alpha Vantage MCP integration with the remote str
 - All meaningful changes require team consensus
 - Document architectural decisions here
 - Keep history focused on work, decisions focused on direction
+
+---
+
+## Decision: TradingView Provider Plumbing + EXCHANGE-SYMBOL Format
+
+**Date:** 2026-03-26  
+**Author:** Rusty (Agent Dev)  
+**Status:** Implemented
+
+### Context
+Danny requested adding TradingView as a 4th MCP provider and changing the symbol file format from plain tickers (e.g., `AAPL`) to `EXCHANGE-SYMBOL` (e.g., `NASDAQ-AAPL`).
+
+### Decision
+
+#### TradingView Provider
+- Uses `mcp-server-fetch` via `uvx` — a generic web-fetch MCP tool, not a finance-specific one.
+- No API key required (unlike Massive or AlphaVantage).
+- The agent instructions (Linus's domain) will direct the LLM to fetch specific TradingView URLs for analysis.
+
+#### EXCHANGE-SYMBOL Parsing
+- Parsing uses `symbol.split('-', 1)` to extract exchange and ticker.
+- Backward-compatible: symbols without a dash still work (exchange = "", ticker = full string).
+- Decision logs and matching now use the ticker portion only, keeping output clean.
+
+### Alternatives Considered
+- Could have used a dedicated TradingView MCP server — none exists as a mature package. The generic fetch server is the right abstraction since Linus's instructions control what URLs are fetched.
+- Could have used a tuple/dict format for symbols — plain text `EXCHANGE-SYMBOL` is simpler to maintain and edit by hand.
+
+### Impact
+- **Linus must create**: `tv_covered_call_instructions.py` and `tv_cash_secured_put_instructions.py` before the tradingview provider can be activated.
+- Existing providers (massive, alphavantage, yahoo) are unaffected.
+- Symbol files changed — any external tooling reading these files needs to handle the new format.
+
+---
+
+## Decision: TradingView Instruction File Design
+
+**Date:** 2026-03-26  
+**Author:** Linus (Quant Dev)  
+**Status:** Implemented  
+**Files:** `src/tv_covered_call_instructions.py`, `src/tv_cash_secured_put_instructions.py`
+
+### Context
+Added TradingView as a third data provider option (alongside Yahoo Finance and Alpha Vantage). TradingView uses the Fetch MCP server (`mcp-server-fetch`) with a single `fetch` tool to retrieve TradingView web pages as markdown.
+
+### Key Decisions
+
+#### 1. Pre-analyzed signals paradigm
+TradingView provides Buy/Sell/Neutral signals already computed for oscillators and MAs. Instructions tell the agent to work from these analyzed signals rather than calculating indicators from raw data. This is a fundamental difference from YF/AV instructions.
+
+#### 2. Pivot points as primary support/resistance
+Instead of scanning historical price data for support/resistance (which TradingView fetch doesn't provide as OHLCV), instructions use Classic pivot points S1-S3 (support) and R1-R3 (resistance) for strike selection.
+
+#### 3. IV proxy strategy
+Since TradingView's options chain is JS-rendered and may not return IV data via fetch, instructions define beta + volatility % from the main page as IV proxy. High beta + high volatility % = likely elevated IV.
+
+#### 4. Graceful options chain degradation
+Instructions include explicit fallback protocol when options chain data is empty: use technical signals for direction, pivot points for strike levels, beta/volatility for IV proxy.
+
+### Impact on Team
+- **Rusty**: Will need to add TradingView as a provider option in config.yaml and implement lazy imports for `TV_COVERED_CALL_INSTRUCTIONS` / `TV_CASH_SECURED_PUT_INSTRUCTIONS` in agent files (same pattern as AV).
+- **Config**: New provider name `"tradingview"` with MCP tool `"mcp-server-fetch"`.
+- **No breaking changes**: Existing YF and AV instruction files are untouched.
+
+### Trade-offs
+
+| Pro | Con |
+|-----|-----|
+| FREE — no API key | Options chain likely incomplete |
+| Pre-calculated technicals | No explicit IV, no Greeks |
+| Pivot points built-in | No historical OHLCV data |
+| Single-page fundamentals | No balance sheet / cash flow details |
+| Fewest fetch calls (4 URLs) | No news feed / sentiment scores |
+

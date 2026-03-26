@@ -162,3 +162,52 @@ ROLE, STRATEGY OVERVIEW, ANALYSIS FRAMEWORK, and DECISION CRITERIA sections are 
 **Coordination with Rusty:**
 Rusty implemented lazy imports in agent files that conditionally load AV instructions only when alphavantage provider is selected. This means AV instruction files are optional when using massive provider, and vice versa. No hard dependencies between the work.
 
+### 2026-07-25: Created TradingView MCP Instruction Files
+
+Created two new instruction files for the TradingView data provider, using the Fetch MCP server (`mcp-server-fetch`) to retrieve TradingView pages as markdown.
+
+**Files Created:**
+- `src/tv_covered_call_instructions.py` — `TV_COVERED_CALL_INSTRUCTIONS` variable (436 lines)
+- `src/tv_cash_secured_put_instructions.py` — `TV_CASH_SECURED_PUT_INSTRUCTIONS` variable (612 lines)
+
+**TradingView Provider Architecture:**
+- Single tool: `fetch(url, max_length, start_index, raw)` from mcp-server-fetch
+- 4 TradingView URLs per symbol: main page, technicals, forecast, options-chain
+- Symbol format: EXCHANGE-SYMBOL (e.g., NYSE-AA) → URLs like `https://www.tradingview.com/symbols/NYSE-AA/`
+- Content returned as markdown (HTML converted)
+
+**Key Design Decisions:**
+- **Pre-analyzed signals paradigm**: Unlike YF/AV which require manual indicator calculation, TradingView provides pre-calculated RSI, MACD, Stochastic, CCI, ADX, all MAs with Buy/Sell/Neutral signals. Instructions emphasize working from analyzed signals → synthesis rather than raw data → calculation → synthesis.
+- **Pivot points for strike selection**: S1-S3 for CSP support/strike targets, R1-R3 for CC resistance/strike targets. Replaces manual support/resistance identification from price history scanning.
+- **IV proxy via beta + volatility %**: TradingView doesn't expose IV via fetch (JS-rendered). Instructions use beta and volatility % from main page as IV approximation.
+- **Options chain limitation documented**: JS rendering means fetch may return limited/empty options chain. Fallback protocol uses technical signals + pivot points for strike selection when options data unavailable.
+- **Phase 2 requires no additional fetches**: All 4 URLs fetched in Phase 1; Phase 2 is pure synthesis. Minimizes fetch calls per analysis run.
+
+**Strategy Logic Parity:**
+ROLE, STRATEGY OVERVIEW, ANALYSIS FRAMEWORK, DECISION CRITERIA, OUTPUT FORMAT, CLEAR SELL SIGNAL, RISK MANAGEMENT, and RESPONSE STRUCTURE sections are identical to Yahoo Finance versions. Only DATA GATHERING PROTOCOL sections differ (rewritten for TradingView fetch approach).
+
+**Advantages Documented:**
+- FREE — no API key needed
+- Pre-calculated technicals with Buy/Sell/Neutral signals (unique among all providers)
+- Pivot points (Classic, Fibonacci, Camarilla, Woodie, DM) with R1-R3, S1-S3
+- Single-page fundamentals (P/E, EPS, revenue, beta, earnings date, analyst targets)
+- Analyst consensus on forecast page
+
+**Limitations Documented:**
+- Options chain likely incomplete (JS-rendered)
+- No explicit IV data, no Greeks, no historical OHLCV
+- No balance sheet, income statement details, or cash flow
+- No news feed, insider trades, or institutional ownership
+- Market hours dependency for some indicator values
+
+**Verification:**
+- ✅ Python import test passed for both modules
+- ✅ Variable names match expected pattern (TV_COVERED_CALL_INSTRUCTIONS, TV_CASH_SECURED_PUT_INSTRUCTIONS)
+- ✅ ANALYSIS FRAMEWORK through RESPONSE STRUCTURE: exact match with YF versions
+- ✅ Only DATA GATHERING PROTOCOL differs (intentional)
+- ✅ Line counts within target range (436 CC, 612 CSP)
+
+
+**Status:** ✅ Completed 2026-03-26T22:40:00Z  
+**Team:** Coordination with Rusty (provider plumbing), Coordinator (README), Danny (feature request)
+

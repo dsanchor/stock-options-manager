@@ -265,3 +265,20 @@ This implementation establishes a reusable pattern for supporting multiple MCP t
 
 This pattern ensures single codebase can serve multiple transport backends without coupling agent logic to transport details. Future providers (Polygon, IEX, etc.) can use existing stdio or HTTP infra without architectural changes.
 
+### 2025-07-25: Added TradingView as 4th MCP Provider + EXCHANGE-SYMBOL Format
+
+**Changes Made:**
+- **config.yaml**: Added `tradingview` provider using `mcp-server-fetch` (uvx). No API key needed — it's a generic fetch server. Updated provider comment to list all four options.
+- **covered_call_agent.py / cash_secured_put_agent.py**: Added `elif provider == "tradingview"` branches with lazy imports for `TV_COVERED_CALL_INSTRUCTIONS` and `TV_CASH_SECURED_PUT_INSTRUCTIONS` (instruction files to be created by Linus).
+- **agent_runner.py**: Updated `run_agent()` message template to parse `EXCHANGE-SYMBOL` format (e.g., "NYSE-AA" → exchange="NYSE", ticker="AA"). Updated `_extract_decision_line()` to match on ticker only (not the full exchange-symbol string).
+- **Symbol files**: Changed `covered_call_symbols.txt` and `cash_secured_put_symbols.txt` to use `EXCHANGE-SYMBOL` format with header comment.
+
+**Key Design Decisions:**
+- The exchange-symbol parsing uses `split('-', 1)` to handle edge cases (symbols with hyphens after the exchange prefix).
+- Backward-compatible: if a symbol has no dash, exchange defaults to empty string and ticker is the full symbol.
+- `_extract_decision_line` now uses ticker for matching so decision logs show clean ticker names, not "NASDAQ-AAPL".
+
+
+**Status:** ✅ Completed 2026-03-26T22:40:00Z  
+**Team:** Coordination with Linus (instruction files), Coordinator (README), Danny (feature request)
+
