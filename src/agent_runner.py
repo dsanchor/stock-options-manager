@@ -1,9 +1,9 @@
 import asyncio
 import os
 from typing import List
-from agent_framework import Agent, MCPStdioTool
-from agent_framework.foundry import FoundryChatClient
-from azure.identity import AzureCliCredential
+from agent_framework import ChatAgent, MCPStdioTool
+from agent_framework.azure import AzureOpenAIChatClient
+from azure.identity import AzureCliCredential, get_bearer_token_provider
 
 from .logger import read_decision_log, append_decision, append_signal
 
@@ -21,10 +21,14 @@ class AgentRunner:
             mcp_args: Arguments for MCP command (e.g., ["iflow-mcp_ferdousbhai_investor-agent"])
             mcp_description: Description of the MCP server capabilities
         """
-        self.client = FoundryChatClient(
-            project_endpoint=project_endpoint,
-            model=model,
-            credential=AzureCliCredential(),
+        credential = AzureCliCredential()
+        token_provider = get_bearer_token_provider(
+            credential, "https://cognitiveservices.azure.com/.default"
+        )
+        self.client = AzureOpenAIChatClient(
+            endpoint=project_endpoint,
+            deployment_name=model,
+            ad_token_provider=token_provider,
         )
         self.mcp_command = mcp_command
         self.mcp_args = mcp_args
@@ -95,8 +99,8 @@ class AgentRunner:
         
         # Use context manager for proper MCP cleanup
         async with mcp_tool:
-            agent = Agent(
-                client=self.client,
+            agent = ChatAgent(
+                chat_client=self.client,
                 name=name,
                 instructions=instructions,
                 tools=mcp_tool,
@@ -116,7 +120,7 @@ Analyze {symbol} NOW. Use the available MCP tools to gather current data. Provid
 
                     # Run agent (async)
                     result = await agent.run(message)
-                    response_text = str(result)
+                    response_text = result.text or str(result)
                     
                     print(f"Response: {response_text[:200]}...")
                     
