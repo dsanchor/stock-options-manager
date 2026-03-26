@@ -128,3 +128,37 @@ Successfully completed comprehensive rewrite of both covered call and cash-secur
 - SQL examples verified for correctness
 - Discovery-first pattern documented with extensive examples
 - Next steps: Integration testing with actual MCP server and agent execution
+
+### 2026-07-25: Created Alpha Vantage MCP Instruction Files
+
+Created two new instruction files as alternatives to the Massive.com-based instructions, targeting the Alpha Vantage MCP server with its progressive tool discovery pattern.
+
+**Files Created:**
+- `src/av_covered_call_instructions.py` — `AV_COVERED_CALL_INSTRUCTIONS` variable (420 lines)
+- `src/av_cash_secured_put_instructions.py` — `AV_CASH_SECURED_PUT_INSTRUCTIONS` variable (569 lines)
+
+**Alpha Vantage Tool Discovery Pattern:**
+- 3 meta-tools: `TOOL_LIST` → `TOOL_GET(tool_name)` → `TOOL_CALL(tool_name, arguments)`
+- No SQL / `store_as` / `query_data` — all data returned as JSON, agent analyzes directly
+- Progressive discovery: confirm tool availability before calling
+
+**Key Differences from Massive.com Instructions:**
+- **Advantages leveraged**: Built-in RSI, BBANDS, SMA, EMA, MACD (no manual calculation); EARNINGS tool with beat/miss data; numerical NEWS_SENTIMENT scores; analyst ratings in COMPANY_OVERVIEW; dividends in COMPANY_OVERVIEW
+- **Limitations documented**: No SQL joins, no built-in Black-Scholes Greeks (must estimate manually), no `store_as` pattern, no time-series analyst ratings, no insider/institutional endpoints
+- **Adaptations**: Fear/Greed proxy via aggregated NEWS_SENTIMENT scores; retail interest via article frequency; insider activity via news keyword search; support identification by scanning JSON price data directly
+
+**Strategy Logic Parity:**
+ROLE, STRATEGY OVERVIEW, ANALYSIS FRAMEWORK, and DECISION CRITERIA sections are identical to Massive versions. Only DATA GATHERING PROTOCOL sections differ (rewritten for AV tools). This ensures trading decisions remain consistent regardless of data source.
+
+**Verification:**
+- ✅ Python import test passed for both modules
+- ✅ ROLE + STRATEGY OVERVIEW sections: exact match with Massive versions
+- ✅ ANALYSIS FRAMEWORK through decision criteria: exact match
+- ✅ Only DATA GATHERING PROTOCOL differs (intentional)
+- ✅ Phase 1/2/3 structure preserved for consistency with Massive instructions
+
+**Design Decision**: Kept Phase 1/2/3 structure identical to Massive instructions for consistency, even though AV's tool interface is fundamentally different (meta-tool discovery vs. endpoint search). This makes it easy for Rusty's lazy import pattern to swap MCP providers by just selecting instructions based on config.
+
+**Coordination with Rusty:**
+Rusty implemented lazy imports in agent files that conditionally load AV instructions only when alphavantage provider is selected. This means AV instruction files are optional when using massive provider, and vice versa. No hard dependencies between the work.
+

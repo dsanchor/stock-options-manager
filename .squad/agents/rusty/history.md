@@ -193,3 +193,23 @@ All migration tasks completed successfully. Rusty handled SDK migration (agent-f
 - Instructions: Linus's discovery-first workflow ready for agent testing
 - Next steps: Basher (integration testing), Danny (end-to-end validation)
 
+### 2026-07-25: Added Multi-Provider MCP Support (massive + alphavantage)
+
+Implemented configurable MCP provider switching so users can choose between `massive` and `alphavantage` via `config.yaml`.
+
+**Key Changes:**
+- **config.yaml**: Restructured `mcp` section with `provider` selector and per-provider sub-sections (`massive`, `alphavantage`), each with `command`, `args`, `description`, `env_key`
+- **src/config.py**: Added `mcp_provider`, `mcp_env_key` properties and `_mcp_provider_config` helper. Added `_prune_inactive_providers()` to strip inactive provider sections before env var substitution (prevents crash when inactive provider's env var isn't set). Updated `_validate()` to check provider sub-section exists with required fields. Clear error message if old config format is detected.
+- **src/agent_runner.py**: Made `name` and env key check dynamic via new `mcp_provider` and `mcp_env_key` constructor params (no more hardcoded "massive" / "MASSIVE_API_KEY")
+- **src/covered_call_agent.py + cash_secured_put_agent.py**: Added provider-based instruction selection — lazy-imports AlphaVantage instructions only when `alphavantage` provider is selected (so missing AV instruction files don't break massive mode)
+- **src/main.py**: Passes `mcp_provider` and `mcp_env_key` through to AgentRunner constructor
+
+**Design Decision — Lazy Import for AV Instructions:**
+Used conditional lazy `from .av_*_instructions import ...` inside agent files so that the AlphaVantage instruction modules (being created by Linus) don't need to exist for massive provider to work. This avoids a hard dependency on files that don't exist yet.
+
+**Design Decision — Prune Before Substitute:**
+The `_prune_inactive_providers()` method removes inactive provider config sections before `_substitute_env_vars()` runs. This prevents `${ALPHAVANTAGE_API_KEY}` from crashing config load when the user only has `MASSIVE_API_KEY` set (and vice versa).
+
+**Coordination with Linus:**
+Linus created Alpha Vantage instruction files in parallel. The lazy import pattern allows both provider modes to work independently. When user selects alphavantage in config, agents load AV instructions; when selecting massive, agents load Massive instructions.
+

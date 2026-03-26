@@ -289,6 +289,223 @@ Migrated both covered call and cash-secured put agent instructions from the old 
 
 ---
 
+### 5. Multi-Provider MCP Configuration with Provider Switching
+**Date:** 2026-07-25  
+**Decider:** Rusty (Agent Dev)  
+**Status:** ✅ Completed  
+**Impact:** Team-wide (enables flexible provider selection without code changes)
+
+#### Context
+
+The project initially deployed with `mcp_massive`, then added Alpha Vantage as alternative. Rather than maintaining two separate codebases, we needed a single config-driven approach to switch providers at runtime without code changes.
+
+#### Decision
+
+Implemented provider-based MCP configuration structure:
+```yaml
+mcp:
+  provider: "massive"  # or "alphavantage"
+  massive:
+    command: "mcp_massive"
+    env_key: "MASSIVE_API_KEY"
+  alphavantage:
+    command: "mcp_alphavantage"
+    env_key: "ALPHAVANTAGE_API_KEY"
+```
+
+#### Key Design Decisions
+
+1. **Prune inactive providers before env var substitution**
+   - Removes non-active provider config sections before resolving environment variables
+   - Prevents crash when user only sets API key for selected provider
+   - Rationale: User shouldn't need to set all provider keys, only the active one
+
+2. **Lazy instruction imports in agent files**
+   - Instruction imports happen inside `async def run()` method, not at module level
+   - Conditional logic selects instructions based on `config.mcp_provider`
+   - Rationale: AV instruction files don't need to exist for Massive mode
+
+3. **Dynamic MCP tool naming and env key**
+   - `AgentRunner` takes `mcp_name` and `env_key` as constructor parameters
+   - No more hardcoded "massive" or "MASSIVE_API_KEY"
+   - Rationale: Single runner implementation serves all providers
+
+#### Implementation
+
+**Files Updated:**
+1. `config.yaml` — Provider selector + per-provider sections
+2. `src/config.py` — `mcp_provider`, `mcp_env_key` properties; `_prune_inactive_providers()`
+3. `src/agent_runner.py` — Dynamic `mcp_name` and `env_key` parameters
+4. `src/covered_call_agent.py` — Lazy provider-specific instruction import
+5. `src/cash_secured_put_agent.py` — Lazy provider-specific instruction import
+6. `src/main.py` — Pass provider settings to AgentRunner
+
+#### Trade-offs
+
+| Aspect | Pro | Con |
+|--------|-----|-----|
+| Single config file | Easy to switch providers | Can't use multiple providers in one run |
+| Lazy imports | AV files optional for Massive mode | Slightly more complex agent logic |
+| Prune before substitute | No required env vars for inactive providers | Inactive config discarded at load time |
+
+#### Consequences
+
+**Positive:**
+- Users can select provider in config without code changes
+- Supports future providers without architectural changes
+- Instruction sets can evolve independently per provider
+
+**Neutral:**
+- Requires one env var per active provider (similar to before)
+- Runtime cost of lazy imports negligible
+
+#### Verification
+
+- ✅ Config loads correctly with provider selector
+- ✅ Pruning removes inactive sections before env var resolution
+- ✅ Lazy imports only trigger on provider match
+- ✅ AgentRunner accepts dynamic names and env keys
+- ✅ Old config format detected with helpful error message
+
+---
+
+### 6. Alpha Vantage MCP Instruction Files (Strategy Logic Parity)
+**Date:** 2026-07-25  
+**Author:** Linus (Quant Dev)  
+**Status:** ✅ Completed  
+**Files:** `src/av_covered_call_instructions.py` (420 lines), `src/av_cash_secured_put_instructions.py` (569 lines)  
+**Impact:** Team-wide (enables trading with Alpha Vantage data source)
+
+#### Context
+
+The project established comprehensive trading instructions for Massive.com MCP server. When Alpha Vantage was selected as alternative provider, we needed parallel instructions that:
+- Keep all strategy logic and decision criteria identical
+- Only adapt the data gathering protocol to AV's 3-meta-tool architecture (TOOL_LIST → TOOL_GET → TOOL_CALL)
+- Leverage AV's unique advantages (built-in technicals, earnings data, sentiment scores)
+
+#### Decision
+
+Created parallel instruction files maintaining 100% strategy parity while optimizing data gathering for AV's tool interface.
+
+#### Key Design Decisions
+
+1. **Preserve all decision criteria identically**
+   - Same SELL thresholds (IV Rank, delta ranges, DTE windows)
+   - Same strike selection rules (CC: above support, CSP: at/below support)
+   - Same output format for signal parsing
+   - Rationale: Trading logic should not vary by data source
+
+2. **Phase 1/2/3 structure preserved**
+   - Covered Call: 3 phases (core data → context → analytics)
+   - Cash-Secured Put: 3 phases (extended core → comprehensive context → analytics)
+   - Rationale: Consistent naming makes provider swapping intuitive
+
+3. **Leverage AV advantages for efficiency**
+   - **Built-in technicals:** RSI, Bollinger Bands, MACD, SMA, EMA (vs. Massive's manual calculation)
+   - **Earnings calendar:** Dedicated EARNINGS tool with beat/miss (vs. Massive's news parsing)
+   - **Sentiment scores:** Numerical NEWS_SENTIMENT (vs. Massive's text analysis)
+   - **Analyst ratings:** Direct COMPANY_OVERVIEW field (vs. Massive's fundamentals search)
+   - Rationale: Use native capabilities for clarity and accuracy
+
+4. **Manual adaptation for missing capabilities**
+   - **Greeks:** No built-in Black-Scholes; instructions provide estimation guidance
+   - **Joins:** No SQL; agent must synthesize across JSON objects
+   - **Insider data:** No dedicated endpoint; instructions guide keyword search in news
+   - Rationale: Incomplete data requires conservative criteria, not failure
+
+#### Technical Implementation
+
+**Covered Call Instructions (420 lines):**
+```
+ROLE + STRATEGY OVERVIEW
+  ↓
+ANALYSIS FRAMEWORK (Greeks, DTE, earnings)
+  ↓
+DATA GATHERING (TOOL_LIST → TOOL_GET → TOOL_CALL progression)
+  Phase 1: Ticker, price history, options chain, dividends
+  Phase 2: Fundamentals, analyst ratings, news/sentiment, technicals
+  Phase 3: IV analysis, Greeks estimation, return calcs
+  ↓
+DECISION CRITERIA + OUTPUT
+```
+
+**Cash-Secured Put Instructions (569 lines):**
+```
+ROLE + STRATEGY OVERVIEW
+  ↓
+ANALYSIS FRAMEWORK (quality gate, DTE, earnings, technicals)
+  ↓
+DATA GATHERING (TOOL_LIST → TOOL_GET → TOOL_CALL progression)
+  Phase 1: Extended core (price for support ID, dual financials, earnings history)
+  Phase 2: Comprehensive (analyst, news, sentiment scores, fundamental quality)
+  Phase 3: Strike selection (support via JSON scan, oversold via BBANDS/RSI, Greeks estimation)
+  ↓
+DECISION CRITERIA + OUTPUT
+```
+
+#### Trade-offs
+
+| Aspect | Massive.com | Alpha Vantage |
+|--------|-------------|---------------|
+| Tool discovery | `search_endpoints` keyword search | `TOOL_LIST` + `TOOL_GET` discovery |
+| Data aggregation | SQL JOINs across stored tables | Manual JSON synthesis |
+| Technical indicators | Manual via `apply=["sma"]` | Built-in RSI, BBANDS, MACD, EMA |
+| Greeks calculation | `apply=["bs_delta", "bs_theta"]` | Manual estimation guidance |
+| Earnings data | Parse from news | Direct EARNINGS tool |
+| Sentiment | Text-based analysis | Numerical NEWS_SENTIMENT scores |
+| Institutional holders | Fundamentals or search | COMPANY_OVERVIEW consensus |
+
+**Advantages AV:**
+- Simpler tool interface (no SQL needed)
+- More reliable earnings data
+- Numerical sentiment is faster to analyze
+- Built-in technicals reduce LLM hallucination
+
+**Advantages Massive:**
+- SQL composability for complex analysis
+- Black-Scholes Greeks built-in
+- More granular data control
+
+#### Consequences
+
+**Positive:**
+- Single strategy logic supports both providers
+- Provider swapping is config change only
+- AV's built-in capabilities often provide faster/more accurate analysis
+- Instruction maintenance: bug fixes apply to both via common sections
+
+**Neutral:**
+- AV requires more manual Greeks estimation (acceptable given other advantages)
+- More instruction files to maintain (offset by exact copying of common sections)
+
+**Mitigations:**
+- Common sections (ROLE, STRATEGY, CRITERIA) identical between versions
+- Extensive examples in DATA GATHERING for AV's tool discovery pattern
+- Conservative criteria documented for missing signals
+
+#### Verification
+
+- ✅ Both files valid Python (import test passed)
+- ✅ ROLE + STRATEGY OVERVIEW: exact match across versions
+- ✅ ANALYSIS FRAMEWORK through DECISION CRITERIA: exact match
+- ✅ Only DATA GATHERING PROTOCOL differs (intentional, AV-specific)
+- ✅ All tool names verified against AV documentation
+- ✅ Phase structure mirrors Massive version
+
+#### Coordination
+
+**Depends on:** Rusty's lazy import pattern (selection happens in agent files)  
+**Enables:** Agent provider swapping via `config.yaml` change only  
+**Documentation:** Common decision rationale in decisions.md; provider-specific details in each instruction file
+
+#### Next Steps
+
+1. **Integration testing:** Verify AV TOOL_LIST discovery works with actual API
+2. **Signal quality comparison:** Compare decision logic output vs. Massive
+3. **Provider migration:** Document process for users switching providers
+
+---
+
 ## Governance
 
 - All meaningful changes require team consensus
