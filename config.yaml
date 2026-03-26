@@ -4,11 +4,11 @@ azure:
 
 mcp:
   command: "uvx"
-  args: ["iflow-mcp_ferdousbhai_investor-agent"]
+  args: ["--from", "iflow-mcp-ferdousbhai-investor-agent", "investor-agent"]
   description: "Financial analysis MCP server for stock data, options chains, and market sentiment"
 
 scheduler:
-  interval_minutes: 60  # How often to run the agents
+  interval_minutes: 1  # How often to run the agents
 
 covered_call:
   symbols_file: "data/covered_call_symbols.txt"
