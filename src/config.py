@@ -91,11 +91,11 @@ class Config:
         provider_cfg = mcp[provider]
         transport = provider_cfg.get('transport', 'stdio')
         if transport == 'streamable_http':
-            for field in ('url', 'env_key'):
+            for field in ('url',):
                 if field not in provider_cfg:
                     raise ValueError(f"Missing required config: mcp.{provider}.{field}")
         else:
-            for field in ('command', 'args', 'env_key'):
+            for field in ('command', 'args'):
                 if field not in provider_cfg:
                     raise ValueError(f"Missing required config: mcp.{provider}.{field}")
     
@@ -141,8 +141,8 @@ class Config:
     
     @property
     def mcp_env_key(self) -> str:
-        """Return the environment variable name required by the selected MCP provider."""
-        return self._mcp_provider_config['env_key']
+        """Return the environment variable name required by the selected MCP provider, or empty string if none needed."""
+        return self._mcp_provider_config.get('env_key', '')
     
     @property
     def interval_minutes(self) -> int:
