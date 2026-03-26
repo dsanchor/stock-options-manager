@@ -104,21 +104,23 @@ For each analysis of a symbol, use the Playwright MCP server tools to navigate T
 
 4. **Options Chain Data for Puts** — Navigate to options chain page
    - Call: `browser_navigate(url="https://www.tradingview.com/symbols/{full_symbol}/options-chain/")`
-   - Because Playwright renders JavaScript, the full interactive options chain table is now available
-   - Extract: Puts (primary focus), calls, strikes, expiration dates, IV, bid/ask, volume, open interest, Greeks if shown
-   - **Interacting with the options chain:**
-     - Use `browser_click(element, ref)` to select different expiration dates from the expiration dropdown/tabs
-     - Use `browser_click(element, ref)` to expand sections or toggle between puts/calls views
-     - After clicking, use `browser_wait(time=2000)` then `browser_snapshot()` to read the updated data
-     - Target expirations in the 30-45 DTE sweet spot for cash-secured puts
-   - **Put-Specific Data Extraction:**
+   - **CRITICAL: The options chain page loads with ALL expirations COLLAPSED.** The initial snapshot only shows expiration date rows (e.g., "March 27 1 DTE", "April 24 29 DTE") with NO strike/premium/IV data. You MUST expand an expiration to see actual options data.
+   - **Step-by-step to get options data:**
+     a. After `browser_navigate`, scan the snapshot for expiration rows. Look for rows like `"April 24 29 DTE AAPL"` — each shows the date and days to expiry (DTE).
+     b. **Find the best expiration for cash-secured puts:** Target 30-45 DTE. Look for the row with DTE closest to 30-45 days. If no expiration falls in 30-45 DTE, the nearest expiration above 20 DTE is acceptable.
+     c. **If no expirations with 30+ DTE are visible**, the default filter may be "Next 30 days". Look for the button labeled `"Expiration Next 30 days"` in the snapshot and click it with `browser_click` to change it to a wider range (e.g., "Next 60 days" or "All"), then `browser_snapshot()` to see more expirations.
+     d. **Click on the target expiration row** to expand it: Use `browser_click(element="<expiration row text>", ref=<ref>)` on the row element (e.g., the row with text "April 24 29 DTE AAPL").
+     e. **Wait and re-read:** Call `browser_wait(time=2000)` then `browser_snapshot()` to get the expanded data.
+     f. **After expanding**, the snapshot will contain a full table with columns: Strike, Bid, Ask, LTP, IV, Delta, Gamma, Theta, Vega, Volume, Open Interest, and more — for BOTH calls and puts at each strike.
+     g. **To see more strikes:** If the view shows "±4 strikes" (only ~8 strikes around ATM), look for the strikes-range button and click it to expand to more strikes.
+   - **Put-Specific Data Extraction (from expanded table):**
      - Identify put strikes at or below support levels (S1-S3 from technicals)
      - Compare bid/ask spreads for liquidity assessment
      - Note IV for each strike — elevated put IV = fear premium = favorable for sellers
      - Check volume and open interest for adequate liquidity (OI > 100 preferred)
      - Look for put/call IV skew — elevated put skew = excellent for put sellers
-   - **If options chain data is partially loaded or missing specific fields:**
-     - Use `browser_wait(time=3000)` then `browser_snapshot()` to allow more time for data to render
+     - Read delta values — target delta between -0.20 and -0.35 for conservative CSP
+   - **If options chain data is still limited after expanding** (e.g., stock has low options volume or data is behind a login wall):
      - Fall back to **pivot points** as strike selection guides for support levels:
        - S1 = nearest support → conservative strike (set strike at or below S1)
        - S2 = deeper support → moderate strike

@@ -80,13 +80,18 @@ For each analysis of a symbol, use the Playwright MCP server tools to navigate T
 
 4. **Options Chain Data** — Navigate to options chain page
    - Call: `browser_navigate(url="https://www.tradingview.com/symbols/{full_symbol}/options-chain/")`
-   - The options chain is fully rendered by Playwright's browser engine — all JS-driven tables, dropdowns, and interactive elements are available
-   - Extract: Calls, puts, strikes, expiration dates, IV, bid/ask, volume, open interest, Greeks if shown
-   - **If the page needs time to load dynamic data**: Use `browser_wait(time=2000)` then `browser_snapshot()` to re-read the page
-   - **To select different expiration dates**: Look for expiration date selectors in the snapshot and use `browser_click(element, ref)` to switch between them
-   - **To expand sections or load more strikes**: Use `browser_click` on any toggle/expand elements visible in the snapshot
+   - **CRITICAL: The options chain page loads with ALL expirations COLLAPSED.** The initial snapshot only shows expiration date rows (e.g., "March 27 1 DTE", "April 24 29 DTE") with NO strike/premium/IV data. You MUST expand an expiration to see actual options data.
+   - **Step-by-step to get options data:**
+     a. After `browser_navigate`, scan the snapshot for expiration rows. Look for rows like `"April 24 29 DTE AAPL"` — each shows the date and days to expiry (DTE).
+     b. **Find the best expiration for covered calls:** Target 30-45 DTE. Look for the row with DTE closest to 30-45 days. If no expiration falls in 30-45 DTE, the nearest expiration above 20 DTE is acceptable.
+     c. **If no expirations with 30+ DTE are visible**, the default filter may be "Next 30 days". Look for the button labeled `"Expiration Next 30 days"` in the snapshot and click it with `browser_click` to change it to a wider range (e.g., "Next 60 days" or "All"), then `browser_snapshot()` to see more expirations.
+     d. **Click on the target expiration row** to expand it: Use `browser_click(element="<expiration row text>", ref=<ref>)` on the row element (e.g., the row with text "April 24 29 DTE AAPL").
+     e. **Wait and re-read:** Call `browser_wait(time=2000)` then `browser_snapshot()` to get the expanded data.
+     f. **After expanding**, the snapshot will contain a full table with columns: Strike, Bid, Ask, LTP, IV, Delta, Gamma, Theta, Vega, Volume, Open Interest, and more — for BOTH calls and puts at each strike.
+     g. **To see more strikes:** If the view shows "±4 strikes" (only ~8 strikes around ATM), look for the strikes-range button and click it to expand to more strikes.
+   - Extract: Calls (primary focus), strikes, IV, bid/ask, volume, open interest, delta, gamma, theta if shown
    - Use the options data for strike selection, IV assessment, premium evaluation, and Greeks analysis
-   - **If options chain data is still limited** (e.g., stock has low options volume or data is behind a login wall):
+   - **If options chain data is still limited after expanding** (e.g., stock has low options volume or data is behind a login wall):
      - Fall back to **technical analysis signals** (Strong Buy/Sell/Neutral) as the primary trading signal
      - Use **pivot points** as strike selection guides:
        - R1 = conservative strike target (nearest resistance)
