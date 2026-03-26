@@ -1,0 +1,21 @@
+azure:
+  project_endpoint: "${AZURE_AI_PROJECT_ENDPOINT}"
+  model_deployment: "gpt-5.4-mini"
+
+mcp:
+  command: "uvx"
+  args: ["iflow-mcp_ferdousbhai_investor-agent"]
+  description: "Financial analysis MCP server for stock data, options chains, and market sentiment"
+
+scheduler:
+  interval_minutes: 60  # How often to run the agents
+
+covered_call:
+  symbols_file: "data/covered_call_symbols.txt"
+  decision_log: "logs/covered_call_decisions.log"
+  signal_log: "logs/covered_call_signals.log"
+
+cash_secured_put:
+  symbols_file: "data/cash_secured_put_symbols.txt"
+  decision_log: "logs/cash_secured_put_decisions.log"
+  signal_log: "logs/cash_secured_put_signals.log"

@@ -1,0 +1,131 @@
+# Rusty — History
+
+## Project Context
+- **Project:** options-agent
+- **User:** dsanchor
+- **Stack:** Python, Microsoft Agent Framework, Azure Foundry (gpt-5.4-mini)
+- **MCP:** iflow-mcp_ferdousbhai_investor-agent 1.6.3
+- **Description:** Two periodic trading agents for covered call and cash-secured put sell signals. Local runtime, configurable polling, stock symbols from files, decision logs, sell signal alerts.
+
+## Learnings
+
+### 2024-03-26: Built Complete Options Agent Python Project
+
+Successfully implemented the complete Python project for periodic options trading agents using Azure AI Agents Framework and MCP integration.
+
+**Key Technical Decisions:**
+- **Azure AI Agents SDK**: Used `azure-ai-projects` and `azure-ai-agents` for agent creation and management
+- **MCP Integration**: Implemented `McpTool` from Azure AI Agents SDK to connect to local MCP server at `http://localhost:8000/sse`
+- **Scheduling**: Used Python `schedule` library for simple, readable periodic execution
+- **Configuration**: Implemented YAML-based config with environment variable substitution (${VAR_NAME} pattern)
+- **Logging Strategy**: Dual-log approach with decision logs (all decisions) and signal logs (SELL signals only)
+- **Error Handling**: Wrapped each symbol analysis in try-except to prevent one failure from blocking others
+
+**Architecture Implemented:**
+```
+config.yaml → Config → AgentRunner → [CoveredCallAgent, CashSecuredPutAgent]
+                          ↓
+                     Azure AI Client + MCP Tool
+                          ↓
+                     Per-symbol analysis with context from previous decisions
+```
+
+**Key Features:**
+1. **Context Continuity**: Each analysis includes last 20 decision log entries so agents learn from previous decisions
+2. **Clean Agent Lifecycle**: Create agent per symbol, run analysis, cleanup agent to avoid resource leaks
+3. **Signal Detection**: Parse responses for SELL keywords and log to separate signal file for easy review
+4. **Graceful Shutdown**: Signal handlers for Ctrl+C and SIGTERM
+5. **Immediate + Scheduled**: Runs immediately on startup, then continues on schedule
+
+**Coordination with Linus:**
+- Did NOT create instruction files - Linus wrote `covered_call_instructions.py` and `cash_secured_put_instructions.py` in parallel
+- My code imports from these files: `from covered_call_instructions import COVERED_CALL_INSTRUCTIONS`
+- This parallel work pattern worked well - no blocking or conflicts
+
+**Files Created:**
+- `config.yaml` - Configuration with Azure endpoint, MCP settings, scheduling
+- `src/config.py` - Config loader with env var substitution and validation
+- `src/logger.py` - Log management utilities (read/append decision logs and signal logs)
+- `src/agent_runner.py` - Core agent execution logic with Azure AI Agents SDK
+- `src/covered_call_agent.py` - Covered call agent wrapper
+- `src/cash_secured_put_agent.py` - Cash secured put agent wrapper
+- `src/main.py` - Entry point with scheduler and graceful shutdown
+- `data/covered_call_symbols.txt` - Sample symbols (AAPL, MSFT)
+- `data/cash_secured_put_symbols.txt` - Sample symbols (NVDA, AMZN)
+- `requirements.txt` - Python dependencies
+- `README.md` - Comprehensive setup and usage documentation
+
+**Implementation Patterns Worth Reusing:**
+1. **Env Var Substitution in Config**: Recursive pattern matching for ${VAR_NAME} with validation
+2. **MCP Tool Setup**: Simple pattern with `McpTool(server_label, server_url)` then pass `tools=mcp_tool.definitions` and `tool_resources=mcp_tool.resources`
+3. **Run Polling Loop**: Check status every 2 seconds, handle COMPLETED/FAILED/CANCELLED/EXPIRED states
+4. **Log Context Pattern**: Read last N log entries and include in agent prompt for continuity
+5. **Signal Handler Pattern**: Set `self.running = False` on SIGINT/SIGTERM for clean shutdown
+
+**Potential Issues to Watch:**
+- MCP server must be running before starting the agents
+- Azure authentication via `DefaultAzureCredential()` requires `az login`
+- The `AZURE_AI_PROJECT_ENDPOINT` environment variable must be set
+- Agent cleanup (`agents_client.agents.delete`) is important to avoid resource accumulation
+
+### 2024-03-26: SDK Migration from azure-ai-agents to agent-framework
+
+**CRITICAL FIX**: Discovered the initial implementation used the WRONG SDK. The correct SDK is `agent-framework` from https://github.com/microsoft/agent-framework (installed via `pip install agent-framework --pre`), NOT `azure-ai-agents`.
+
+**Migration Completed:**
+- Rewrote all agent execution code to use `agent-framework`
+- Changed from HTTP-based MCP server to stdio-based subprocess launch
+- Made agent execution async (using `asyncio.run()` bridge from sync scheduler)
+- Updated all imports to use correct package names
+
+**Key API Changes:**
+```python
+# OLD (azure-ai-agents - INCORRECT)
+from azure.ai.agents import AIAgentsClient
+from azure.ai.agents.models import McpTool, RunStatus
+
+# NEW (agent-framework - CORRECT)
+from agent_framework import Agent, MCPStdioTool
+from agent_framework.foundry import FoundryChatClient
+from azure.identity import AzureCliCredential
+```
+
+**MCP Integration Changes:**
+- **OLD**: HTTP-based MCP server (`server_url: "http://localhost:8000/sse"`)
+- **NEW**: Stdio-based subprocess (`command: "uvx"`, `args: ["iflow-mcp_ferdousbhai_investor-agent"]`)
+- **Benefit**: No separate server startup needed - MCP server launches automatically as subprocess
+
+**Execution Pattern Changes:**
+- **OLD**: Synchronous with thread/run polling, manual agent create/delete
+- **NEW**: Async with `await agent.run()`, automatic cleanup via context managers
+- **Pattern**: `async with mcp_tool:` → `agent = Agent(...)` → `await agent.run(message)`
+
+**Files Rewritten:**
+1. `requirements.txt` - Replaced `azure-ai-agents` with `agent-framework[foundry]`
+2. `config.yaml` - Replaced `server_label`/`server_url` with `command`/`args`/`description`
+3. `src/config.py` - Updated validation and properties for new MCP config structure
+4. `src/agent_runner.py` - Complete rewrite using Agent Framework async patterns
+5. `src/covered_call_agent.py` - Made async (`async def`, `await runner.run_agent()`)
+6. `src/cash_secured_put_agent.py` - Made async (`async def`, `await runner.run_agent()`)
+7. `src/main.py` - Added `asyncio.run()` bridge to call async agent functions from sync scheduler
+8. `README.md` - Updated to reflect correct SDK, stdio MCP pattern, and new setup steps
+
+**Key Technical Learnings:**
+1. `FoundryChatClient` uses `AzureCliCredential()` (not `DefaultAzureCredential`)
+2. `MCPStdioTool` launches subprocess with `approval_mode="never_require"` for auto-approval
+3. Must use `async with mcp_tool:` context manager for proper cleanup
+4. `agent.run()` returns result object, convert to string with `str(result)`
+5. Scheduler stays sync (schedule library), agents are async - bridge with `asyncio.run()`
+
+**Why This Matters:**
+- The `azure-ai-agents` SDK is NOT the official Microsoft agent framework
+- `agent-framework` is the correct, actively maintained SDK from Microsoft
+- Stdio MCP is cleaner than HTTP - no separate server management
+- Async patterns are more efficient and align with modern Python practices
+
+**Verification Needed:**
+- Test that MCP server launches correctly via uvx subprocess
+- Confirm agent responses are parsed and logged properly
+- Verify async execution doesn't break scheduler loop
+- Check that MCP tool context manager cleanup works correctly
+

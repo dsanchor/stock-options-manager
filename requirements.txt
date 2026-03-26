@@ -1,0 +1,5 @@
+agent-framework[foundry]
+azure-identity>=1.15.0
+pyyaml>=6.0
+schedule>=1.2.0
+python-dotenv>=1.0.0
