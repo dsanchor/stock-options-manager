@@ -3,7 +3,7 @@ import os
 from typing import List
 from agent_framework import ChatAgent, MCPStdioTool
 from agent_framework.azure import AzureOpenAIChatClient
-from azure.identity import AzureCliCredential, get_bearer_token_provider
+from azure.identity import AzureCliCredential
 
 from .logger import read_decision_log, append_decision, append_signal
 
@@ -22,13 +22,10 @@ class AgentRunner:
             mcp_description: Description of the MCP server capabilities
         """
         credential = AzureCliCredential()
-        token_provider = get_bearer_token_provider(
-            credential, "https://cognitiveservices.azure.com/.default"
-        )
         self.client = AzureOpenAIChatClient(
             endpoint=project_endpoint,
             deployment_name=model,
-            ad_token_provider=token_provider,
+            credential=credential,
         )
         self.mcp_command = mcp_command
         self.mcp_args = mcp_args
