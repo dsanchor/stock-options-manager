@@ -3,9 +3,17 @@ azure:
   model_deployment: "gpt-5.4-mini"
 
 mcp:
-  command: "uvx"
-  args: ["--from", "iflow-mcp-ferdousbhai-investor-agent", "investor-agent"]
-  description: "Financial analysis MCP server for stock data, options chains, and market sentiment"
+  provider: "alphavantage"  # Options: "massive" or "alphavantage"
+  massive:
+    command: "mcp_massive"
+    args: []
+    description: "Massive.com financial data API for stocks, options, forex, crypto market data with SQL querying and Black-Scholes Greeks"
+    env_key: "MASSIVE_API_KEY"
+  alphavantage:
+    transport: "streamable_http"
+    url: "https://mcp.alphavantage.co/mcp?apikey=${ALPHAVANTAGE_API_KEY}"
+    description: "Alpha Vantage remote MCP server for stocks, options, forex, crypto, and technical indicators"
+    env_key: "ALPHAVANTAGE_API_KEY"
 
 scheduler:
   interval_minutes: 1  # How often to run the agents

@@ -210,6 +210,21 @@ Used conditional lazy `from .av_*_instructions import ...` inside agent files so
 **Design Decision — Prune Before Substitute:**
 The `_prune_inactive_providers()` method removes inactive provider config sections before `_substitute_env_vars()` runs. This prevents `${ALPHAVANTAGE_API_KEY}` from crashing config load when the user only has `MASSIVE_API_KEY` set (and vice versa).
 
+### 2026-07-25: Migrated Alpha Vantage to Remote MCP (Streamable HTTP)
+
+Replaced the local stdio-based Alpha Vantage MCP server (`uvx marketdata-mcp-server`) with the remote hosted server at `mcp.alphavantage.co` using streamable HTTP transport.
+
+**Key Changes:**
+- **config.yaml**: AV section now uses `transport: "streamable_http"` and `url` instead of `command`/`args`. No local install needed.
+- **src/config.py**: Added `mcp_transport` and `mcp_url` properties. Validation now branches: stdio providers require `command`+`args`, HTTP providers require `url`. `mcp_command`/`mcp_args` use `.get()` with defaults for safety.
+- **src/agent_runner.py**: Imports `MCPStreamableHTTPTool` alongside `MCPStdioTool`. Creates the right tool class based on `self.mcp_transport`. API key env check runs for both transport types.
+- **src/main.py**: Passes `mcp_transport` and `mcp_url` to AgentRunner constructor.
+- **README.md**: Updated AV setup to note it's a remote server (no local install). Updated config example, troubleshooting, and technical details.
+
+**Backward Compatibility:**
+- Massive.com config unchanged — `transport` defaults to `"stdio"` when absent.
+- All existing properties (`mcp_command`, `mcp_args`) still work for stdio providers.
+
 **Coordination with Linus:**
 Linus created Alpha Vantage instruction files in parallel. The lazy import pattern allows both provider modes to work independently. When user selects alphavantage in config, agents load AV instructions; when selecting massive, agents load Massive instructions.
 

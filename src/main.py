@@ -31,6 +31,10 @@ class OptionsAgentScheduler:
             mcp_command=self.config.mcp_command,
             mcp_args=self.config.mcp_args,
             mcp_description=self.config.mcp_description,
+            mcp_provider=self.config.mcp_provider,
+            mcp_env_key=self.config.mcp_env_key,
+            mcp_transport=self.config.mcp_transport,
+            mcp_url=self.config.mcp_url,
         )
         
         print(f"Scheduler configured: Running every {self.config.interval_minutes} minutes")
