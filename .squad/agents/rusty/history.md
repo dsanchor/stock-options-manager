@@ -228,3 +228,40 @@ Replaced the local stdio-based Alpha Vantage MCP server (`uvx marketdata-mcp-ser
 **Coordination with Linus:**
 Linus created Alpha Vantage instruction files in parallel. The lazy import pattern allows both provider modes to work independently. When user selects alphavantage in config, agents load AV instructions; when selecting massive, agents load Massive instructions.
 
+**Pattern: Transport Abstraction at Config Level**
+
+This implementation establishes a reusable pattern for supporting multiple MCP transport types:
+
+1. **Config Schema:** Separate transport sub-sections with transport-specific fields:
+   ```yaml
+   mcp:
+     provider: "alphavantage"
+     alphavantage:
+       transport: "streamable_http"
+       url: "https://mcp.alphavantage.co/mcp?apikey=${ALPHAVANTAGE_API_KEY}"
+     massive:
+       transport: "stdio"
+       command: "mcp_massive"
+       args: []
+   ```
+
+2. **Validation:** `_validate()` checks required fields per transport type (not mixed validation):
+   - `stdio`: `command` + `args` mandatory
+   - `streamable_http`: `url` mandatory
+
+3. **Dispatch:** `agent_runner.py` instantiates correct tool class:
+   ```python
+   if self.mcp_transport == "streamable_http":
+       tool = MCPStreamableHTTPTool(self.mcp_provider, url=self.mcp_url, ...)
+   else:
+       tool = MCPStdioTool(self.mcp_provider, command=self.mcp_command, args=self.mcp_args, ...)
+   ```
+
+4. **Extensibility:** Adding a new transport (e.g., WebSocket) requires:
+   - New `MCPWebSocketTool` in agent_framework
+   - New transport sub-section in config with `url` field
+   - One new `elif` branch in agent_runner dispatch
+   - No agent changes needed (transport is abstracted)
+
+This pattern ensures single codebase can serve multiple transport backends without coupling agent logic to transport details. Future providers (Polygon, IEX, etc.) can use existing stdio or HTTP infra without architectural changes.
+
