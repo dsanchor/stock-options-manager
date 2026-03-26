@@ -17,7 +17,7 @@ Python development, Microsoft Agent Framework implementation, scheduling, config
 
 ## Tech Context
 - **Stack:** Python, Microsoft Agent Framework, Azure Foundry (gpt-5.4-mini)
-- **MCP Data Source:** iflow-mcp_ferdousbhai_investor-agent 1.6.3
+- **MCP Data Source:** mcp_massive 0.8.7 (Massive.com)
 - **Runtime:** Local periodic execution
 - **Key Libraries:** azure-ai-projects, azure-ai-agents, mcp
 

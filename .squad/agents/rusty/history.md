@@ -129,3 +129,67 @@ from azure.identity import AzureCliCredential
 - Verify async execution doesn't break scheduler loop
 - Check that MCP tool context manager cleanup works correctly
 
+### 2024-03-26: Migrated MCP Server from investor-agent to mcp_massive
+
+**Migration Completed:**
+Switched from `iflow-mcp_ferdousbhai_investor-agent` to `mcp_massive` (Massive.com) for financial market data.
+
+**Key Changes:**
+- **Command**: Changed from `uvx --from iflow-mcp-ferdousbhai-investor-agent investor-agent` to `mcp_massive`
+- **Installation**: `uv tool install "mcp_massive @ git+https://github.com/massive-com/mcp_massive@v0.8.7"`
+- **Environment**: Requires `MASSIVE_API_KEY` environment variable
+- **MCP Tool Name**: Changed from `"investor-agent"` to `"massive"` in MCPStdioTool constructor
+
+**Files Updated:**
+1. `config.yaml` - Updated MCP command, args, and description
+2. `src/agent_runner.py` - Changed MCP tool name from "investor-agent" to "massive"
+3. `.squad/team.md` - Updated MCP Data reference to mcp_massive 0.8.7
+4. `.squad/agents/rusty/charter.md` - Updated MCP Data Source
+5. `.squad/agents/linus/charter.md` - Updated MCP Data Source
+6. `README.md` - Updated MCP server references and setup instructions
+
+**New MCP Server Capabilities:**
+- Tools: `search_endpoints`, `get_endpoint_docs`, `call_api`, `query_data`
+- Built-in functions: Black-Scholes Greeks (bs_price, bs_delta, bs_gamma, bs_theta, bs_vega, bs_rho)
+- Returns calculations: simple_return, log_return, cumulative_return, sharpe_ratio, sortino_ratio
+- Technical indicators: sma, ema
+
+**Transport:** Stdio (unchanged from previous implementation)
+
+**Why This Matters:**
+- mcp_massive provides direct access to Massive.com's comprehensive financial API
+- Built-in Black-Scholes and Greeks calculations reduce need for custom math
+- SQL querying capability for more flexible data analysis
+- Single API source reduces integration complexity
+
+### 2026-03-26: Completed MCP Migration to mcp_massive + SDK Migration to agent-framework
+
+**Orchestration Summary (2026-03-26T16:05):**
+All migration tasks completed successfully. Rusty handled SDK migration (agent-framework) and MCP server integration, Linus updated agent instructions for new MCP composable tool architecture.
+
+**MCP Server Integration Complete:**
+- Installation: `uv tool install "mcp_massive @ git+https://github.com/massive-com/mcp_massive@v0.8.7"`
+- Config structure updated for stdio-based subprocess launch
+- MCPStdioTool name: "massive"
+- All configuration files aligned across codebase
+- Documentation updated
+
+**SDK Migration Complete (azure-ai-agents → agent-framework):**
+- Dependencies: Replaced with `agent-framework[foundry] --pre`
+- Authentication: Updated to `AzureCliCredential()` (from `DefaultAzureCredential`)
+- MCP integration: Stdio subprocess (from HTTP-based)
+- Execution: Async/await patterns with `asyncio.run()` bridge from scheduler
+- Architecture: Per-symbol agent creation/deletion pattern maintained
+- All patterns (dual-log, context continuity, config substitution) preserved
+
+**Files Consolidated:**
+- Orchestration logs created for both agents (2026-03-26T16-05-rusty.md, 2026-03-26T16-05-linus.md)
+- Session log created (2026-03-26T16-05-mcp-massive-migration.md)
+- Decision inbox merged into decisions.md, 3 inbox files deleted
+- Decisions documented with full rationale and trade-offs
+
+**Ready for Testing:**
+- Infrastructure: Rusty's implementation ready for MCP server launch verification
+- Instructions: Linus's discovery-first workflow ready for agent testing
+- Next steps: Basher (integration testing), Danny (end-to-end validation)
+

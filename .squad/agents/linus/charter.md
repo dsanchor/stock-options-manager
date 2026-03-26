@@ -18,7 +18,7 @@ Options trading strategy logic, MCP data integration, signal generation.
 
 ## Tech Context
 - **Stack:** Python, Microsoft Agent Framework, Azure Foundry (gpt-5.4-mini)
-- **MCP Data Source:** iflow-mcp_ferdousbhai_investor-agent 1.6.3
+- **MCP Data Source:** mcp_massive 0.8.7 (Massive.com)
 - **Key Data:** Stock prices, options chains, implied volatility, Greeks, earnings dates, support/resistance levels
 
 ## Domain Knowledge

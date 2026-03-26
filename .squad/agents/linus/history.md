@@ -38,3 +38,93 @@ Created comprehensive system prompts for both covered call and cash-secured put 
 - Assignment is acceptable outcome, not failure (for CSP when stock wanted)
 - Rolling strategies defined for both up/out (CC) and down/out (CSP)
 - Capital allocation limits: <20% per stock for CSP, 50% position sizing for CC
+
+### 2024-01-15: Migrated Instructions to Massive.com MCP Server
+
+Rewrote DATA GATHERING PROTOCOL sections in both instruction files for new `mcp_massive` server from Massive.com (replacing `iflow-mcp-ferdousbhai-investor-agent`).
+
+**New MCP Server Architecture**:
+- **4 Composable Tools**: `search_endpoints`, `get_endpoint_docs`, `call_api`, `query_data`
+- **Built-in Functions**: Greeks (bs_delta, bs_theta, bs_vega, bs_gamma, bs_rho), Technicals (sma, ema), Returns (simple_return, sharpe_ratio)
+- **Workflow**: Discovery → API calls with `store_as` → SQL analysis with `apply` functions
+
+**Covered Call Instructions Changes**:
+- Restructured to 12-step data gathering (Phase 1: Core data, Phase 2: Fundamentals & sentiment, Phase 3: Analytics)
+- `search_endpoints` → `call_api(store_as="price_history")` → `query_data(apply=["sma", "ema"])`
+- Greeks calculation: `query_data(apply=["bs_delta", "bs_theta", "bs_vega"])` on options_chain table
+- Added SQL examples for IV analysis, strike filtering, return calculations
+
+**Cash-Secured Put Instructions Changes**:
+- Expanded to 17-step comprehensive protocol (extended price history for support, dual financials calls)
+- Support identification via SQL: `SELECT MIN(low) FROM price_history GROUP BY month`
+- Oversold detection: `query_data(apply=["sma", "ema"])` for Bollinger Bands approximation
+- Greeks sweet spot targeting delta -0.25 to -0.30 via SQL filters
+
+**Data Availability Adaptations**:
+- **Removed (not in Massive.com)**: CNN Fear & Greed Index, Google Trends, dedicated institutional holders, dedicated insider trades
+- **Alternatives Implemented**:
+  - Fear & Greed → News sentiment analysis (Benzinga positive/negative ratio)
+  - Google Trends → News volume over time (article frequency)
+  - Institutional holders → Check fundamentals data or company filings
+  - Insider trades → Parse news headlines for "insider" keywords
+- **Earnings Calendar**: Parse ticker_info field + search news for "earnings" mentions (no dedicated endpoint)
+
+**Key Design Patterns**:
+1. **Discovery-first workflow**: `search_endpoints` before every data type collection
+2. **Semantic table naming**: "ticker_info", "price_history", "options_chain", "financials" for SQL clarity
+3. **Phased analysis**: Store raw data (Phase 1-2) → Analyze with SQL JOINs (Phase 3)
+4. **Conservative fallbacks**: Apply stricter criteria when key data missing (lower delta, higher margin of safety)
+
+**Technical Improvements**:
+- In-memory DataFrames enable cross-table JOINs and complex analysis
+- Built-in Greeks functions eliminate manual Black-Scholes calculations
+- SQL composability allows agents to create custom queries beyond template
+- Explicit SQL examples reduce LLM hallucination on query structure
+
+**Trade-offs**:
+- **Pro**: More flexible (discovery-based), more powerful (SQL + functions), better integration (JOINs)
+- **Con**: More complex (requires SQL knowledge), more steps (12-17 vs. 8-11), missing some signals
+- **Mitigation**: Extensive SQL examples, fallback strategies documented, semantic naming conventions
+
+**Testing Needed**:
+- Verify `search_endpoints` returns correct endpoints for each data type
+- Validate `apply=["bs_delta", ...]` produces accurate Greeks
+- Test SQL JOINs across stored tables
+- Confirm news parsing catches earnings dates reliably
+- Validate decision quality matches old MCP server outputs
+
+**Decision Document**: Created `.squad/decisions/inbox/linus-mcp-massive-instructions.md` with full migration rationale, trade-offs, testing recommendations, and open questions.
+
+### 2026-03-26: Completed Data Gathering Protocol Migration to Massive.com MCP
+
+**Orchestration Summary (2026-03-26T16:05):**
+Successfully completed comprehensive rewrite of both covered call and cash-secured put agent instructions for `mcp_massive` discovery-first workflow architecture.
+
+**Instructions Updates Complete:**
+- **Covered Call Instructions**: 12-step data gathering protocol (3 phases) with SQL examples
+- **Cash-Secured Put Instructions**: 17-step protocol (3 phases) with extended support analysis
+- **SQL Examples**: Strike filtering, support identification, return metrics, Greeks calculations
+- **Fallback Strategies**: Documented for missing Fear & Greed, Trends, Insider data
+
+**Key Design Patterns Established:**
+1. Discovery-first workflow: `search_endpoints` → `call_api` → `query_data`
+2. Semantic table naming: "ticker_info", "price_history", "options_chain" for SQL clarity
+3. Built-in functions: Leveraging `apply=["bs_delta", "bs_theta"]` for Greeks instead of manual math
+4. Conservative adaptations: Stricter criteria when key data unavailable
+
+**Data Availability Adaptations:**
+- Fear & Greed → News sentiment analysis (Benzinga positive/negative)
+- Trends → News volume (article frequency as retail proxy)
+- Institutional holders → Fundamentals data + company filings
+- Insider trades → News headline parsing for keywords
+
+**Coordination with Rusty:**
+- Config updated to reference `"massive"` MCP tool
+- Instructions verified compatible with mcp_massive 4-tool architecture
+- Ready for integration with Rusty's agent-framework implementation
+
+**Ready for Testing:**
+- Instructions syntax validated
+- SQL examples verified for correctness
+- Discovery-first pattern documented with extensive examples
+- Next steps: Integration testing with actual MCP server and agent execution

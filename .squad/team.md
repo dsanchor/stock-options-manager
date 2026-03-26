@@ -25,5 +25,5 @@
 - **User:** dsanchor
 - **Created:** 2026-03-26
 - **Stack:** Python, Microsoft Agent Framework, Azure Foundry (gpt-5.4-mini)
-- **MCP Data:** iflow-mcp_ferdousbhai_investor-agent 1.6.3
+- **MCP Data:** mcp_massive 0.8.7 (Massive.com)
 - **Description:** Two periodic trading agents — one for covered call sell signals, one for cash-secured put sell signals. Local runtime, configurable polling interval, stock symbols from files, decision logs with context carry-forward, separate sell signal log.
