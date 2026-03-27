@@ -5,7 +5,7 @@ import os
 import re
 import traceback
 from typing import Dict, List, Optional, Tuple
-from agent_framework import AgentThread, ChatAgent, MCPStdioTool, MCPStreamableHTTPTool
+from agent_framework import ChatAgent, MCPStdioTool, MCPStreamableHTTPTool
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
@@ -320,10 +320,8 @@ Previous decisions for context:
 
 Analyze {ticker} NOW. Use the available MCP tools to gather current data. The full exchange-symbol is {symbol}. Provide your decision in the required output format."""
 
-                    # Fresh thread per symbol so prior tool-call responses
-                    # don't accumulate and overflow the model's context window.
-                    thread = AgentThread()
-                    result = await agent.run(message, thread=thread)
+                    # Run agent (async)
+                    result = await agent.run(message)
                     response_text = result.text or str(result)
 
                     logger.info(
