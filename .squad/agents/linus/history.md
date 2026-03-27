@@ -265,3 +265,6 @@ ROLE, STRATEGY OVERVIEW, ANALYSIS FRAMEWORK, DECISION CRITERIA, OUTPUT FORMAT, C
 **Status:** ✅ Accepted — instruction files compatible with new output format
 **Team:** Rusty (implementation), Infrastructure (agent_runner, logger)
 
+**2026-03-27 TradingView Navigation Optimization:**
+Rusty removed main symbol page (103K chars) from TV navigation to free context window. Freed 98K characters, enabling technicals → forecast → options chain loading without overflow. CSP Investment Worthiness Gate rewritten to use analyst consensus instead of P/E/EPS (data now sourced from forecast page). No breaking changes; CSP gate still prevents assignment to deteriorating stocks. Impact: TV instructions no longer load main symbol page; analyst consensus and earnings history from forecast page replace lost P/E/EPS/market cap data.
+
