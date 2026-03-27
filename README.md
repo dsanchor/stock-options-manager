@@ -119,7 +119,7 @@ All output is [JSON Lines](https://jsonlines.org/) — one JSON object per line.
 ## Prerequisites
 
 1. **Python 3.12+**
-2. **Azure AI Foundry Project** with access to `gpt-5.4-mini` model
+2. **Azure AI Foundry Project** with access to a model deployment (e.g. `gpt-5.1`, `gpt-5.4-mini`)
 3. **Azure Authentication** - Ensure you're logged in via Azure CLI:
    ```bash
    az login
@@ -165,6 +165,7 @@ Set your Azure AI Project endpoint:
 
 ```bash
 export AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com"
+export MODEL_DEPLOYMENT="gpt-5.1"  # or "gpt-5.4-mini"
 
 # No API key needed — TradingView data is free via Playwright browser automation
 ```
@@ -218,7 +219,7 @@ Edit `config.yaml` to customize:
 ```yaml
 azure:
   project_endpoint: "${AZURE_AI_PROJECT_ENDPOINT}"
-  model_deployment: "gpt-5.1"          # Model deployment name
+  model_deployment: "${MODEL_DEPLOYMENT}"  # From env variable (e.g. gpt-5.1, gpt-5.4-mini)
 
 mcp:
   command: "podman"                     # or "docker"

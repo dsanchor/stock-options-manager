@@ -711,6 +711,7 @@ async def chat_api(request: Request):
         return _re.sub(r'\$\{([^}]+)\}', _repl, s)
 
     endpoint = _resolve_env(raw_endpoint)
+    model = _resolve_env(model)
     if not endpoint:
         return JSONResponse({"error": "Azure endpoint not configured"}, status_code=500)
 
