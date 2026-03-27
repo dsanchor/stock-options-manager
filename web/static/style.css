@@ -174,7 +174,16 @@ tbody td.num { text-align: right; font-family: var(--font-mono); }
 
 .badge-risk-low { background: rgba(34,197,94,0.2); color: var(--accent-green); }
 .badge-risk-medium, .badge-risk-moderate { background: rgba(245,158,11,0.2); color: var(--accent-orange); }
-.badge-risk-high, .badge-risk-critical { background: rgba(239,68,68,0.2); color: var(--accent-red); }
+.badge-risk-high { background: rgba(239,68,68,0.2); color: var(--accent-red); }
+.badge-risk-critical { background: rgba(239,68,68,0.35); color: #ff6b6b; }
+
+/* Moneyness badges */
+.badge-moneyness-itm { background: rgba(239,68,68,0.2); color: var(--accent-red); }
+.badge-moneyness-otm { background: rgba(34,197,94,0.2); color: var(--accent-green); }
+.badge-moneyness-atm { background: rgba(245,158,11,0.2); color: var(--accent-orange); }
+
+/* Metric values (DTE, delta, IV, premium) */
+.metric-value { font-family: var(--font-mono); font-size: 0.85rem; }
 
 .confidence { font-size: 0.75rem; font-weight: 500; }
 .confidence-high { color: var(--accent-green); }

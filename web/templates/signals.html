@@ -20,6 +20,9 @@
                     <th>Strike</th>
                     <th>Expiration</th>
                     <th>Underlying</th>
+                    <th class="num">IV</th>
+                    <th class="num">Premium</th>
+                    <th class="num">Delta</th>
                     {% else %}
                     <th>Moneyness</th>
                     <th>Assignment Risk</th>
@@ -38,6 +41,9 @@
                     <td class="mono">${{ sig.strike if sig.strike else "—" }}</td>
                     <td class="mono">{{ sig.expiration or "—" }}</td>
                     <td class="mono">${{ sig.underlying_price if sig.underlying_price else "—" }}</td>
+                    <td class="num metric-value">{{ "%.1f%%" | format(sig.iv) if sig.iv is not none else "—" }}</td>
+                    <td class="num metric-value">{{ "$%.2f" | format(sig.premium) if sig.premium is not none else "—" }}</td>
+                    <td class="num metric-value">{{ "%.2f" | format(sig.delta) if sig.delta is not none else "—" }}</td>
                     {% else %}
                     <td>{{ sig.moneyness or "—" }}</td>
                     <td><span class="badge badge-risk-{{ sig.assignment_risk or 'low' | lower }}">{{ sig.assignment_risk or "—" }}</span></td>

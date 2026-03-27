@@ -215,6 +215,19 @@ def _seed_from_source(source_file: str, is_pm: bool) -> tuple:
     return groups, display_map
 
 
+def _latest_decisions_by_key(agent_info: Dict) -> Dict[str, Dict[str, Any]]:
+    """Return the most recent decision entry for each symbol/position key."""
+    is_pm = agent_info["is_position_monitor"]
+    decisions = read_jsonl(agent_info["decision_log"])
+    latest: Dict[str, Dict[str, Any]] = {}
+    for d in decisions:
+        key = _signal_key(d, is_pm)
+        prev = latest.get(key)
+        if prev is None or d.get("timestamp", "") > prev.get("timestamp", ""):
+            latest[key] = d
+    return latest
+
+
 def _build_agent_table(agent_key: str, agent_info: Dict) -> Dict[str, Any]:
     """Build the per-agent table data for the dashboard."""
     is_pm = agent_info["is_position_monitor"]
@@ -231,17 +244,35 @@ def _build_agent_table(agent_key: str, agent_info: Dict) -> Dict[str, Any]:
         display_map.setdefault(key, _symbol_display(e, is_pm))
         groups.setdefault(key, []).append(e)
 
+    # Latest decision per symbol — used for health metrics & risk flags
+    latest_decisions = _latest_decisions_by_key(agent_info)
+
     rows = []
     for key, group in groups.items():
         counts = _count_by_range(group)
-        rows.append({
+        row = {
             "key": key,
             "display": display_map[key],
             "today": counts["today"],
             "week": counts["week"],
             "month": counts["month"],
             "total": counts["total"],
-        })
+        }
+
+        # Attach latest decision metrics
+        dec = latest_decisions.get(key, {})
+
+        # Quick Win 2: risk flags for ALL agent types
+        row["risk_flags"] = dec.get("risk_flags", [])
+
+        # Quick Win 1: position health cards for monitors
+        if is_pm:
+            row["dte"] = dec.get("dte_remaining")
+            row["moneyness"] = dec.get("moneyness")
+            row["assignment_risk"] = dec.get("assignment_risk")
+            row["delta"] = dec.get("delta")
+
+        rows.append(row)
 
     total_counts = _count_by_range(entries)
     return {
