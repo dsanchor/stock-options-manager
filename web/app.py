@@ -2,6 +2,7 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 import yaml
@@ -486,15 +487,63 @@ async def chat_api(request: Request):
     if not messages:
         return JSONResponse({"error": "No messages provided"}, status_code=400)
 
-    # Build context from recent decisions
-    context_parts = []
+    # Build context from recent signals + decisions, grouped by symbol
+    # First pass: count total signals to decide budget limits
+    all_signal_groups: Dict[str, Dict[str, List[Dict]]] = {}
+    all_decision_groups: Dict[str, Dict[str, List[Dict]]] = {}
+    total_signals = 0
+
     for agent_key, info in AGENT_TYPES.items():
-        entries = read_jsonl(info["decision_log"])
-        recent = entries[-20:]  # last 20 per log
-        if recent:
-            context_parts.append(f"\n--- {info['label']} (last {len(recent)} decisions) ---")
-            for e in recent:
-                context_parts.append(json.dumps(e, indent=2, default=str))
+        is_pos = info.get("is_position_monitor", False)
+
+        sig_by_sym: Dict[str, List[Dict]] = defaultdict(list)
+        for e in read_jsonl(info["signal_log"]):
+            sig_by_sym[_signal_key(e, is_pos)].append(e)
+        all_signal_groups[agent_key] = sig_by_sym
+        total_signals += sum(min(2, len(v)) for v in sig_by_sym.values())
+
+        dec_by_sym: Dict[str, List[Dict]] = defaultdict(list)
+        for e in read_jsonl(info["decision_log"]):
+            dec_by_sym[_signal_key(e, is_pos)].append(e)
+        all_decision_groups[agent_key] = dec_by_sym
+
+    # Reduced mode when too many signals
+    if total_signals > 20:
+        sig_limit, dec_limit = 1, 2
+    else:
+        sig_limit, dec_limit = 2, 4
+
+    # Second pass: build formatted context
+    context_parts: List[str] = []
+    for agent_key, info in AGENT_TYPES.items():
+        is_pos = info.get("is_position_monitor", False)
+        sig_groups = all_signal_groups[agent_key]
+        dec_groups = all_decision_groups[agent_key]
+        all_keys = dict.fromkeys(list(sig_groups.keys()) + list(dec_groups.keys()))
+
+        if not all_keys:
+            continue
+
+        context_parts.append(f"\n--- {info['label']} ---")
+        for sym_key in all_keys:
+            signals = sig_groups.get(sym_key, [])[-sig_limit:]
+            decisions = dec_groups.get(sym_key, [])[-dec_limit:]
+            if not signals and not decisions:
+                continue
+
+            # Use the most recent entry to build the display label
+            sample = (signals or decisions)[-1]
+            display = _symbol_display(sample, is_pos)
+            context_parts.append(f"\n## {display}")
+
+            if signals:
+                context_parts.append(f"Signals (last {len(signals)}):")
+                for s in reversed(signals):
+                    context_parts.append(json.dumps(s, indent=2, default=str))
+            if decisions:
+                context_parts.append(f"Decisions (last {len(decisions)}):")
+                for d in reversed(decisions):
+                    context_parts.append(json.dumps(d, indent=2, default=str))
 
     context_text = "\n".join(context_parts) if context_parts else "No recent decisions available."
 
