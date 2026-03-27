@@ -776,19 +776,20 @@ async def chat_api(request: Request):
     if not endpoint:
         return JSONResponse({"error": "Azure endpoint not configured"}, status_code=500)
 
+    api_key = _resolve_env(azure_cfg.get("api_key", ""))
+    if not api_key:
+        return JSONResponse({"error": "Azure API key not configured"}, status_code=500)
+
     # Strip /api suffix for AzureOpenAI client
     if endpoint.endswith("/api"):
         endpoint = endpoint[:-4]
 
     try:
-        from azure.identity import AzureCliCredential
         from openai import AzureOpenAI
 
-        credential = AzureCliCredential()
-        token = credential.get_token("https://cognitiveservices.azure.com/.default")
         client = AzureOpenAI(
             azure_endpoint=endpoint,
-            api_key=token.token,
+            api_key=api_key,
             api_version="2024-12-01-preview",
         )
 
