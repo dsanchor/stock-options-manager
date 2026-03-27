@@ -440,3 +440,30 @@ Replaced the pipe-delimited output format across ALL 8 instruction files, plus u
 - `main.py` setup passes only 5 params to AgentRunner (removed provider, env_key, transport, url).
 - README updated: removed provider comparison table, multi-provider setup/troubleshooting, env var docs for MASSIVE/ALPHAVANTAGE.
 - `web/app.py` had no provider references — no changes needed.
+
+### Signal Log vs Decision Log Separation (2025-07)
+- Dashboard counts, signals list, and signal detail routes now ALL read from `signal_log` exclusively — never `decision_log`. Previously, position monitors incorrectly read from `decision_log`, counting WAIT decisions as signals.
+- `decision_log` contains every analysis outcome (WAIT, SELL, ROLL, CLOSE). `signal_log` contains only actionable signals (SELL, ROLL, CLOSE — never WAIT). Dashboard/signals pages should always use `signal_log` for accurate counts.
+- Signals list page (`/signals/{agent_type}/{symbol}`) now also loads the last 20 decisions from `decision_log` as a "Recent Decisions" context section below the signals table.
+- Settings page `DATA_FILES` dict reordered: open positions first (calls, puts), then following/watchlist symbols — matches dashboard visual order.
+- Key file paths: `web/app.py` (FastAPI app), `web/templates/signals.html` (signal list + decisions template), `web/templates/settings.html` (settings template).
+
+### Dashboard Signal Fixes (2026-03-27)
+- Fixed dashboard signal counts: changed from reading `decision_log` (inflated by WAIT decisions) to `signal_log` (actionable signals only). Eliminated false count inflation.
+- Added "Recent Decisions" section to signals list page — provides context for signal analysis using `decision_log` entries.
+- Reordered settings page fields to match dashboard layout for better UX consistency.
+- All three fixes committed as 3a3435e.
+
+### Consolidated Entry Point (2025-07)
+- Created `run.py` as unified entry point for both web dashboard and scheduler.
+- Scheduler runs as daemon thread managed by FastAPI lifespan context — avoids signal handler conflicts.
+- CLI flags (`--web-only`, `--scheduler-only`) provide fine-grained control. `run_web.py` kept as backwards-compat shim.
+- Host/port read from `config.yaml` `web:` section; `--port` flag overrides.
+
+### TradingView Pre-Fetch Refinement (2025-07-28)
+- Added web dashboard as separate entry point using FastAPI + Jinja2 templates. Dark trading theme, no build step.
+- Architecture: dashboard and scheduler run independently, both read same JSONL logs. No database layer.
+- Config loading simplified for web app — reads `config.yaml` raw YAML (no MCP env vars needed).
+- Chat endpoint uses direct Azure OpenAI API with context from last 20 decisions per log.
+- Position files read from disk on every request — hot-reload confirmed, edits take effect on next scheduler tick.
+

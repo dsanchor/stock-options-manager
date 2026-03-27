@@ -1010,3 +1010,93 @@ Added a web dashboard for the options agent system — a separate entry point (`
 - Reading JSONL on every request is fine for current scale but won't scale to huge logs. If needed, add a lightweight caching layer or SQLite index later.
 - No authentication on the web dashboard — acceptable for local/internal use. Add auth middleware if exposing to the internet.
 
+
+
+
+---
+---
+---
+
+
+
+
+### 20. Consolidated Entry Point (`run.py`)
+
+**Date:** 2025-07
+**Author:** Rusty (Agent Dev)
+
+## Context
+The project had two separate entry points — `python -m src.main` for the scheduler and `python run_web.py` for the web dashboard. Users had to start them independently in separate terminals.
+
+## Decision
+Consolidate into a single `python run.py` that runs both web dashboard and scheduler. The scheduler runs as a daemon thread managed by FastAPI's lifespan context. CLI flags (`--web-only`, `--scheduler-only`, `--port`) provide fine-grained control.
+
+## Key details
+- Lifespan attached via `app.router.lifespan_context` — avoids modifying `web/app.py`.
+- `OptionsAgentScheduler.run(install_signals=False)` when threaded — signal handlers are main-thread-only.
+- `run_web.py` kept as backwards-compat shim delegating to `run.py --web-only`.
+- Host/port read from `config.yaml` `web:` section; `--port` flag overrides.
+
+## Files changed
+- `run.py` (new) — unified entry point
+- `src/main.py` — `run()` accepts `install_signals` param; `__main__` block suggests `run.py`
+- `run_web.py` — now delegates to `run.py --web-only`
+- `README.md` — updated Running section
+
+---
+
+### 21. Always use signal_log for dashboard and signal views
+
+**Date:** 2025-07-22
+**Author:** Rusty (Agent Dev)
+**Status:** Implemented
+
+## Context
+Dashboard counts for position monitors were reading from `decision_log`, which includes WAIT decisions. This inflated signal counts (e.g., 3 WAITs shown as 3 signals when actual actionable signals were 0).
+
+## Decision
+All dashboard counts, signal list pages, and signal detail pages now read exclusively from `signal_log`. The `decision_log` is only used for:
+1. "Recent Activity" feed on the dashboard (which shows all events)
+2. "Recent Decisions" context section on the signals list page
+3. Backing decisions on the signal detail page (correlated by timestamp)
+
+## Impact
+- Dashboard signal counts now accurately reflect actionable signals only
+- Signals list page gains a "Recent Decisions" section for analysis context
+- No changes to how logs are written — only how they're read for display
+
+---
+
+### 22. Remove non-TradingView MCP providers
+
+**Author:** Rusty (Agent Dev)
+**Date:** 2025-07-23
+**Status:** Implemented
+
+## Context
+
+The project supported four MCP data providers (Massive.com, Alpha Vantage, Yahoo Finance, TradingView) with per-provider instruction files, config branching, and transport selection. In practice, TradingView + Playwright pre-fetch is the only provider that works reliably — LLMs cannot drive multi-step browser/tool workflows, and the other providers' MCP servers had various limitations.
+
+## Decision
+
+Remove all non-TradingView providers. TradingView via Playwright is the sole data source.
+
+## Changes
+
+- **Deleted:** 6 instruction files (`av_*`, `yf_*`, generic `covered_call_instructions.py`, `cash_secured_put_instructions.py`)
+- **Simplified:** `config.yaml` MCP section flattened (no `provider` key, no per-provider sub-sections)
+- **Simplified:** `config.py` — removed provider selection, pruning, transport/url/env_key properties
+- **Simplified:** `agent_runner.py` — removed entire non-TradingView code path (MCP tool creation, HTTP transport, API key validation)
+- **Simplified:** Agent wrappers — no provider branching, always use TV instructions
+- **Updated:** README — removed multi-provider docs, comparison table, env var setup for removed providers
+
+## Trade-offs
+
+- **Lost:** Ability to switch to Massive/AV/Yahoo without code changes
+- **Gained:** ~4100 lines of dead code removed, dramatically simpler config and runtime paths, no unused env var requirements
+
+## Team Implications
+
+- **Linus (Quant Dev):** Only TV instruction files exist now. Any instruction changes go to `tv_*` files.
+- **Basher (Test/Ops):** No need to test multiple providers. Playwright container is the only external dependency.
+- **Scribe (Docs):** README already updated. No multi-provider docs to maintain.
