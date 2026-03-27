@@ -88,6 +88,8 @@ NASDAQ-AAPL,200,2026-05-16
 ```
 Lines starting with `#` are comments. Empty lines are skipped. If the file has no uncommented lines, the monitor skips gracefully.
 
+**Profit optimization:** When ALL market indicators unanimously show the position is deeply OTM with no risk catalysts, the monitor may recommend tightening the strike to collect additional premium (ROLL_DOWN for calls, ROLL_UP for puts). This requires unanimous indicator agreement across 9 conditions — conservative by design. Profit-optimization rolls are tagged with a `"profit_optimization"` risk flag to distinguish them from defensive rolls.
+
 **Roll types:**
 - **ROLL_UP** — Higher strike, same expiration (gives more room above for calls)
 - **ROLL_DOWN** — Lower strike, same expiration (gives more room below for puts)

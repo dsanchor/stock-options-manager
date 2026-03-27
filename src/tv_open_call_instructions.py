@@ -138,6 +138,31 @@ Calculate from current date and expiration:
 - **CLOSE**: Buy back the call, do NOT re-sell
   - When: Fundamental thesis changed, or stock has moved so far ITM that rolling isn't cost-effective
 
+### Profit Optimization (ROLL_DOWN for more premium)
+
+When the current call is deep OTM and nearly worthless, you may recommend ROLL_DOWN to a lower strike to collect meaningful new premium — but ONLY when **ALL** of the following conditions are satisfied simultaneously. This is a unanimous-consensus gate: if even ONE condition fails or is ambiguous, the decision is WAIT (not optimize). No gambling.
+
+**ALL of these must be true at the same time:**
+
+1. **Deep OTM**: Current price is at least 5% below the current strike (wide safety margin)
+2. **Very low delta**: Delta < 0.15 (the current option is nearly worthless)
+3. **Technicals bearish or neutral**: Oscillator summary shows Sell or Neutral — NO bullish signals whatsoever
+4. **Moving averages bearish or neutral**: MA summary shows Sell or Neutral — NO Buy signals
+5. **No upcoming catalysts**: No earnings, ex-dividend dates, or other known events fall before expiration
+6. **Analyst sentiment is not bullish**: No recent upgrades, no Strong Buy consensus that could reverse the trend
+7. **Low IV environment**: IV is not elevated — no crush risk, no spike risk
+8. **DTE > 14**: Enough time remaining for the roll to be worthwhile
+9. **Previous decisions stable**: No recent ROLL signals or flip-flopping in the decision log — position has been consistently WAIT
+
+**If all 9 conditions pass:**
+- **New strike target**: Use resistance-to-support analysis from pivot points. Target delta 0.20-0.30 at the new lower strike (standard premium sweet spot). The new strike must still be clearly OTM — at least 2-3% above the current price.
+- **Decision**: `"decision": "ROLL_DOWN"`
+- **Risk flag**: Include `"profit_optimization"` in `risk_flags` to tag this as a profit-motivated roll (not defensive)
+- **Confidence**: Must be `"high"` — if you cannot confidently say "high", do not recommend the optimization; default to WAIT
+- **Assignment risk**: Should remain `"low"` — if it wouldn't be low, the conditions above weren't truly met
+
+**If ANY condition fails → WAIT.** Do not attempt partial optimization. Do not speculate.
+
 ### Roll Candidate Selection:
 When recommending a roll, suggest specific new strike and expiration:
 - **New strike**: Use resistance levels (R1, R2, R3 from pivot points) or delta-based (target 0.20-0.30 delta)
@@ -242,4 +267,29 @@ ROLL decision:
 }
 ```
 SUMMARY: MO | ROLL_UP_AND_OUT open call | Strike $72→$75 exp 2026-04-24→2026-05-22 | Price $73.80 | Delta 0.62 | Risk: critical
+
+Profit optimization ROLL_DOWN decision:
+```json
+{
+  "timestamp": "2026-03-27T17:00:00Z",
+  "symbol": "MO",
+  "exchange": "NYSE",
+  "agent": "open_call_monitor",
+  "current_strike": 72,
+  "current_expiration": "2026-04-24",
+  "underlying_price": 66.80,
+  "dte_remaining": 28,
+  "decision": "ROLL_DOWN",
+  "moneyness": "OTM",
+  "delta": 0.10,
+  "assignment_risk": "low",
+  "new_strike": 69,
+  "new_expiration": "2026-04-24",
+  "estimated_roll_cost": 0.55,
+  "reason": "Current call is deep OTM (7.2% below strike), delta 0.10 — nearly worthless. All indicators unanimous: oscillators Sell, MAs Sell, no earnings/ex-div before expiry, analyst neutral, IV low and stable. Rolling down to $69 (3.3% above price, delta ~0.25) collects meaningful premium while maintaining safe OTM margin. All 9 profit-optimization conditions met.",
+  "confidence": "high",
+  "risk_flags": ["profit_optimization"]
+}
+```
+SUMMARY: MO | ROLL_DOWN open call (profit optimization) | Strike $72→$69 exp 2026-04-24 | Price $66.80 | Delta 0.10→~0.25 | Risk: low
 """

@@ -148,6 +148,31 @@ Calculate from current date and expiration:
 - **CLOSE**: Buy back the put, do NOT re-sell
   - When: Fundamental thesis changed (you no longer want to own the stock), or stock has dropped so far ITM that rolling isn't cost-effective
 
+### Profit Optimization (ROLL_UP for more premium)
+
+When the current put is deep OTM and nearly worthless, you may recommend ROLL_UP to a higher strike to collect meaningful new premium — but ONLY when **ALL** of the following conditions are satisfied simultaneously. This is a unanimous-consensus gate: if even ONE condition fails or is ambiguous, the decision is WAIT (not optimize). No gambling.
+
+**ALL of these must be true at the same time:**
+
+1. **Deep OTM**: Current price is at least 5% above the current strike (wide safety margin)
+2. **Very low |delta|**: |Delta| < 0.15 (the current option is nearly worthless)
+3. **Technicals bullish or neutral**: Oscillator summary shows Buy or Neutral — NO bearish signals whatsoever
+4. **Moving averages bullish or neutral**: MA summary shows Buy or Neutral — NO Sell signals
+5. **No upcoming catalysts**: No earnings or known negative events fall before expiration
+6. **Analyst sentiment is not bearish**: No recent downgrades, no Sell consensus that could reverse the trend
+7. **Low IV environment**: IV is not elevated — no crush risk, no spike risk
+8. **DTE > 14**: Enough time remaining for the roll to be worthwhile
+9. **Previous decisions stable**: No recent ROLL signals or flip-flopping in the decision log — position has been consistently WAIT
+
+**If all 9 conditions pass:**
+- **New strike target**: Use support-to-resistance analysis from pivot points. Target |delta| 0.20-0.30 at the new higher strike (standard premium sweet spot). The new strike must still be clearly OTM — at least 2-3% below the current price.
+- **Decision**: `"decision": "ROLL_UP"`
+- **Risk flag**: Include `"profit_optimization"` in `risk_flags` to tag this as a profit-motivated roll (not defensive)
+- **Confidence**: Must be `"high"` — if you cannot confidently say "high", do not recommend the optimization; default to WAIT
+- **Assignment risk**: Should remain `"low"` — if it wouldn't be low, the conditions above weren't truly met
+
+**If ANY condition fails → WAIT.** Do not attempt partial optimization. Do not speculate.
+
 ### Roll Candidate Selection:
 When recommending a roll, suggest specific new strike and expiration:
 - **New strike**: Use support levels (S1, S2, S3 from pivot points) or delta-based (target |delta| 0.20-0.30)
@@ -253,4 +278,29 @@ ROLL decision:
 }
 ```
 SUMMARY: AAPL | ROLL_DOWN_AND_OUT open put | Strike $200→$195 exp 2026-04-24→2026-05-22 | Price $197.50 | Delta -0.58 | Risk: high
+
+Profit optimization ROLL_UP decision:
+```json
+{
+  "timestamp": "2026-03-27T17:00:00Z",
+  "symbol": "AAPL",
+  "exchange": "NASDAQ",
+  "agent": "open_put_monitor",
+  "current_strike": 200,
+  "current_expiration": "2026-04-24",
+  "underlying_price": 228.50,
+  "dte_remaining": 28,
+  "decision": "ROLL_UP",
+  "moneyness": "OTM",
+  "delta": -0.08,
+  "assignment_risk": "low",
+  "new_strike": 220,
+  "new_expiration": "2026-04-24",
+  "estimated_roll_cost": 0.70,
+  "reason": "Current put is deep OTM (14.3% above strike), |delta| 0.08 — nearly worthless. All indicators unanimous: oscillators Buy, MAs Buy, no earnings before expiry, analyst consensus Buy, IV low and stable. Rolling up to $220 (3.7% below price, |delta| ~0.25) collects meaningful premium while maintaining safe OTM margin. All 9 profit-optimization conditions met.",
+  "confidence": "high",
+  "risk_flags": ["profit_optimization"]
+}
+```
+SUMMARY: AAPL | ROLL_UP open put (profit optimization) | Strike $200→$220 exp 2026-04-24 | Price $228.50 | Delta -0.08→~-0.25 | Risk: low
 """
