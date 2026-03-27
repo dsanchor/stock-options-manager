@@ -429,3 +429,14 @@ Replaced the pipe-delimited output format across ALL 8 instruction files, plus u
 - `run_web.py` kept for backwards compat but delegates to `run.py --web-only` via `runpy.run_path`.
 - Web host/port read from `config.yaml` `web:` section, overridable with `--port`.
 - Lifespan is attached via `app.router.lifespan_context = lifespan` to avoid modifying `web/app.py`'s app creation.
+
+### TradingView-Only Simplification (2025-07)
+- Removed all non-TradingView MCP providers (Massive.com, Alpha Vantage, Yahoo Finance) — 6 instruction files deleted, ~4100 lines removed.
+- `config.yaml` MCP section flattened: no more `provider` key or per-provider sub-sections. Just `command`, `args`, `description` at top level.
+- `config.py` simplified: removed `_prune_inactive_providers()`, `mcp_provider`, `_mcp_provider_config`, `mcp_transport`, `mcp_url`, `mcp_env_key` properties. Validation just checks `mcp.command` exists.
+- `agent_runner.py` simplified: removed entire non-TradingView else branch (MCP tool creation, HTTP transport, API key validation, tool discovery). TradingView pre-fetch is now the only code path.
+- Agent wrappers (`covered_call_agent.py`, `cash_secured_put_agent.py`) always use TV instructions directly — no provider branching.
+- Position monitors (`open_call_monitor_agent.py`, `open_put_monitor_agent.py`) removed TradingView-only guard since there's no other provider.
+- `main.py` setup passes only 5 params to AgentRunner (removed provider, env_key, transport, url).
+- README updated: removed provider comparison table, multi-provider setup/troubleshooting, env var docs for MASSIVE/ALPHAVANTAGE.
+- `web/app.py` had no provider references — no changes needed.

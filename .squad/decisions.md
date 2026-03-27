@@ -782,3 +782,231 @@ Data sources: Analyst consensus and earnings history now sourced from forecast p
 - **Basher (Test/Ops):** Verify TV mocks include forecast page earnings history
 - **Scribe (Docs):** Update TV data gathering docs in README
 
+---
+
+### 12. User Directive: JSONL-Only Decision/Signal Output
+
+**Date:** 2026-03-27  
+**Author:** dsanchor (via Copilot)  
+**Status:** Proposed  
+**Impact:** Output format simplification
+
+#### Decision
+
+Drop `.log` decision/signal files entirely. Keep only `.jsonl` output for decisions and signals. Update `config.yaml` paths accordingly.
+
+#### Rationale
+
+Single machine-parseable format reduces file management complexity. JSONL is easier to parse and aggregate than multiple file types.
+
+---
+
+### 13. Open Position Monitor Agents
+
+**Date:** 2025-07  
+**Author:** Rusty (Agent Dev)  
+**Status:** Implemented  
+**Impact:** New feature — two new agents added to the scheduler
+
+#### Context
+
+Added OpenCallMonitor and OpenPutMonitor agents that track existing short options positions for assignment risk. These complement the existing sell-side agents (CoveredCallAgent, CashSecuredPutAgent).
+
+#### Key Decisions
+
+1. **TradingView-only**: Position monitors only work with the TradingView pre-fetch path. No MCP fallback — these agents have no tool access.
+2. **Separate method**: `run_position_monitor_agent()` is a new method on AgentRunner, not a modification to `run_agent()`. The position file format, message template, and signal detection are all different.
+3. **Position file format**: `EXCHANGE-SYMBOL,strike,expiration` — one position per line, comments/blanks supported.
+4. **Roll signal fields**: Separate `_ROLL_SIGNAL_FIELDS` tuple with fields appropriate for position management (current_strike, current_expiration, new_strike, new_expiration, action) rather than sell signals.
+5. **Graceful degradation**: Monitors skip silently when position files are empty/all-commented. Non-TradingView providers get a warning and skip.
+
+#### Files Created/Modified
+
+**Created:**
+- `data/opened_calls.txt`, `data/opened_puts.txt` — position data files
+- `src/tv_open_call_instructions.py`, `src/tv_open_put_instructions.py` — agent instructions
+- `src/open_call_monitor_agent.py`, `src/open_put_monitor_agent.py` — agent wrappers
+
+**Modified:**
+- `src/agent_runner.py` — added `_read_positions()`, `_is_roll_signal()`, `_build_roll_signal_data()`, `run_position_monitor_agent()`
+- `src/config.py` — added `open_call_monitor_config`, `open_put_monitor_config` properties
+- `src/main.py` — imports + scheduler calls for both monitors
+- `config.yaml` — new `open_call_monitor` and `open_put_monitor` sections
+- `README.md` — architecture, key concepts, output, project structure updated
+
+---
+
+### 14. Re-add TradingView Overview Page as Pre-Fetched Resource
+
+**Author:** Rusty (Agent Dev)  
+**Date:** 2025-07  
+**Status:** Proposed
+
+#### Context
+
+The overview page (`/symbols/EXCHANGE:TICKER/`) was previously dropped to save context budget (~103K chars for the old accessibility snapshot approach). With the `browser_run_code` + `innerText` extraction method, the page is much smaller and provides valuable fundamental data (P/E, market cap, dividend yield, sector) that the agent previously had to infer indirectly from analyst consensus.
+
+#### Decision
+
+Add `fetch_overview()` as the first pre-fetched resource, using the same `browser_run_code` + `main.innerText` pattern as technicals/forecast. This keeps the page size manageable (innerText is far smaller than accessibility snapshots) while giving the agent direct access to fundamentals.
+
+#### Consequence
+
+- The CSP Investment Worthiness Assessment can now use actual P/E, market cap, and dividend data instead of proxy signals.
+- Total pre-fetch count goes from 3 → 4 pages per symbol, adding one browser navigation per symbol.
+- If context budget becomes tight again, overview is the first candidate to drop (it was lived without before).
+
+---
+
+### 15. Profit Optimization Signals for Open Position Monitors
+
+**Date:** 2025-07-22  
+**Author:** Rusty (Agent Dev)  
+**Status:** Implemented  
+**Impact:** Agent behavior (monitor instruction prompts)
+
+#### Context
+
+The open position monitors (call + put) previously only detected defensive roll scenarios (assignment risk). Users wanted proactive profit optimization — rolling to a tighter strike to collect more premium when conditions are unanimously safe.
+
+#### Decision
+
+Added profit optimization instruction sections to both `tv_open_call_instructions.py` (ROLL_DOWN) and `tv_open_put_instructions.py` (ROLL_UP). Uses a 9-condition unanimous consensus gate — ALL must pass or the decision stays WAIT.
+
+#### Key Design Choices
+
+1. **Instruction-only change**: No schema changes, no `agent_runner.py` changes. ROLL_DOWN/ROLL_UP and `risk_flags` were already fully supported. This validates the architecture — schema is stable, behavior evolves through prompts.
+
+2. **9-condition unanimity gate**: Deep OTM (5%+), very low delta (<0.15), technicals aligned, MAs aligned, no catalysts, analyst sentiment not contrary, low IV, DTE > 14, stable decision history. "No gambling" — one ambiguous indicator = WAIT.
+
+3. **`profit_optimization` risk_flag**: Semantic marker distinguishing "rolling because the position is at risk" from "rolling because I can safely collect more premium." Propagates through existing `_ROLL_SIGNAL_FIELDS` pipeline.
+
+4. **Confidence must be "high"**: If the agent can't say high confidence, it must not recommend the optimization.
+
+#### Trade-offs
+
+- **Conservative by design**: Many valid optimization opportunities will be missed because one indicator is neutral instead of confirmatory. This is intentional — false positives (bad optimization) are far worse than false negatives (missed premium).
+- **No new schema fields**: Keeps the signal pipeline simple but means downstream consumers must check `risk_flags` to distinguish profit vs defensive rolls.
+
+---
+
+### 16. README Documentation Structure
+
+**Date:** 2025-07  
+**Author:** Rusty (Agent Dev)  
+**Status:** Completed
+
+#### Decision
+
+Restructured README to separate "how to run it" (Setup/Running) from "how it works" (How It Works/Key Concepts). Added dedicated sections for:
+1. End-to-end execution flow with provider branching
+2. Decision vs Signal semantics
+3. Pre-fetch architecture rationale
+4. Per-symbol context filtering explanation
+5. Full annotated config.yaml reference
+6. Example JSONL output object
+
+#### Rationale
+
+The README previously covered setup and troubleshooting well but didn't explain _what the system does_ or _why_ it's designed this way. A new contributor couldn't understand the pre-fetch architecture, the decision/signal distinction, or the context injection system without reading source code. These are the core design decisions that define the project.
+
+#### Implications
+
+- README is now the single source of truth for system behavior — keep it updated when architecture changes
+- Config reference in README mirrors actual config.yaml structure — update both together
+
+---
+
+### 17. Use browser_run_code for TradingView Technicals & Forecast
+
+**Date:** 2025-07  
+**Author:** Rusty  
+**Status:** Implemented
+
+#### Context
+
+The TradingView agent uses Playwright MCP to scrape 3 pages. `browser_navigate` returns full accessibility snapshots: technicals ~48K chars, forecast ~38K chars, options chain ~37K+65K expanded. Total ~188K chars was overwhelming the model context, causing it to report "pages failed to load."
+
+#### Decision
+
+Use `browser_run_code` (Playwright JS execution) for technicals and forecast pages. This navigates to the page AND extracts `innerText` in a single call, returning ~3K and ~2.4K chars respectively (15-16x reduction). Options chain stays on `browser_navigate`+`browser_click`+`browser_snapshot` because it needs accessibility tree element refs for interactive clicking.
+
+#### Trade-offs
+
+- **Pro:** ~80K chars freed per analysis run — model no longer chokes on context
+- **Pro:** `innerText` contains identical data in cleaner tab-separated format
+- **Pro:** Single tool call per page vs navigate+wait+snapshot
+- **Con:** `browser_run_code` returns plain text, not structured accessibility tree — cannot use element refs for clicking (not needed for these pages)
+- **Con:** If TradingView changes DOM structure (e.g., removes `<main>` tag), the fallback to `document.body` still works but may include more noise
+
+#### Affected Files
+
+- `src/tv_covered_call_instructions.py`
+- `src/tv_cash_secured_put_instructions.py`
+
+---
+
+### 18. TradingView Pre-Fetch Architecture
+
+**Date:** 2025-07-17  
+**Author:** Rusty (Agent Dev)  
+**Status:** Implemented  
+**Commit:** 9bca215
+
+#### Context
+
+The LLM agent unreliably executes 3+ sequential Playwright browser tool calls — it skips pages, fabricates navigation errors, or ignores tool-calling instructions. Multiple instruction-based fixes were attempted (reordering pages, innerText extraction via browser_run_code, reducing snapshot size) — none solved the fundamental problem.
+
+#### Decision
+
+Pre-fetch ALL TradingView data deterministically in Python, then pass it to the agent as text. The agent receives NO browser tools — it only analyzes.
+
+#### Implementation
+
+1. **New module `src/tv_data_fetcher.py`**: `TradingViewFetcher` class uses the same Playwright MCP tools (browser_run_code, browser_navigate, browser_click, browser_snapshot) but driven from Python, not the LLM.
+2. **`src/agent_runner.py`**: Branches on `mcp_provider == "tradingview"` — pre-fetch path creates ChatAgent with no tools; all other providers use existing MCP-tool flow unchanged.
+3. **TV instruction files**: Phase 1 rewritten from "gather data via browser tools" to "review pre-fetched data". All `browser_*` references removed. Phase 2 analysis logic, trading rules, output format, decision criteria unchanged.
+
+#### Trade-offs
+
+- **Pro**: 100% reliable data fetching — Python deterministically loads all 3 pages every time
+- **Pro**: Agent context is smaller and cleaner — only data + analysis instructions, no tool-call overhead
+- **Pro**: Non-tradingview providers completely unaffected
+- **Con**: Agent cannot adaptively explore pages (e.g., try different expirations) — but this was unreliable anyway
+- **Con**: Pre-fetch always loads all 3 pages even if one would suffice — acceptable overhead
+
+#### Impact
+
+- Covered call and CSP agents using TradingView provider should now consistently analyze all 3 data sources (technicals, forecast, options chain) instead of randomly skipping 1-2 pages.
+
+---
+
+### 19. Web Dashboard Architecture
+
+**Date:** 2025-07-28  
+**Author:** Rusty (Agent Dev)  
+**Status:** Completed
+
+#### Context
+
+Added a web dashboard for the options agent system — a separate entry point (`run_web.py`) using FastAPI + Jinja2 templates with a dark trading theme.
+
+#### Key Decisions
+
+1. **Separate entry point, shared data files**: Web dashboard (`run_web.py`) and scheduler (`python -m src.main`) run independently. Both read the same JSONL logs and data files — no database layer needed.
+
+2. **Raw YAML config loading**: The web app reads `config.yaml` directly via `yaml.safe_load()` instead of using `src.config.Config`, which requires MCP environment variables. The web app only needs the Azure endpoint (for chat) and scheduler cron expression.
+
+3. **No build step**: Vanilla HTML/CSS/JS with custom dark-theme CSS. No npm, no bundler, no CSS framework dependency.
+
+4. **JSONL as the database**: All dashboard data comes from reading JSONL log files and `data/*.txt` files on every request. Acceptable for the current log sizes; would need indexing if logs grow to millions of lines.
+
+5. **Chat uses direct OpenAI API**: The chat endpoint uses `openai.AzureOpenAI` with `AzureCliCredential` — same auth pattern as the agent runner but without the agent framework overhead. Context is the last 20 decisions per log file.
+
+6. **Hot-reload confirmed**: `_read_symbols()` and `_read_positions()` in `agent_runner.py` read from disk on every call inside `run_agent()` / `run_position_monitor_agent()`. No caching — edits via the settings page take effect on the next scheduler tick with zero code changes.
+
+#### Trade-offs
+
+- Reading JSONL on every request is fine for current scale but won't scale to huge logs. If needed, add a lightweight caching layer or SQLite index later.
+- No authentication on the web dashboard — acceptable for local/internal use. Add auth middleware if exposing to the internet.
+

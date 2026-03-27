@@ -48,16 +48,6 @@ AGENT_TYPES = {
 }
 
 DATA_FILES = {
-    "covered_call_symbols": {
-        "path": "data/covered_call_symbols.txt",
-        "label": "Covered Call Symbols",
-        "hint": "One symbol per line in EXCHANGE-SYMBOL format (e.g., NYSE-MO, NASDAQ-AAPL). Lines starting with # are comments.",
-    },
-    "cash_secured_put_symbols": {
-        "path": "data/cash_secured_put_symbols.txt",
-        "label": "Cash-Secured Put Symbols",
-        "hint": "One symbol per line in EXCHANGE-SYMBOL format (e.g., NYSE-GIS, NASDAQ-MSFT). Lines starting with # are comments.",
-    },
     "opened_calls": {
         "path": "data/opened_calls.txt",
         "label": "Open Call Positions",
@@ -67,6 +57,16 @@ DATA_FILES = {
         "path": "data/opened_puts.txt",
         "label": "Open Put Positions",
         "hint": "One position per line: EXCHANGE-SYMBOL,strike,expiration (e.g., NASDAQ-MSFT,340,2026-04-10). Lines starting with # are comments.",
+    },
+    "covered_call_symbols": {
+        "path": "data/covered_call_symbols.txt",
+        "label": "Covered Call Symbols",
+        "hint": "One symbol per line in EXCHANGE-SYMBOL format (e.g., NYSE-MO, NASDAQ-AAPL). Lines starting with # are comments.",
+    },
+    "cash_secured_put_symbols": {
+        "path": "data/cash_secured_put_symbols.txt",
+        "label": "Cash-Secured Put Symbols",
+        "hint": "One symbol per line in EXCHANGE-SYMBOL format (e.g., NYSE-GIS, NASDAQ-MSFT). Lines starting with # are comments.",
     },
 }
 
@@ -190,9 +190,8 @@ def _build_agent_table(agent_key: str, agent_info: Dict) -> Dict[str, Any]:
     """Build the per-agent table data for the dashboard."""
     is_pm = agent_info["is_position_monitor"]
 
-    # Use signal log for sell-side agents, decision log for monitors
-    log_path = agent_info["signal_log"] if not is_pm else agent_info["decision_log"]
-    entries = read_jsonl(log_path)
+    # Always use signal_log for dashboard counts (signals = actionable only)
+    entries = read_jsonl(agent_info["signal_log"])
 
     # Group by symbol key
     groups: Dict[str, List[Dict[str, Any]]] = {}
@@ -323,14 +322,19 @@ async def signals_list(request: Request, agent_type: str, symbol: str):
     info = AGENT_TYPES[agent_type]
     is_pm = info["is_position_monitor"]
 
-    # Read from signal log for sell-side, decision log for monitors
-    log_path = info["signal_log"] if not is_pm else info["decision_log"]
-    all_entries = read_jsonl(log_path)
+    # Always read from signal_log for the signals table
+    all_entries = read_jsonl(info["signal_log"])
 
     # Filter by symbol key
     filtered = [e for e in all_entries if _signal_key(e, is_pm) == symbol]
     # Sort newest first
     filtered.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
+
+    # Also load recent decisions for context
+    all_decisions = read_jsonl(info["decision_log"])
+    decisions = [d for d in all_decisions if _signal_key(d, is_pm) == symbol]
+    decisions.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
+    decisions = decisions[:20]
 
     return templates.TemplateResponse("signals.html", {
         "request": request,
@@ -338,6 +342,7 @@ async def signals_list(request: Request, agent_type: str, symbol: str):
         "agent_label": info["label"],
         "symbol": symbol,
         "signals": filtered,
+        "decisions": decisions,
         "is_position_monitor": is_pm,
     })
 
@@ -352,8 +357,8 @@ async def signal_detail(request: Request, agent_type: str, symbol: str, signal_i
     info = AGENT_TYPES[agent_type]
     is_pm = info["is_position_monitor"]
 
-    log_path = info["signal_log"] if not is_pm else info["decision_log"]
-    all_entries = read_jsonl(log_path)
+    # Always read from signal_log for signal detail
+    all_entries = read_jsonl(info["signal_log"])
     filtered = [e for e in all_entries if _signal_key(e, is_pm) == symbol]
     filtered.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
 

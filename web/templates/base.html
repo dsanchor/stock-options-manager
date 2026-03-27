@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Options Agent{% endblock %}</title>
+    <title>{% block title %}Options manager{% endblock %}</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
     <nav class="topnav">
-        <div class="nav-brand">⚡ Options Agent</div>
+        <div class="nav-brand">⚡ Options manager</div>
         <div class="nav-links">
             <a href="/dashboard" class="{% if request.url.path in ('/', '/dashboard') %}active{% endif %}">Dashboard</a>
             <a href="/settings" class="{% if request.url.path == '/settings' %}active{% endif %}">Settings</a>

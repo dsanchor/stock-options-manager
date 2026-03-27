@@ -60,4 +60,37 @@
     <p class="empty-state">No signals found for this symbol.</p>
 </div>
 {% endif %}
+
+{% if decisions %}
+<div class="page-header" style="margin-top: 2rem;">
+    <h2>Recent Decisions</h2>
+    <p class="subtitle">Last {{ decisions | length }} decision{{ "s" if decisions | length != 1 else "" }} from the analysis log</p>
+</div>
+<div class="card">
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Decision</th>
+                    <th>Underlying</th>
+                    <th>Confidence</th>
+                    <th>Reason</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for d in decisions %}
+                <tr>
+                    <td class="mono">{{ d.timestamp[:19] }}</td>
+                    <td><span class="badge badge-{{ d.decision | lower }}">{{ d.decision }}</span></td>
+                    <td class="mono">${{ d.underlying_price if d.underlying_price else "—" }}</td>
+                    <td><span class="confidence confidence-{{ d.confidence or 'medium' }}">{{ d.confidence or "—" }}</span></td>
+                    <td>{{ d.reason[:100] ~ ("…" if d.reason | length > 100 else "") if d.reason else "—" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
 {% endblock %}
