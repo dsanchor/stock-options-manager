@@ -29,8 +29,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN npx @playwright/mcp@latest --help 2>/dev/null; \
     npx playwright install chromium 2>/dev/null || true
 
-# Application source
-COPY run.py run_web.py ./
+# Application source + config
+COPY config.yaml run.py run_web.py ./
 COPY src/ src/
 COPY web/ web/
 

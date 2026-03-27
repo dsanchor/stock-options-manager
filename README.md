@@ -291,7 +291,6 @@ docker run -d --name options-agent \
   -p 8000:8000 \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
-  -v $(pwd)/config.yaml:/app/config.yaml:ro \
   -e AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com" \
   -e MODEL_DEPLOYMENT="gpt-5.1" \
   -e AZURE_OPENAI_API_KEY="your-api-key-here" \
@@ -302,7 +301,6 @@ docker run -d --name options-agent \
 |---|---|
 | `data/` | Watchlist and position files (user-editable) |
 | `logs/` | JSONL decision and signal logs (persisted across restarts) |
-| `config.yaml` | Configuration file (mounted read-only) |
 | `AZURE_AI_PROJECT_ENDPOINT` | Azure AI Foundry project endpoint |
 | `MODEL_DEPLOYMENT` | Model name (e.g. `gpt-5.1`, `gpt-5.4-mini`) |
 | `AZURE_OPENAI_API_KEY` | Azure OpenAI API key for authentication |
@@ -320,7 +318,6 @@ docker run -d --name options-agent-web \
   -p 8000:8000 \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
-  -v $(pwd)/config.yaml:/app/config.yaml:ro \
   -e AZURE_AI_PROJECT_ENDPOINT="..." \
   -e MODEL_DEPLOYMENT="gpt-5.1" \
   -e AZURE_OPENAI_API_KEY="your-api-key-here" \
