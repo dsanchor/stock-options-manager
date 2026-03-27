@@ -512,7 +512,7 @@ async def chat_api(request: Request):
             model=model,
             messages=api_messages,
             temperature=0.7,
-            max_tokens=2048,
+            max_completion_tokens=2048,
         )
 
         reply = response.choices[0].message.content
