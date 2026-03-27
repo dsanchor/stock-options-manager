@@ -3,25 +3,9 @@ azure:
   model_deployment: "gpt-5.1" # options: "gpt-5.1", "gpt-5.4-mini"
 
 mcp:
-  provider: "tradingview"  # Options: "massive", "alphavantage", "yahoo", or "tradingview"
-  massive:
-    command: "mcp_massive"
-    args: []
-    description: "Massive.com financial data API for stocks, options, forex, crypto market data with SQL querying and Black-Scholes Greeks"
-    env_key: "MASSIVE_API_KEY"
-  alphavantage:
-    transport: "streamable_http"
-    url: "https://mcp.alphavantage.co/mcp?apikey=${ALPHAVANTAGE_API_KEY}"
-    description: "Alpha Vantage remote MCP server for stocks, options, forex, crypto, and technical indicators"
-    env_key: "ALPHAVANTAGE_API_KEY"
-  yahoo:
-    command: "uvx"
-    args: ["mcp-yahoo-finance"]
-    description: "Yahoo Finance MCP server for free real-time stock prices, options chains, fundamentals, dividends, earnings, and analyst recommendations"
-  tradingview:
-    command: "podman"
-    args: ["run", "-i", "--rm", "--init", "mcr.microsoft.com/playwright/mcp"]
-    description: "Playwright MCP server (container) for browser automation — renders TradingView pages with full JavaScript support for technical analysis, forecasts, and options chain data"
+  command: "podman"
+  args: ["run", "-i", "--rm", "--init", "mcr.microsoft.com/playwright/mcp"]
+  description: "Playwright MCP server (container) for browser automation — renders TradingView pages with full JavaScript support for technical analysis, forecasts, and options chain data"
 
 context:
   max_decision_entries: 5   # How many recent decisions to inject as agent context

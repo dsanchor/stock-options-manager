@@ -2,20 +2,12 @@ from .agent_runner import AgentRunner
 
 
 async def run_open_put_monitor(config, runner: AgentRunner):
-    """Run open cash-secured put position monitoring (TradingView only).
+    """Run open cash-secured put position monitoring.
 
     Args:
         config: Configuration object with open put monitor settings
         runner: Initialized AgentRunner instance
     """
-    provider = config.mcp_provider
-    if provider != "tradingview":
-        print(
-            f"WARNING: Open Put Monitor only supports TradingView provider "
-            f"(current: {provider}). Skipping."
-        )
-        return
-
     from .tv_open_put_instructions import TV_OPEN_PUT_INSTRUCTIONS
 
     opm_config = config.open_put_monitor_config

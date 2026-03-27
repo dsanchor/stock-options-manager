@@ -12,14 +12,7 @@ Four specialized agents handle options trading:
 
 The first two agents (sell-side) decide whether to **open** new positions. The last two (position monitors) decide whether to **hold or adjust** existing positions.
 
-Both sell-side agents use the Microsoft Agent Framework (`agent-framework`) with MCP (Model Context Protocol) integration to access real-time market data and options pricing. Four data providers are supported — switch between them in `config.yaml`:
-
-| Provider | MCP Server | Transport | Key Features |
-|----------|-----------|-----------|--------------|
-| **Massive.com** (`massive`) | `mcp_massive` | Local stdio | SQL querying, built-in Black-Scholes Greeks, composable API (search → call → query) |
-| **Alpha Vantage** (`alphavantage`) | `mcp.alphavantage.co` | Streamable HTTP | 50+ tools, built-in technical indicators (RSI, BBANDS, MACD), progressive tool discovery, news sentiment scores |
-| **Yahoo Finance** (`yahoo`) | `mcp-yahoo-finance` | Local stdio | **Free (no API key)**, 12 direct tools, full options chains with IV, earnings dates, analyst recommendations |
-| **TradingView** (`tradingview`) | `@playwright/mcp` | Local stdio | **Free (no API key)**, full JS rendering via headless browser, pre-calculated technical signals (Buy/Sell/Neutral), pivot points (R1-R3, S1-S3), complete options chains, analyst forecasts |
+Both sell-side agents use the Microsoft Agent Framework (`agent-framework`) with TradingView as the data source. Market data is pre-fetched deterministically via Playwright (headless browser in a container) and passed to the LLM for analysis — the LLM never touches the browser directly.
 
 ## How It Works
 
@@ -31,28 +24,25 @@ Scheduler (main.py)
   ├─ Covered Call Agent
   │    for each symbol in data/covered_call_symbols.txt:
   │      1. Load per-symbol context (past decisions + signals)
-  │      2. Gather market data (provider-dependent — see below)
-  │      3. LLM analyzes data → structured JSON decision
+  │      2. Pre-fetch TradingView data (overview, technicals, forecast, options chain)
+  │      3. LLM analyzes pre-fetched data → structured JSON decision
   │      4. Log decision to JSONL; if SELL → also log to signal file
   │
   ├─ Cash Secured Put Agent
   │    (same loop, different symbols file + instructions)
   │
-  ├─ Open Call Monitor (TradingView only)
+  ├─ Open Call Monitor
   │    for each position in data/opened_calls.txt:
   │      1. Parse position (symbol, strike, expiration)
   │      2. Pre-fetch TradingView data
   │      3. LLM assesses assignment risk → WAIT or ROLL decision
   │      4. Log decision; if ROLL/CLOSE → also log to signal file
   │
-  └─ Open Put Monitor (TradingView only)
+  └─ Open Put Monitor
        (same loop, different positions file + instructions)
 ```
 
-**Data gathering differs by provider:**
-
-- **TradingView (pre-fetch architecture):** Python pre-fetches ALL data deterministically — overview, technicals, forecast, and options chain — using the Playwright MCP server driven from `tv_data_fetcher.py`. The LLM never touches the browser. It receives the data as text and only performs analysis. See [Pre-fetch Architecture](#pre-fetch-architecture-tradingview) below.
-- **All other providers (Massive, Alpha Vantage, Yahoo):** The LLM receives MCP tools directly and makes its own tool calls to gather data before analyzing.
+**Data gathering:** Python pre-fetches ALL TradingView data deterministically — overview, technicals, forecast, and options chain — using the Playwright MCP server driven from `tv_data_fetcher.py`. The LLM never touches the browser. It receives the data as text and only performs analysis. See [Pre-fetch Architecture](#pre-fetch-architecture-tradingview) below.
 
 **Per-symbol context injection:** Before each symbol is analyzed, the runner reads that symbol's recent decisions and signals from the JSONL logs and injects them into the prompt. The LLM sees only context for the symbol it's currently analyzing — not a mix of all symbols. Context limits are configurable in `config.yaml` (`context.max_decision_entries`, `context.max_signal_entries`).
 
@@ -77,7 +67,6 @@ The Open Call Monitor and Open Put Monitor watch **existing** short options posi
 | **Input** | Symbol list (`EXCHANGE-SYMBOL`) | Position file (`EXCHANGE-SYMBOL,strike,expiration`) |
 | **Decisions** | SELL / WAIT | WAIT / ROLL_UP / ROLL_DOWN / ROLL_OUT / ROLL_UP_AND_OUT / ROLL_DOWN_AND_OUT / CLOSE |
 | **Signals** | SELL only | Any ROLL or CLOSE |
-| **Providers** | All 4 (Massive, Alpha Vantage, Yahoo, TradingView) | TradingView only |
 | **Focus** | "Should I open a new position?" | "Is my existing position safe?" |
 
 **Position file format** (`data/opened_calls.txt` or `data/opened_puts.txt`):
@@ -135,14 +124,7 @@ All output is [JSON Lines](https://jsonlines.org/) — one JSON object per line.
    ```bash
    az login
    ```
-4. **[Astral UV](https://docs.astral.sh/uv/getting-started/installation/)** (v0.4.0+) - For installing the Massive.com MCP server
-5. **[Node.js](https://nodejs.org/)** (v18+) - Required for the TradingView provider if using `npx` instead of Docker/Podman
-6. **[Docker](https://www.docker.com/) or [Podman](https://podman.io/)** - Required for the TradingView provider (runs Playwright MCP in a container with bundled Chromium)
-5. **API Key** for your chosen data provider (not needed for Yahoo Finance or TradingView):
-   - **Massive.com** — [Get one free at massive.com](https://massive.com/?utm_campaign=mcp&utm_medium=referral&utm_source=github)
-   - **Alpha Vantage** — [Get a free key at alphavantage.co](https://www.alphavantage.co/support/#api-key)
-   - **Yahoo Finance** — No API key needed (free, uses yfinance)
-   - **TradingView** — No API key needed (free, uses Playwright headless browser)
+4. **[Docker](https://www.docker.com/) or [Podman](https://podman.io/)** - Required for the Playwright MCP server (runs in a container with bundled Chromium)
 
 ## Setup
 
@@ -159,27 +141,10 @@ This installs:
 - `azure-identity` - Azure authentication
 - `pyyaml`, `croniter`, `python-dotenv` - Configuration and scheduling
 
-### 2. Install the MCP Financial Data Server
+### 2. Install the Playwright MCP Server
 
-**Massive.com** (local stdio — requires pre-install):
-```bash
-uv tool install "mcp_massive @ git+https://github.com/massive-com/mcp_massive@v0.8.7"
-```
-> **Note:** If your system Python lacks sqlite3 support, install with a uv-managed Python:
-> `uv tool install --python 3.13 "mcp_massive @ git+https://github.com/massive-com/mcp_massive@v0.8.7"`
+TradingView data is fetched via the [Playwright MCP server](https://github.com/microsoft/playwright-mcp) running in a container with bundled Chromium. No API key needed.
 
-**Alpha Vantage** (remote MCP server — no local install needed):
-Alpha Vantage uses a hosted MCP server at `mcp.alphavantage.co`. No local dependencies are required — just set your `ALPHAVANTAGE_API_KEY` and select `alphavantage` in `config.yaml`.
-
-**Yahoo Finance** (local stdio — no API key needed):
-```bash
-# No pre-install required — uvx downloads it on first run.
-# To verify it works:
-uvx mcp-yahoo-finance --help
-```
-> Yahoo Finance is the easiest provider to get started with — no API key, no account signup. It uses [yfinance](https://github.com/ranaroussi/yfinance) under the hood.
-
-**TradingView** (container-based — no API key needed, requires Docker or Podman):
 ```bash
 # Pull the Playwright MCP container image (includes Chromium + all system deps):
 docker pull mcr.microsoft.com/playwright/mcp
@@ -189,60 +154,31 @@ podman pull mcr.microsoft.com/playwright/mcp
 # Test it works:
 echo '{}' | docker run -i --rm --init mcr.microsoft.com/playwright/mcp
 ```
-> TradingView uses the [Playwright MCP server](https://github.com/microsoft/playwright-mcp) running in a container to automate a headless browser that navigates TradingView pages. The container bundles Chromium with all system dependencies — no local browser install needed. Playwright fully renders JavaScript, so options chains, financials, and all dynamic content are available.
+
+> The container bundles Chromium with all system dependencies — no local browser install needed. Playwright fully renders JavaScript, so options chains, financials, and all dynamic content are available.
 >
 > **Config for Podman users:** Change `command` in `config.yaml` from `"docker"` to `"podman"`.
 
 ### 3. Configure Environment Variables
 
-Set your Azure AI Project endpoint and the API key for your selected provider:
+Set your Azure AI Project endpoint:
 
 ```bash
 export AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com"
 
-# For Massive.com provider:
-export MASSIVE_API_KEY="your-massive-api-key"
-
-# For Alpha Vantage provider:
-export ALPHAVANTAGE_API_KEY="your-alphavantage-api-key"
-
-# For Yahoo Finance provider:
-# No API key needed!
-
-# For TradingView provider:
-# No API key needed!
+# No API key needed — TradingView data is free via Playwright browser automation
 ```
-
-> You only need the API key for the provider you've selected in `config.yaml`. Yahoo Finance and TradingView require no key at all.
 
 ### 4. MCP Server Configuration
 
-The MCP server is launched automatically as a subprocess when agents run. Switch providers by changing `mcp.provider` in `config.yaml`:
+The Playwright MCP server is launched automatically as a container subprocess when agents run. Configure the container command in `config.yaml`:
 
 ```yaml
 mcp:
-  provider: "massive"  # Options: "massive", "alphavantage", "yahoo", or "tradingview"
-  massive:
-    command: "mcp_massive"
-    args: []
-    description: "Massive.com financial data API..."
-    env_key: "MASSIVE_API_KEY"
-  alphavantage:
-    transport: "streamable_http"
-    url: "https://mcp.alphavantage.co/mcp?apikey=${ALPHAVANTAGE_API_KEY}"
-    description: "Alpha Vantage remote MCP server..."
-    env_key: "ALPHAVANTAGE_API_KEY"
-  yahoo:
-    command: "uvx"
-    args: ["mcp-yahoo-finance"]
-    description: "Yahoo Finance MCP server (free, no API key)..."
-  tradingview:
-    command: "podman"
-    args: ["run", "-i", "--rm", "--init", "mcr.microsoft.com/playwright/mcp"]
-    description: "Playwright MCP for TradingView (free, container with full JS rendering)..."
+  command: "podman"                     # or "docker"
+  args: ["run", "-i", "--rm", "--init", "mcr.microsoft.com/playwright/mcp"]
+  description: "Playwright MCP server (container) for browser automation..."
 ```
-
-Massive.com uses stdio transport (local subprocess). Alpha Vantage uses streamable HTTP transport (remote server). Yahoo Finance uses stdio transport (local subprocess via `uvx`). TradingView uses stdio transport via a containerized browser (`docker`/`podman run -i`). The transport type is auto-detected from config — stdio providers need `command`+`args`, HTTP providers need `url`. Providers without an `env_key` field (like Yahoo Finance and TradingView) skip API key validation.
 
 ### 5. Configure Symbols
 
@@ -259,7 +195,7 @@ NYSE-AA
 NASDAQ-MSFT
 ```
 
-The exchange prefix is used by the TradingView provider to construct URLs. For other providers, the ticker symbol is automatically extracted (e.g., `NASDAQ-AAPL` → `AAPL`).
+The exchange prefix is used to construct TradingView URLs (e.g., `NASDAQ-AAPL` → `https://www.tradingview.com/symbols/NASDAQ-AAPL/`).
 
 **Position files** (for Open Position Monitors):
 
@@ -285,22 +221,9 @@ azure:
   model_deployment: "gpt-5.1"          # Model deployment name
 
 mcp:
-  provider: "tradingview"               # "massive", "alphavantage", "yahoo", or "tradingview"
-  # Per-provider sub-sections (only the selected provider is loaded):
-  massive:
-    command: "mcp_massive"
-    args: []
-    env_key: "MASSIVE_API_KEY"
-  alphavantage:
-    transport: "streamable_http"
-    url: "https://mcp.alphavantage.co/mcp?apikey=${ALPHAVANTAGE_API_KEY}"
-    env_key: "ALPHAVANTAGE_API_KEY"
-  yahoo:
-    command: "uvx"
-    args: ["mcp-yahoo-finance"]
-  tradingview:
-    command: "podman"                    # or "docker"
-    args: ["run", "-i", "--rm", "--init", "mcr.microsoft.com/playwright/mcp"]
+  command: "podman"                     # or "docker"
+  args: ["run", "-i", "--rm", "--init", "mcr.microsoft.com/playwright/mcp"]
+  description: "Playwright MCP server (container) for browser automation..."
 
 context:
   max_decision_entries: 5               # Recent decisions injected per symbol
@@ -329,8 +252,6 @@ open_put_monitor:
   decision_log: "logs/open_put_monitor_decisions.jsonl"
   signal_log: "logs/open_put_monitor_signals.jsonl"
 ```
-
-Only the selected provider's section is loaded — environment variables for inactive providers are not required. Providers without `env_key` (Yahoo, TradingView) skip API key validation entirely.
 
 ## Running
 
@@ -413,23 +334,17 @@ For `SELL` decisions, `strike`, `expiration`, and premium fields are populated. 
 
 ```
 options-agent/
-├── config.yaml                           # All configuration (provider, symbols, scheduling, context limits)
+├── config.yaml                           # All configuration (MCP, symbols, scheduling, context limits)
 ├── src/
 │   ├── __init__.py
 │   ├── main.py                           # Entry point — scheduler with immediate + periodic runs
 │   ├── config.py                         # YAML config loader with env var substitution and validation
-│   ├── agent_runner.py                   # Core execution engine — pre-fetch vs MCP-tool paths, per-symbol loop
+│   ├── agent_runner.py                   # Core execution engine — TradingView pre-fetch + per-symbol loop
 │   ├── tv_data_fetcher.py                # TradingView pre-fetch module — drives Playwright from Python
-│   ├── covered_call_agent.py             # Covered call wrapper — selects instructions by provider
-│   ├── cash_secured_put_agent.py         # Cash secured put wrapper — selects instructions by provider
-│   ├── open_call_monitor_agent.py        # Open call position monitor wrapper (TradingView only)
-│   ├── open_put_monitor_agent.py         # Open put position monitor wrapper (TradingView only)
-│   ├── covered_call_instructions.py      # Massive.com covered call instructions
-│   ├── cash_secured_put_instructions.py  # Massive.com cash secured put instructions
-│   ├── av_covered_call_instructions.py   # Alpha Vantage covered call instructions
-│   ├── av_cash_secured_put_instructions.py # Alpha Vantage cash secured put instructions
-│   ├── yf_covered_call_instructions.py   # Yahoo Finance covered call instructions
-│   ├── yf_cash_secured_put_instructions.py # Yahoo Finance cash secured put instructions
+│   ├── covered_call_agent.py             # Covered call wrapper
+│   ├── cash_secured_put_agent.py         # Cash secured put wrapper
+│   ├── open_call_monitor_agent.py        # Open call position monitor wrapper
+│   ├── open_put_monitor_agent.py         # Open put position monitor wrapper
 │   ├── tv_covered_call_instructions.py   # TradingView covered call instructions (no-tools variant)
 │   ├── tv_cash_secured_put_instructions.py # TradingView cash secured put instructions (no-tools variant)
 │   ├── tv_open_call_instructions.py      # TradingView open call monitor instructions
@@ -465,19 +380,12 @@ options-agent/
 Make sure you've exported the environment variable with your Azure AI Foundry project endpoint.
 
 ### MCP Server Launch Errors
-- **Massive.com**: Ensure `mcp_massive` is installed: `uv tool install "mcp_massive @ git+https://github.com/massive-com/mcp_massive@v0.8.7"`
-- **Alpha Vantage**: Uses remote server — ensure `ALPHAVANTAGE_API_KEY` is set and you have network connectivity
-- **Yahoo Finance**: Uses local subprocess via `uvx` — ensure `uv` is installed. No API key needed. If the first run is slow, `uvx` is downloading the package.
-- **TradingView**: Uses the Playwright MCP server in a container via `docker run -i --rm --init mcr.microsoft.com/playwright/mcp` (or `podman`). No API key needed. The container bundles Chromium with all system dependencies. First run may be slow while pulling the image (~500MB). If using Podman instead of Docker, change `command` to `"podman"` in `config.yaml`.
-- Verify the correct API key env var is set for your provider (`MASSIVE_API_KEY` or `ALPHAVANTAGE_API_KEY`; Yahoo Finance and TradingView need none)
+- Ensure Docker or Podman is installed and running
+- Verify the Playwright MCP image is pulled: `docker pull mcr.microsoft.com/playwright/mcp`
+- If using Podman instead of Docker, change `command` to `"podman"` in `config.yaml`
+- First run may be slow while pulling the image (~500MB)
 - For stdio providers, check that the command is available in PATH
 - View detailed MCP logs in the agent output
-
-### `ModuleNotFoundError: No module named '_sqlite3'`
-The `mcp_massive` server requires Python's `sqlite3` module. Some system Python builds (e.g., Docker images, custom builds) lack it because `libsqlite3-dev` was not present at compile time. Fix by reinstalling with a uv-managed Python:
-```bash
-uv tool install --reinstall --python 3.13 "mcp_massive @ git+https://github.com/massive-com/mcp_massive@v0.8.7"
-```
 
 ### Authentication Errors
 Run `az login` and ensure you have access to the Azure AI Foundry project.
@@ -487,19 +395,13 @@ Make sure you installed the correct SDK: `pip install agent-framework[foundry]` 
 
 ## Development
 
-The agent instructions are defined in separate files per provider:
-- `src/covered_call_instructions.py` — Covered call instructions (Massive.com)
-- `src/cash_secured_put_instructions.py` — Cash secured put instructions (Massive.com)
-- `src/av_covered_call_instructions.py` — Covered call instructions (Alpha Vantage)
-- `src/av_cash_secured_put_instructions.py` — Cash secured put instructions (Alpha Vantage)
-- `src/yf_covered_call_instructions.py` — Covered call instructions (Yahoo Finance)
-- `src/yf_cash_secured_put_instructions.py` — Cash secured put instructions (Yahoo Finance)
-- `src/tv_covered_call_instructions.py` — Covered call instructions (TradingView)
-- `src/tv_cash_secured_put_instructions.py` — Cash secured put instructions (TradingView)
-- `src/tv_open_call_instructions.py` — Open call monitor instructions (TradingView only)
-- `src/tv_open_put_instructions.py` — Open put monitor instructions (TradingView only)
+The agent instructions are defined in separate files:
+- `src/tv_covered_call_instructions.py` — Covered call instructions
+- `src/tv_cash_secured_put_instructions.py` — Cash secured put instructions
+- `src/tv_open_call_instructions.py` — Open call monitor instructions
+- `src/tv_open_put_instructions.py` — Open put monitor instructions
 
-The trading strategy logic is identical across providers — only the DATA GATHERING PROTOCOL differs to match each MCP server's tool interface.
+All instructions assume pre-fetched TradingView data — the LLM receives market data as text and performs analysis only (no browser tools).
 
 ## Technical Details
 
@@ -509,7 +411,5 @@ This project uses the **Microsoft Agent Framework** (`agent-framework` package f
 Key components:
 - `agent_framework.Agent` - Main agent class
 - `agent_framework.foundry.FoundryChatClient` - Azure AI Foundry integration
-- `agent_framework.MCPStdioTool` - MCP server integration via stdio subprocess
-- `agent_framework.MCPStreamableHTTPTool` - MCP server integration via streamable HTTP (remote servers)
 
-Massive.com uses stdio transport (local subprocess). Alpha Vantage uses streamable HTTP transport (remote server at `mcp.alphavantage.co`). Yahoo Finance uses stdio transport (local subprocess via `uvx mcp-yahoo-finance`, free, no API key). TradingView uses stdio transport (containerized headless browser via Docker/Podman running `mcr.microsoft.com/playwright/mcp`, free, renders TradingView pages with full JavaScript support for complete options chain and technical data). All tool calls are auto-approved (`approval_mode="never_require"`).
+TradingView data is fetched via the Playwright MCP server running in a container (`docker`/`podman run -i --rm --init mcr.microsoft.com/playwright/mcp`). The server is driven from Python (`tv_data_fetcher.py`), not by the LLM. The LLM receives pre-fetched data as text and performs analysis only — no tools are given to the agent.
