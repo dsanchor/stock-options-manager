@@ -46,7 +46,7 @@ class AgentRunner:
         Args:
             project_endpoint: Azure AI Foundry project endpoint URL
             model: Model deployment name
-            mcp_command: Command to launch Playwright MCP server (e.g., "podman")
+            mcp_command: Command to launch Playwright MCP server (e.g., "npx")
             mcp_args: Arguments for MCP command
             mcp_description: Description of the MCP server capabilities
         """

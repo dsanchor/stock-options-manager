@@ -12,7 +12,7 @@ Four specialized agents handle options trading:
 
 The first two agents (sell-side) decide whether to **open** new positions. The last two (position monitors) decide whether to **hold or adjust** existing positions.
 
-Both sell-side agents use the Microsoft Agent Framework (`agent-framework`) with TradingView as the data source. Market data is pre-fetched deterministically via Playwright (headless browser in a container) and passed to the LLM for analysis — the LLM never touches the browser directly.
+Both sell-side agents use the Microsoft Agent Framework (`agent-framework`) with TradingView as the data source. Market data is pre-fetched deterministically via [Playwright MCP](https://github.com/microsoft/playwright-mcp) (headless browser) and passed to the LLM for analysis — the LLM never touches the browser directly.
 
 ## How It Works
 
@@ -124,7 +124,7 @@ All output is [JSON Lines](https://jsonlines.org/) — one JSON object per line.
    ```bash
    az login
    ```
-4. **[Docker](https://www.docker.com/) or [Podman](https://podman.io/)** - Required for the Playwright MCP server (runs in a container with bundled Chromium)
+4. **[Node.js](https://nodejs.org/)** - Required for the Playwright MCP server (runs via `npx`)
 
 ## Setup
 
@@ -143,21 +143,14 @@ This installs:
 
 ### 2. Install the Playwright MCP Server
 
-TradingView data is fetched via the [Playwright MCP server](https://github.com/microsoft/playwright-mcp) running in a container with bundled Chromium. No API key needed.
+TradingView data is fetched via the [Playwright MCP server](https://github.com/microsoft/playwright-mcp) running locally via `npx`. No API key needed.
 
 ```bash
-# Pull the Playwright MCP container image (includes Chromium + all system deps):
-docker pull mcr.microsoft.com/playwright/mcp
-# Or with Podman:
-podman pull mcr.microsoft.com/playwright/mcp
-
-# Test it works:
-echo '{}' | docker run -i --rm --init mcr.microsoft.com/playwright/mcp
+# Test it works (first run downloads Playwright + Chromium automatically):
+npx @playwright/mcp@latest --help
 ```
 
-> The container bundles Chromium with all system dependencies — no local browser install needed. Playwright fully renders JavaScript, so options chains, financials, and all dynamic content are available.
->
-> **Config for Podman users:** Change `command` in `config.yaml` from `"docker"` to `"podman"`.
+> Playwright MCP bundles Chromium and fully renders JavaScript, so options chains, financials, and all dynamic content are available.
 
 ### 3. Configure Environment Variables
 
@@ -172,13 +165,13 @@ export MODEL_DEPLOYMENT="gpt-5.1"  # or "gpt-5.4-mini"
 
 ### 4. MCP Server Configuration
 
-The Playwright MCP server is launched automatically as a container subprocess when agents run. Configure the container command in `config.yaml`:
+The Playwright MCP server is launched automatically as a subprocess via `npx` when agents run. Configure in `config.yaml`:
 
 ```yaml
 mcp:
-  command: "podman"                     # or "docker"
-  args: ["run", "-i", "--rm", "--init", "mcr.microsoft.com/playwright/mcp"]
-  description: "Playwright MCP server (container) for browser automation..."
+  command: "npx"
+  args: ["@playwright/mcp@latest"]
+  description: "Playwright MCP server for browser automation..."
 ```
 
 ### 5. Configure Symbols
@@ -222,9 +215,9 @@ azure:
   model_deployment: "${MODEL_DEPLOYMENT}"  # From env variable (e.g. gpt-5.1, gpt-5.4-mini)
 
 mcp:
-  command: "podman"                     # or "docker"
-  args: ["run", "-i", "--rm", "--init", "mcr.microsoft.com/playwright/mcp"]
-  description: "Playwright MCP server (container) for browser automation..."
+  command: "npx"
+  args: ["@playwright/mcp@latest"]
+  description: "Playwright MCP server for browser automation..."
 
 context:
   max_decision_entries: 5               # Recent decisions injected per symbol
@@ -381,11 +374,9 @@ options-agent/
 Make sure you've exported the environment variable with your Azure AI Foundry project endpoint.
 
 ### MCP Server Launch Errors
-- Ensure Docker or Podman is installed and running
-- Verify the Playwright MCP image is pulled: `docker pull mcr.microsoft.com/playwright/mcp`
-- If using Podman instead of Docker, change `command` to `"podman"` in `config.yaml`
-- First run may be slow while pulling the image (~500MB)
-- For stdio providers, check that the command is available in PATH
+- Ensure Node.js is installed and `npx` is available in PATH
+- First run may be slow while downloading `@playwright/mcp` and Chromium
+- Test manually: `npx @playwright/mcp@latest --help`
 - View detailed MCP logs in the agent output
 
 ### Authentication Errors
@@ -413,7 +404,7 @@ Key components:
 - `agent_framework.Agent` - Main agent class
 - `agent_framework.foundry.FoundryChatClient` - Azure AI Foundry integration
 
-TradingView data is fetched via the Playwright MCP server running in a container (`docker`/`podman run -i --rm --init mcr.microsoft.com/playwright/mcp`). The server is driven from Python (`tv_data_fetcher.py`), not by the LLM. The LLM receives pre-fetched data as text and performs analysis only — no tools are given to the agent.
+TradingView data is fetched via the Playwright MCP server (`npx @playwright/mcp@latest`). The server is driven from Python (`tv_data_fetcher.py`), not by the LLM. The LLM receives pre-fetched data as text and performs analysis only — no tools are given to the agent.
 
 ---
 

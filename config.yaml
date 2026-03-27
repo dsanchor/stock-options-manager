@@ -3,9 +3,9 @@ azure:
   model_deployment: "${MODEL_DEPLOYMENT}" # options: "gpt-5.1", "gpt-5.4-mini"
 
 mcp:
-  command: "podman"
-  args: ["run", "-i", "--rm", "--init", "mcr.microsoft.com/playwright/mcp"]
-  description: "Playwright MCP server (container) for browser automation — renders TradingView pages with full JavaScript support for technical analysis, forecasts, and options chain data"
+  command: "npx"
+  args: ["@playwright/mcp@latest"]
+  description: "Playwright MCP server for browser automation — renders TradingView pages with full JavaScript support for technical analysis, forecasts, and options chain data"
 
 context:
   max_decision_entries: 5   # How many recent decisions to inject as agent context
