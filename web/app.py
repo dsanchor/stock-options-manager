@@ -186,19 +186,48 @@ def _count_by_range(entries: List[Dict[str, Any]]) -> Dict[str, int]:
     return counts
 
 
+def _seed_from_source(source_file: str, is_pm: bool) -> tuple:
+    """Parse a source data file and return (groups, display_map) pre-seeded
+    with empty lists so every symbol/position gets a dashboard row."""
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    display_map: Dict[str, str] = {}
+    content = read_data_file(source_file)
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if is_pm:
+            parts = line.split(",")
+            if len(parts) < 3:
+                continue
+            symbol = parts[0].split("-", 1)[-1]
+            strike = float(parts[1])
+            expiration = parts[2].strip()
+            key = f"{symbol}_{strike}_{expiration}"
+            display = f"{symbol} ${strike} exp {expiration}"
+        else:
+            symbol = line.split("-", 1)[-1]
+            key = symbol
+            display = symbol
+        groups.setdefault(key, [])
+        display_map.setdefault(key, display)
+    return groups, display_map
+
+
 def _build_agent_table(agent_key: str, agent_info: Dict) -> Dict[str, Any]:
     """Build the per-agent table data for the dashboard."""
     is_pm = agent_info["is_position_monitor"]
 
+    # Seed rows from the source data file so ALL symbols appear
+    groups, display_map = _seed_from_source(agent_info["source_file"], is_pm)
+
     # Always use signal_log for dashboard counts (signals = actionable only)
     entries = read_jsonl(agent_info["signal_log"])
 
-    # Group by symbol key
-    groups: Dict[str, List[Dict[str, Any]]] = {}
-    display_map: Dict[str, str] = {}
+    # Layer signal entries on top
     for e in entries:
         key = _signal_key(e, is_pm)
-        display_map[key] = _symbol_display(e, is_pm)
+        display_map.setdefault(key, _symbol_display(e, is_pm))
         groups.setdefault(key, []).append(e)
 
     rows = []
