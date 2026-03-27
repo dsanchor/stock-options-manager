@@ -234,172 +234,267 @@ class AgentRunner:
                 f"Export it before running: export {self.mcp_env_key}='your-key'"
             )
         
-        # Create MCP tool based on transport type
-        if self.mcp_transport == "streamable_http":
-            safe_url = _mask_url(self.mcp_url)
-            logger.info(
-                "Creating MCPStreamableHTTPTool – provider=%s, url=%s, description=%s",
-                self.mcp_provider, safe_url, self.mcp_description,
-            )
-            mcp_tool = MCPStreamableHTTPTool(
-                name=self.mcp_provider,
-                url=self.mcp_url,
-                description=self.mcp_description,
-                approval_mode="never_require",
-            )
-        else:
-            logger.info(
-                "Creating MCPStdioTool – provider=%s, command=%s, args=%s, description=%s",
-                self.mcp_provider, self.mcp_command, self.mcp_args, self.mcp_description,
-            )
-            mcp_env = os.environ.copy()
-            mcp_tool = MCPStdioTool(
-                name=self.mcp_provider,
-                command=self.mcp_command,
-                args=self.mcp_args,
-                description=self.mcp_description,
-                approval_mode="never_require",
-                env=mcp_env,
-            )
-        logger.debug("MCP tool object created: %r", mcp_tool)
+        # -----------------------------------------------------------------
+        # TradingView path: pre-fetch data in Python, agent only analyzes
+        # -----------------------------------------------------------------
+        if self.mcp_provider == "tradingview":
+            from .tv_data_fetcher import TradingViewFetcher
 
-        # Use context manager for proper MCP cleanup
-        try:
-            logger.info("Opening MCP connection (entering context manager)…")
-            ctx = mcp_tool.__aenter__()
-            await ctx
-            logger.info("MCP connection established successfully.")
-        except Exception:
-            logger.error(
-                "MCP connection FAILED during context-manager entry:\n%s",
-                traceback.format_exc(),
-            )
-            raise
-
-        try:
-            # Tool discovery – agent_framework does not currently expose a
-            # public method to list available MCP tools after connection.
-            # If a `.tools` attribute or `list_tools()` method is added in the
-            # future, log them here for diagnostics.
-            if hasattr(mcp_tool, "tools"):
-                logger.debug("Available MCP tools: %s", mcp_tool.tools)
-            elif hasattr(mcp_tool, "list_tools"):
-                try:
-                    discovered = await mcp_tool.list_tools()
-                    logger.debug("Available MCP tools: %s", discovered)
-                except Exception:
-                    logger.debug("list_tools() call failed: %s", traceback.format_exc())
-            else:
+            async with TradingViewFetcher(self.mcp_command, self.mcp_args) as fetcher:
+                agent = ChatAgent(
+                    chat_client=self.client,
+                    name=name,
+                    instructions=instructions,
+                    # NO tools — agent only analyzes pre-fetched data
+                )
                 logger.debug(
-                    "MCP tool object has no .tools attr or list_tools() method – "
-                    "skipping tool discovery."
+                    "ChatAgent '%s' created WITHOUT tools (TradingView pre-fetch mode).",
+                    name,
                 )
 
-            agent = ChatAgent(
-                chat_client=self.client,
-                name=name,
-                instructions=instructions,
-                tools=mcp_tool,
-            )
-            logger.debug("ChatAgent '%s' created with MCP tool '%s'.", name, self.mcp_provider)
+                for symbol in symbols:
+                    print(f"\n--- Analyzing {symbol} ---")
+                    logger.info("Starting pre-fetch + agent.run() for symbol=%s", symbol)
 
-            for symbol in symbols:
-                print(f"\n--- Analyzing {symbol} ---")
-                logger.info("Starting agent.run() for symbol=%s", symbol)
+                    try:
+                        exchange, ticker = symbol.split('-', 1) if '-' in symbol else ("", symbol)
 
-                try:
-                    # Parse exchange-symbol format (e.g., "NYSE-AA" → exchange="NYSE", ticker="AA")
-                    if '-' in symbol:
-                        exchange, ticker = symbol.split('-', 1)
-                    else:
-                        exchange, ticker = "", symbol
+                        # Pre-fetch all TradingView data deterministically
+                        data = await fetcher.fetch_all(symbol)
 
-                    message = f"""Analyze {ticker} (exchange: {exchange}, full symbol: {symbol}) and provide a trading decision.
+                        message = f"""Analyze {ticker} (exchange: {exchange}, full symbol: {symbol}).
+
+=== PRE-FETCHED TRADINGVIEW DATA ===
+
+--- TECHNICALS PAGE ({exchange}:{ticker}) ---
+{data['technicals']}
+
+--- FORECAST PAGE ({exchange}:{ticker}) ---
+{data['forecast']}
+
+--- OPTIONS CHAIN ({exchange}:{ticker}) ---
+{data['options_chain']}
+
+=== END OF DATA ===
+
+Previous decisions for context:
+{previous_decisions}
+
+All market data has been pre-fetched above. Do NOT use any browser tools — analyze the data provided and output your decision in the required JSON format."""
+
+                        result = await agent.run(message)
+                        response_text = result.text or str(result)
+
+                        logger.info(
+                            "agent.run() completed for %s – response length=%d",
+                            symbol, len(response_text),
+                        )
+                        logger.debug(
+                            "Response first 500 chars for %s: %s",
+                            symbol, response_text[:500],
+                        )
+
+                        print(f"Response: {response_text[:200]}...")
+
+                        # Log decision
+                        decision_line, json_data = self._extract_decision_line(symbol, response_text)
+                        if json_data is not None:
+                            append_decision(decision_log_path, json_data)
+                        else:
+                            append_decision(decision_log_path, {
+                                "symbol": symbol,
+                                "summary": decision_line,
+                                "timestamp": datetime.now().isoformat(),
+                            })
+                        print(f"Logged decision")
+
+                        # Check for sell signal
+                        if self._is_sell_signal(response_text, json_data):
+                            signal_data = json_data if json_data is not None else {
+                                "symbol": symbol,
+                                "summary": decision_line,
+                                "timestamp": datetime.now().isoformat(),
+                            }
+                            append_signal(signal_log_path, signal_data)
+                            print(f"⚠️ SELL SIGNAL logged for {symbol}")
+
+                    except Exception as e:
+                        logger.error(
+                            "agent.run() FAILED for %s:\n%s",
+                            symbol, traceback.format_exc(),
+                        )
+                        print(f"Error analyzing {symbol}: {e}")
+                        append_decision(decision_log_path, {
+                            "error": str(e),
+                            "symbol": symbol,
+                            "timestamp": datetime.now().isoformat(),
+                        })
+
+        # -----------------------------------------------------------------
+        # All other providers: existing MCP-based flow (agent uses tools)
+        # -----------------------------------------------------------------
+        else:
+            # Create MCP tool based on transport type
+            if self.mcp_transport == "streamable_http":
+                safe_url = _mask_url(self.mcp_url)
+                logger.info(
+                    "Creating MCPStreamableHTTPTool – provider=%s, url=%s, description=%s",
+                    self.mcp_provider, safe_url, self.mcp_description,
+                )
+                mcp_tool = MCPStreamableHTTPTool(
+                    name=self.mcp_provider,
+                    url=self.mcp_url,
+                    description=self.mcp_description,
+                    approval_mode="never_require",
+                )
+            else:
+                logger.info(
+                    "Creating MCPStdioTool – provider=%s, command=%s, args=%s, description=%s",
+                    self.mcp_provider, self.mcp_command, self.mcp_args, self.mcp_description,
+                )
+                mcp_env = os.environ.copy()
+                mcp_tool = MCPStdioTool(
+                    name=self.mcp_provider,
+                    command=self.mcp_command,
+                    args=self.mcp_args,
+                    description=self.mcp_description,
+                    approval_mode="never_require",
+                    env=mcp_env,
+                )
+            logger.debug("MCP tool object created: %r", mcp_tool)
+
+            # Use context manager for proper MCP cleanup
+            try:
+                logger.info("Opening MCP connection (entering context manager)…")
+                ctx = mcp_tool.__aenter__()
+                await ctx
+                logger.info("MCP connection established successfully.")
+            except Exception:
+                logger.error(
+                    "MCP connection FAILED during context-manager entry:\n%s",
+                    traceback.format_exc(),
+                )
+                raise
+
+            try:
+                # Tool discovery
+                if hasattr(mcp_tool, "tools"):
+                    logger.debug("Available MCP tools: %s", mcp_tool.tools)
+                elif hasattr(mcp_tool, "list_tools"):
+                    try:
+                        discovered = await mcp_tool.list_tools()
+                        logger.debug("Available MCP tools: %s", discovered)
+                    except Exception:
+                        logger.debug("list_tools() call failed: %s", traceback.format_exc())
+                else:
+                    logger.debug(
+                        "MCP tool object has no .tools attr or list_tools() method – "
+                        "skipping tool discovery."
+                    )
+
+                agent = ChatAgent(
+                    chat_client=self.client,
+                    name=name,
+                    instructions=instructions,
+                    tools=mcp_tool,
+                )
+                logger.debug("ChatAgent '%s' created with MCP tool '%s'.", name, self.mcp_provider)
+
+                for symbol in symbols:
+                    print(f"\n--- Analyzing {symbol} ---")
+                    logger.info("Starting agent.run() for symbol=%s", symbol)
+
+                    try:
+                        if '-' in symbol:
+                            exchange, ticker = symbol.split('-', 1)
+                        else:
+                            exchange, ticker = "", symbol
+
+                        message = f"""Analyze {ticker} (exchange: {exchange}, full symbol: {symbol}) and provide a trading decision.
 
 Previous decisions for context:
 {previous_decisions}
 
 Analyze {ticker} NOW. Use the available MCP tools to gather current data. The full exchange-symbol is {symbol}. Provide your decision in the required output format."""
 
-                    # Run agent (async)
-                    result = await agent.run(message)
-                    response_text = result.text or str(result)
+                        result = await agent.run(message)
+                        response_text = result.text or str(result)
 
-                    logger.info(
-                        "agent.run() completed for %s – response length=%d",
-                        symbol, len(response_text),
-                    )
-                    logger.debug(
-                        "Response first 500 chars for %s: %s",
-                        symbol, response_text[:500],
-                    )
+                        logger.info(
+                            "agent.run() completed for %s – response length=%d",
+                            symbol, len(response_text),
+                        )
+                        logger.debug(
+                            "Response first 500 chars for %s: %s",
+                            symbol, response_text[:500],
+                        )
 
-                    # Trace tool calls from the conversation to debug page-loading issues
-                    if result.messages:
-                        tool_calls_summary = []
-                        for msg in result.messages:
-                            role = getattr(msg, 'role', None) or getattr(msg, 'type', '?')
-                            if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                                for tc in msg.tool_calls:
-                                    fn_name = getattr(tc, 'name', None) or (tc.function.name if hasattr(tc, 'function') else '?')
-                                    fn_args = getattr(tc, 'arguments', None) or (tc.function.arguments if hasattr(tc, 'function') else '')
-                                    tool_calls_summary.append(f"{fn_name}({str(fn_args)[:120]})")
-                            elif hasattr(msg, 'content') and role in ('tool', 'function'):
-                                content_len = len(str(msg.content)) if msg.content else 0
-                                tool_calls_summary.append(f"  → response ({content_len} chars)")
-                        if tool_calls_summary:
-                            logger.debug(
-                                "Tool call trace for %s:\n  %s",
-                                symbol, "\n  ".join(tool_calls_summary),
-                            )
+                        # Trace tool calls from the conversation
+                        if result.messages:
+                            tool_calls_summary = []
+                            for msg in result.messages:
+                                role = getattr(msg, 'role', None) or getattr(msg, 'type', '?')
+                                if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                                    for tc in msg.tool_calls:
+                                        fn_name = getattr(tc, 'name', None) or (tc.function.name if hasattr(tc, 'function') else '?')
+                                        fn_args = getattr(tc, 'arguments', None) or (tc.function.arguments if hasattr(tc, 'function') else '')
+                                        tool_calls_summary.append(f"{fn_name}({str(fn_args)[:120]})")
+                                elif hasattr(msg, 'content') and role in ('tool', 'function'):
+                                    content_len = len(str(msg.content)) if msg.content else 0
+                                    tool_calls_summary.append(f"  → response ({content_len} chars)")
+                            if tool_calls_summary:
+                                logger.debug(
+                                    "Tool call trace for %s:\n  %s",
+                                    symbol, "\n  ".join(tool_calls_summary),
+                                )
 
-                    print(f"Response: {response_text[:200]}...")
+                        print(f"Response: {response_text[:200]}...")
 
-                    # Log decision (extract structured JSON + summary from response)
-                    decision_line, json_data = self._extract_decision_line(symbol, response_text)
-                    if json_data is not None:
-                        append_decision(decision_log_path, json_data)
-                    else:
+                        # Log decision
+                        decision_line, json_data = self._extract_decision_line(symbol, response_text)
+                        if json_data is not None:
+                            append_decision(decision_log_path, json_data)
+                        else:
+                            append_decision(decision_log_path, {
+                                "symbol": symbol,
+                                "summary": decision_line,
+                                "timestamp": datetime.now().isoformat(),
+                            })
+                        print(f"Logged decision")
+
+                        # Check for sell signal
+                        if self._is_sell_signal(response_text, json_data):
+                            signal_data = json_data if json_data is not None else {
+                                "symbol": symbol,
+                                "summary": decision_line,
+                                "timestamp": datetime.now().isoformat(),
+                            }
+                            append_signal(signal_log_path, signal_data)
+                            print(f"⚠️ SELL SIGNAL logged for {symbol}")
+
+                    except Exception as e:
+                        logger.error(
+                            "agent.run() FAILED for %s:\n%s",
+                            symbol, traceback.format_exc(),
+                        )
+                        print(f"Error analyzing {symbol}: {e}")
                         append_decision(decision_log_path, {
+                            "error": str(e),
                             "symbol": symbol,
-                            "summary": decision_line,
                             "timestamp": datetime.now().isoformat(),
                         })
-                    print(f"Logged decision")
 
-                    # Check for sell signal
-                    if self._is_sell_signal(response_text, json_data):
-                        signal_data = json_data if json_data is not None else {
-                            "symbol": symbol,
-                            "summary": decision_line,
-                            "timestamp": datetime.now().isoformat(),
-                        }
-                        append_signal(signal_log_path, signal_data)
-                        print(f"⚠️ SELL SIGNAL logged for {symbol}")
-
-                except Exception as e:
+            finally:
+                # MCP cleanup – always exit the context manager
+                try:
+                    logger.info("Closing MCP connection (exiting context manager)…")
+                    await mcp_tool.__aexit__(None, None, None)
+                    logger.info("MCP connection closed normally.")
+                except Exception:
                     logger.error(
-                        "agent.run() FAILED for %s:\n%s",
-                        symbol, traceback.format_exc(),
+                        "MCP cleanup raised an exception:\n%s",
+                        traceback.format_exc(),
                     )
-                    print(f"Error analyzing {symbol}: {e}")
-                    append_decision(decision_log_path, {
-                        "error": str(e),
-                        "symbol": symbol,
-                        "timestamp": datetime.now().isoformat(),
-                    })
-
-        finally:
-            # MCP cleanup – always exit the context manager
-            try:
-                logger.info("Closing MCP connection (exiting context manager)…")
-                await mcp_tool.__aexit__(None, None, None)
-                logger.info("MCP connection closed normally.")
-            except Exception:
-                logger.error(
-                    "MCP cleanup raised an exception:\n%s",
-                    traceback.format_exc(),
-                )
 
         print(f"\n{'='*60}")
         print(f"Completed {name} analysis")

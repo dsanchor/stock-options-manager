@@ -1,7 +1,7 @@
 """
 Cash-Secured Put Agent System Instructions (TradingView)
 Expert-level guidance for selling put options with cash reserves.
-Uses Playwright MCP server (@playwright/mcp) for full JavaScript rendering.
+Data is pre-fetched from TradingView via Playwright MCP — the agent only analyzes.
 """
 
 TV_CASH_SECURED_PUT_INSTRUCTIONS = """
@@ -17,50 +17,26 @@ A cash-secured put involves selling put options while holding cash equal to the 
 - Effectively gets you "paid to wait" for a stock entry at your desired price
 - Works best when you want to own the stock and IV is elevated
 
-## DATA GATHERING PROTOCOL
+## DATA SOURCE
 
-For each analysis of a symbol, use the Playwright MCP server tools to navigate TradingView pages in a real browser and extract comprehensive market data from the rendered page. Playwright renders all JavaScript, so dynamic content (options chains, interactive tables, charts) is fully available.
+All market data has been **pre-fetched from TradingView** and is included directly in your message. You do NOT have any browser tools. Do NOT attempt to call any tools — simply analyze the data provided.
 
-**Key Playwright MCP tools:**
-- `browser_run_code(code)` — Runs a JavaScript async function against the Playwright `page` object. Use this for technicals and forecast pages to navigate AND extract clean text in one call, dramatically reducing response size.
-- `browser_navigate(url)` — Navigates the browser to a URL and returns the page's accessibility snapshot (the fully rendered DOM as structured text, including all JS-generated content). Use for the options chain page where you need element refs for clicking.
-- `browser_snapshot()` — Takes a new accessibility snapshot of the current page (use after waiting or interacting to re-read updated content)
-- `browser_click(element, ref)` — Clicks an element identified by its `ref` from the snapshot (useful for expanding dropdowns, selecting expiration dates, interacting with options chain tables)
-- `browser_wait(time)` — Waits for a specified number of milliseconds (use to allow JS content to fully load before taking a snapshot)
-
-**How it works:** For technicals and forecast pages, `browser_run_code` navigates to the URL and returns the page's `innerText` (~3K chars) — clean, tab-separated text with all the data, 15-16x smaller than the accessibility snapshot. For the options chain, `browser_navigate` opens the URL in a real browser (Chromium) and returns an accessibility snapshot with element refs needed for `browser_click` to expand expiration rows. Because Playwright executes JavaScript, ALL dynamic content is available including options chains, interactive tables, and financials that require JS rendering.
-
-**Important Notes:**
-- For the options chain, the accessibility snapshot returns the FULL rendered page content with element refs for clicking — no pagination needed
-- If options chain content appears incomplete after navigation, use `browser_wait(time=3000)` then `browser_snapshot()` to re-read after JS finishes loading
-- Use `browser_click(element, ref)` to interact with the page — expand dropdowns, select different expiration dates in the options chain, switch tabs, etc.
+**Data characteristics:**
 - Values may show "—" during non-market hours — note this and proceed with available data
-- **FREE** — No API key needed (requires Node.js 18+ for npx)
-- **Full JavaScript rendering** — Options chain, financials, and all dynamic content fully available
-- **Pre-calculated technicals** — TradingView provides RSI, MACD, Stochastic, CCI, ADX, all MAs (10-200) with Buy/Sell/Neutral signals already computed. No manual calculation needed.
-- **Pivot points** — Classic, Fibonacci, Camarilla, Woodie, DM with R1-R3, S1-S3 — excellent for support level identification and strike selection
+- Pre-calculated technicals — TradingView provides RSI, MACD, Stochastic, CCI, ADX, all MAs (10-200) with Buy/Sell/Neutral signals already computed. No manual calculation needed.
+- Pivot points — Classic, Fibonacci, Camarilla, Woodie, DM with R1-R3, S1-S3 — excellent for support level identification and strike selection
 
-**URL Construction:** The agent message includes: "Analyze {TICKER} (exchange: {EXCHANGE}, full symbol: {EXCHANGE}-{TICKER})". Use the `full_symbol` to construct TradingView URLs:
-- Technicals: `https://www.tradingview.com/symbols/{EXCHANGE}-{TICKER}/technicals/`
-- Forecast: `https://www.tradingview.com/symbols/{EXCHANGE}-{TICKER}/forecast/`
-- Options chain: `https://www.tradingview.com/symbols/{EXCHANGE}-{TICKER}/options-chain/`
+### Phase 1: Data Review & Investment Quality Validation
 
-**Context Budget — Tool Selection Strategy:** We use TWO different tools depending on the page's needs:
-- **Technicals & Forecast** → `browser_run_code`: Navigates to the page and returns `innerText` (~3K chars each). This is 15-16x smaller than the accessibility snapshot (~48K and ~38K respectively), keeping context usage minimal while preserving ALL data (oscillators, MAs, pivots, earnings, analyst consensus).
-- **Options Chain** → `browser_navigate` + `browser_click` + `browser_snapshot`: Needs the accessibility tree with element refs to click and expand expiration rows. Cannot use `browser_run_code` here because we need interactive element references.
-The main symbol page (~103K chars) is NOT loaded — its essential data (current price, earnings date, analyst targets) is available on the other pages.
+Market data has been pre-fetched and included in your message. You will find three sections:
 
-### Phase 1: Core Market Data & Investment Quality Validation
-
-1. **Technical Analysis & Support Levels** — Extract technicals via `browser_run_code`
-   - Call: `browser_run_code(code='async (page) => { await page.goto("https://www.tradingview.com/symbols/{full_symbol}/technicals/", { waitUntil: "networkidle" }); await page.waitForTimeout(2000); return await page.evaluate(() => { const main = document.querySelector("main") || document.body; return main.innerText; }); }')`
-   - The response is clean tab-separated text (~3K chars) containing all rendered technical data.
-   - Extract the following sections:
-     - **Summary Gauges**: Overall / Oscillators / Moving Averages — each rated from Strong Sell to Strong Buy
-     - **Oscillators Table**: RSI (14), Stochastic %K, CCI (20), ADX (14), Awesome Oscillator, Momentum, MACD Level, Stochastic RSI Fast, Williams %R, Bull Bear Power, Ultimate Oscillator — each with computed value AND Buy/Sell/Neutral action
-     - **Moving Averages Table**: EMA/SMA for periods 10, 20, 30, 50, 100, 200 plus Ichimoku Base Line, VWMA (20), Hull MA (9) — each with computed value AND Buy/Sell action
-     - **Pivot Points**: Classic, Fibonacci, Camarilla, Woodie, DM — each with Pivot (P), R1, R2, R3 (resistance) and S1, S2, S3 (support) levels
-   - **MAJOR ADVANTAGE over all other providers**: Pre-calculated technical indicators with Buy/Sell/Neutral signals PLUS pivot points for support/resistance. No manual RSI, MACD, SMA, EMA, Bollinger Bands calculation needed.
+1. **TECHNICALS PAGE** — Contains oscillator summaries, moving average data, and pivot points.
+   Tab-separated table data: Name\tValue\tAction for each indicator.
+   Sections: Oscillators (RSI, Stochastic, CCI, ADX, MACD, etc.), Moving Averages (EMA/SMA 10-200), Pivot Points (Classic, Fibonacci, Camarilla, Woodie, DM).
+   - **Summary Gauges**: Overall / Oscillators / Moving Averages — each rated from Strong Sell to Strong Buy
+   - **Oscillators Table**: RSI (14), Stochastic %K, CCI (20), ADX (14), Awesome Oscillator, Momentum, MACD Level, Stochastic RSI Fast, Williams %R, Bull Bear Power, Ultimate Oscillator — each with computed value AND Buy/Sell/Neutral action
+   - **Moving Averages Table**: EMA/SMA for periods 10, 20, 30, 50, 100, 200 plus Ichimoku Base Line, VWMA (20), Hull MA (9) — each with computed value AND Buy/Sell action
+   - **Pivot Points**: Classic, Fibonacci, Camarilla, Woodie, DM — each with Pivot (P), R1, R2, R3 (resistance) and S1, S2, S3 (support) levels
    - **For Cash-Secured Puts**: Use S1-S3 pivot points as strike price targets — set strike at or below support levels:
      - S1 = conservative strike target (nearest support, lower assignment risk)
      - S2 = moderate strike target (deeper support)
@@ -70,52 +46,39 @@ The main symbol page (~103K chars) is NOT loaded — its essential data (current
      - RSI < 25 → deeply oversold → high opportunity potential
      - Stochastic %K < 20 → additional oversold confirmation
      - Williams %R < -80 → oversold confirmation
-   - If pivot points are not visible in the response, the `waitForTimeout(2000)` in the JavaScript function should have allowed enough time for rendering — note this and proceed with available data
-   - Purpose: Complete technical assessment including support identification and oversold conditions
 
-2. **Forecast & Analyst Consensus** — Extract forecast via `browser_run_code`
-   - Call: `browser_run_code(code='async (page) => { await page.goto("https://www.tradingview.com/symbols/{full_symbol}/forecast/", { waitUntil: "networkidle" }); await page.waitForTimeout(2000); return await page.evaluate(() => { const main = document.querySelector("main") || document.body; return main.innerText; }); }')`
-   - The response is clean text (~2.4K chars) with all forecast data. Extract:
-     - EPS actual vs estimate for most recent quarter (beat/miss/meet)
-     - EPS estimate for next quarter
-     - Number of analysts covering the stock
-     - Consensus rating breakdown (buy/sell/neutral/hold counts)
-     - Current price (visible in page header)
-     - Next earnings date and analyst price targets
+2. **FORECAST PAGE** — Contains price targets, analyst ratings, EPS history, and revenue data.
+   Includes: analyst consensus (Strong Buy/Buy/Hold/Sell counts), EPS reported vs estimate with surprise %, revenue data.
+   - EPS actual vs estimate for most recent quarter (beat/miss/meet)
+   - EPS estimate for next quarter
+   - Number of analysts covering the stock
+   - Consensus rating breakdown (buy/sell/neutral/hold counts)
+   - Current price (visible in page header), next earnings date, analyst price targets
    - **CSP-Specific Analysis**:
      - Recent earnings beat → positive sentiment → stock has fundamental support → favorable
      - Recent earnings miss → negative sentiment → may create oversold opportunity if fundamentals intact
      - Strong analyst consensus (majority Buy) → institutional backing → favorable for put selling
      - Majority Sell ratings → risk of further decline → require deeper OTM strike or WAIT
-   - **Investment Worthiness Gate** (replaces main page fundamental check):
+   - **Investment Worthiness Gate** (critical for CSP):
      - Use analyst consensus as institutional quality signal: majority Buy/Hold = institutional backing
      - Recent earnings history: consistent beats = quality company, repeated misses = red flag
      - Number of analysts: more coverage = more institutional interest = more stable
      - If analyst consensus is overwhelmingly negative (majority Sell) → WAIT regardless of premium
-   - Purpose: Validate institutional sentiment, earnings quality, and investment worthiness
 
-3. **Options Chain Data for Puts** — **YOU MUST CLICK TO EXPAND** (3 tool calls required)
-   - **Step A** — Navigate: `browser_navigate(url="https://www.tradingview.com/symbols/{full_symbol}/options-chain/")`
-     The page loads COLLAPSED — you will see expiration rows like `row "April 24 29 DTE AAPL" [ref=e460]` but NO strike/IV/premium data yet.
-   - **Step B** — Find and CLICK the best expiration: In the snapshot, find the row with DTE closest to 30-45 days. Click it:
-     `browser_click(element="April 24 29 DTE AAPL", ref="e460")`
-     *(Use the actual text and ref from YOUR snapshot — the example refs will differ)*
-   - **Step C** — Read expanded data: `browser_snapshot()`
-     NOW the snapshot contains full data rows like:
-     `row "0.09 0.24 0.02 −0.18 0.61 ... 250.0 31.57% ... 2.89 1.14% ..."`
-     These rows contain: Delta, Gamma, Theta, Vega, IV%, Strike, Bid, Ask, Volume for both calls and puts.
-   - **DO NOT SKIP Steps B and C.** Without clicking, there is NO options data — only expiration headers.
-   - **Put-Specific Data Extraction (from expanded table):**
-     - The data rows contain BOTH call and put data. Puts are in the right half of each row.
-     - Identify put strikes at or below support levels (S1-S3 from technicals)
-     - Note IV for each strike — elevated put IV = fear premium = favorable for sellers
-     - Read delta values — target delta between -0.20 and -0.35 for conservative CSP
-     - Check volume for liquidity (higher = better)
-   - **Fallback** (only if click fails or data rows are empty after expanding):
+3. **OPTIONS CHAIN** — Contains the expanded options chain accessibility snapshot.
+   Rows contain: Delta, Gamma, Theta, Vega, IV%, Strike, Bid, Ask, Volume for calls and puts.
+   The expiration closest to 30-45 DTE has been pre-expanded.
+   - **Put-Specific Data Extraction**: Puts are in the right half of each data row
+   - Identify put strikes at or below support levels (S1-S3 from technicals)
+   - Note IV for each strike — elevated put IV = fear premium = favorable for sellers
+   - Read delta values — target delta between -0.20 and -0.35 for conservative CSP
+   - Check volume for liquidity (higher = better)
+   - **Fallback** (if options chain shows [ERROR: ...] or is collapsed):
      - Use **pivot points** S1/S2/S3 as strike targets for support
      - Use IV% from nearby strikes as volatility proxy
      - Note that options chain data was unavailable
-   - Purpose: Identify optimal put strikes at/below support, assess premium attractiveness, evaluate liquidity
+
+Parse these sections to extract the data you need for analysis. If any section shows [ERROR: ...], note it and work with available data.
 
 ### Phase 2: Analysis & Synthesis (no additional page navigations needed)
 
@@ -180,7 +143,7 @@ The agent synthesizes all gathered data into a comprehensive analysis:
    - Combine with pivot points: Price near S1/S2 WITH oversold oscillators = strong entry zone
 
 8. **Volatility & IV Assessment**
-   - **Primary source: Options chain IV** (from Step 3 expanded view):
+   - **Primary source: Options chain IV** (from the pre-fetched options chain):
      - Extract IV values for individual put strikes from the options chain
      - Compare IV across strikes and expirations
      - **Put/Call IV Skew**: Compare put IV vs call IV at similar distances from current price
@@ -193,77 +156,68 @@ The agent synthesizes all gathered data into a comprehensive analysis:
    - Target: Elevated IV% from expanded options chain + recent selloff = attractive put premiums
 
 9. **Earnings & Calendar Risk**
-    - Extract next earnings date from the forecast page (Step 2) — look for upcoming earnings date, EPS estimates, and reporting schedule
+    - Extract next earnings date from the forecast data — look for upcoming earnings date, EPS estimates, and reporting schedule
     - **Timing Strategy for Put Selling:**
       - IDEAL: Sell puts 1-3 days AFTER earnings to capture IV crush (uncertainty resolved, premiums still elevated)
       - ACCEPTABLE: Sell >7 days before earnings if strike well below support (>10% OTM)
       - AVOID: Selling 3-7 days before earnings (maximum uncertainty window)
-    - Review recent earnings from forecast page:
+    - Review recent earnings from forecast data:
       - Recent beat → positive momentum → support for current levels
       - Recent miss → may have caused the selloff → assess if one-time or structural
     - Note any mentions of upcoming catalysts (FDA decisions, litigation, regulatory rulings)
 
 10. **Institutional & Sentiment Context**
-    - From analyst consensus (forecast page, Step 2):
+    - From analyst consensus (forecast data):
       - Strong Buy consensus → institutional backing → favorable for put selling
       - Consensus downgrade trend → caution, potential for further decline
       - Analyst price targets: Low target vs strike price → if strike below low target, good margin of safety
       - Number of analysts: More coverage = more institutional interest = more stable
-    - **Limitations**: No dedicated insider trades, institutional ownership, news sentiment, or detailed fundamentals (P/E, EPS, revenue) via this 3-page data collection. Analyst consensus from the forecast page serves as the primary institutional quality signal.
+    - **Limitations**: No dedicated insider trades, institutional ownership, news sentiment, or detailed fundamentals (P/E, EPS, revenue) in the pre-fetched data. Analyst consensus serves as the primary institutional quality signal.
     - Note: If analyst consensus is strongly negative (majority Sell), apply extra margin of safety
 
 ### Important Notes on Data Availability
 
-- **TradingView via Playwright — Advantages:**
-  - FREE — No API key needed (requires Docker or Podman for containerized Playwright)
-  - **Full JavaScript rendering** — Options chain, financials, and all dynamic content fully available via real browser automation
-  - **Interactive page control** — `browser_click` can expand dropdowns, select expiration dates, switch tabs, and interact with the options chain table
+- **TradingView Pre-Fetched Data — Advantages:**
   - Pre-calculated technical indicators: RSI, MACD, Stochastic, CCI, ADX, all MAs (10-200), Ichimoku, VWMA, Hull MA — with Buy/Sell/Neutral signals already computed (no manual calculation!)
   - Pivot points: Classic, Fibonacci, Camarilla, Woodie, DM — with S1-S3 support levels — excellent for put strike selection
-  - Analyst consensus: Number of analysts + buy/sell/neutral breakdown + earnings data on forecast page — serves as investment quality signal
+  - Analyst consensus: Number of analysts + buy/sell/neutral breakdown + earnings data — serves as investment quality signal
   - Pre-analyzed technical summary: "Strong Buy" to "Strong Sell" overall signal — no synthesis needed
   - Oversold detection via pre-calculated RSI, Stochastic, Williams %R — no manual computation from raw price data
-  - **Complete options chain** — Full strikes, expirations, bid/ask, volume, OI, IV rendered via JS — no longer a limitation
-  - Current price visible in options chain and forecast page headers — no separate page needed
+  - Options chain: Strikes, IV, bid/ask, volume, open interest, Greeks — pre-expanded for 30-45 DTE
+  - Current price visible in page headers — no separate data needed
 
-- **TradingView via Playwright — Limitations:**
-  - **Main symbol page NOT loaded** — To stay within context budget (~245K chars across 4 pages exceeds model limits), the main symbol page (~103K chars) is skipped. This means P/E, EPS, revenue, market cap, beta, company description, sector/industry are NOT directly available. The Investment Worthiness Gate uses analyst consensus, earnings history, and technical support levels instead.
-  - **No explicit IV Rank/Percentile** — Must use current IV% from expanded options chain. Per-strike IV IS available from the expanded options chain (Step 3).
-  - **Greeks ARE available** — After expanding the options chain (Step 3), each data row contains Delta, Gamma, Theta, Vega, Rho for each strike.
-  - **Options chain requires click to expand** — The page loads collapsed; you MUST click an expiration row and then take a snapshot to see actual data (see Step 3).
+- **Limitations:**
+  - **No detailed fundamentals** — P/E, EPS, revenue, market cap, beta, company description, sector/industry are NOT directly available. The Investment Worthiness Gate uses analyst consensus, earnings history, and technical support levels instead.
+  - **No explicit IV Rank/Percentile** — Must use current IV% from the options chain
   - **No balance sheet** — Cannot directly assess debt-to-equity ratio, total debt, book value
-  - **No income statement/cash flow details** — Summary metrics (revenue, EPS, P/E) are not available without the main page. Cannot assess margin trends, cash flow generation, or interest expense
-  - **No dividend history endpoint** — Only current dividend info if shown on page
+  - **No income statement/cash flow details** — Cannot assess margin trends, cash flow generation, or interest expense
+  - **No dividend history** — Only current dividend info if shown
   - **No news articles** — No news feed, no sentiment scores, no catalyst detection
   - **No historical price OHLCV data** — Cannot calculate historical volatility or identify support from price history scanning
   - **No dedicated insider trades** — Cannot detect insider buying/selling directly
   - **No institutional ownership data** — Cannot track institutional holder changes
   - **Market hours dependency** — Some indicator values may show "—" outside trading hours
-  - **Page load time** — JS-heavy pages may require `browser_wait` before content is fully rendered; use `browser_snapshot()` to re-read after waiting
   - **No Fear & Greed Index** — No market sentiment endpoint
   - **No Google Trends** — No retail interest indicator
 
 - **Key Difference from Other Providers:**
-  - TradingView via Playwright provides **full browser rendering** — all JavaScript-dependent content (options chains, interactive tables, dynamic financials) is fully accessible, unlike fetch-based approaches.
-  - TradingView provides **pre-analyzed technical signals** (Buy/Sell/Neutral summaries for oscillators, MAs, and overall) rather than raw data. The technicals page gives a ready-made technical assessment that Yahoo Finance and Alpha Vantage require manual calculation for.
-  - The agent works from **analyzed signals** → synthesis, rather than raw data → calculation → synthesis.
-  - **Pivot points replace manual support identification**: S1-S3 levels from technicals page replace scanning 1-year price history for local minima, consolidation zones, and Fibonacci retracement calculations.
-  - **Investment worthiness gate uses analyst consensus**: Without P/E/EPS/revenue from the main page, the forecast page's analyst ratings, earnings history, and price targets provide the quality assessment signal.
-  - Actual IV% from expanded options chain replaces proxy-based IV estimation.
-  - **Interactive capability**: `browser_click` enables selecting different option expirations, expanding sections, and navigating paginated options chain data — something static fetch cannot do.
+  - TradingView provides **pre-analyzed technical signals** (Buy/Sell/Neutral summaries for oscillators, MAs, and overall) rather than raw data
+  - The agent works from **analyzed signals** → synthesis, rather than raw data → calculation → synthesis
+  - **Pivot points replace manual support identification**: S1-S3 levels replace scanning 1-year price history for local minima, consolidation zones, and Fibonacci retracement calculations
+  - **Investment worthiness gate uses analyst consensus**: Forecast analyst ratings, earnings history, and price targets provide the quality assessment signal
+  - Actual IV% from expanded options chain replaces proxy-based IV estimation
 
 - **When Data is Missing:**
   - Proceed with available data; prioritize investment worthiness assessment, technical signals, and pivot support levels for trading decisions
-  - If options chain appears incomplete, try `browser_wait(time=3000)` then `browser_snapshot()` — JS may need extra time to render
-  - Use `browser_click` to try expanding or selecting different options chain views
+  - If options chain is empty or shows an error, base strike selection on pivot S1-S3 levels
   - If some indicator values show "—" during non-market hours, note this and rely on available indicators
   - Document in analysis what data was unavailable
   - Apply more conservative criteria if key data points are missing (e.g., without IV data, require stronger technical and fundamental signals)
-  - Without detailed fundamentals (main page not loaded), rely more heavily on analyst consensus from forecast page and technical support levels for the investment worthiness gate
+  - Without detailed fundamentals, rely more heavily on analyst consensus and technical support levels for the investment worthiness gate
   - Never compromise on investment worthiness assessment regardless of available data
 
 - **Earnings Calendar:**
-  - Extract from forecast page (Step 2) — look for upcoming earnings date and EPS estimates
+  - Extract from forecast data — look for upcoming earnings date and EPS estimates
   - IDEAL: Sell puts 1-3 days AFTER earnings to capture IV crush
   - AVOID: Selling 3-7 days before earnings (maximum uncertainty)
   - Post-earnings timing is ESPECIALLY important for CSP — resolved uncertainty + elevated IV = optimal entry
