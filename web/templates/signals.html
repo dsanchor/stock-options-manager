@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}{{ agent_label }} — {{ symbol }} — Options Agent{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <a href="/dashboard" class="back-link">← Dashboard</a>
+    <h1>{{ agent_label }}: {{ symbol }}</h1>
+    <p class="subtitle">{{ signals | length }} signal{{ "s" if signals | length != 1 else "" }} recorded</p>
+</div>
+
+{% if signals %}
+<div class="card">
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Decision</th>
+                    {% if not is_position_monitor %}
+                    <th>Strike</th>
+                    <th>Expiration</th>
+                    <th>Underlying</th>
+                    {% else %}
+                    <th>Moneyness</th>
+                    <th>Assignment Risk</th>
+                    <th>Underlying</th>
+                    {% endif %}
+                    <th>Confidence</th>
+                    <th>Risk Flags</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for sig in signals %}
+                <tr class="clickable-row" data-href="/signals/{{ agent_type }}/{{ symbol }}/{{ loop.index0 }}">
+                    <td class="mono">{{ sig.timestamp[:19] }}</td>
+                    <td><span class="badge badge-{{ sig.decision | lower }}">{{ sig.decision }}</span></td>
+                    {% if not is_position_monitor %}
+                    <td class="mono">${{ sig.strike if sig.strike else "—" }}</td>
+                    <td class="mono">{{ sig.expiration or "—" }}</td>
+                    <td class="mono">${{ sig.underlying_price if sig.underlying_price else "—" }}</td>
+                    {% else %}
+                    <td>{{ sig.moneyness or "—" }}</td>
+                    <td><span class="badge badge-risk-{{ sig.assignment_risk or 'low' | lower }}">{{ sig.assignment_risk or "—" }}</span></td>
+                    <td class="mono">${{ sig.underlying_price if sig.underlying_price else "—" }}</td>
+                    {% endif %}
+                    <td><span class="confidence confidence-{{ sig.confidence or 'medium' }}">{{ sig.confidence or "—" }}</span></td>
+                    <td>
+                        {% for flag in (sig.risk_flags or []) %}
+                        <span class="flag">{{ flag }}</span>
+                        {% endfor %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="card">
+    <p class="empty-state">No signals found for this symbol.</p>
+</div>
+{% endif %}
+{% endblock %}

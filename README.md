@@ -334,6 +334,8 @@ Only the selected provider's section is loaded — environment variables for ina
 
 ## Running
 
+### Scheduler (agent analysis)
+
 Start the scheduler:
 
 ```bash
@@ -347,6 +349,25 @@ The agents will:
 4. Log clear sell signals separately for easy review
 
 Press `Ctrl+C` to stop gracefully.
+
+### Web Dashboard
+
+Start the web dashboard:
+
+```bash
+python run_web.py
+```
+
+The dashboard runs on `http://localhost:8000` by default (configurable in `config.yaml` under `web:`).
+
+**Pages:**
+- **Dashboard** (`/`) — Signals overview by agent type with time-range counts, scheduler status, recent activity feed, and position summary. Auto-refresh toggle (60s).
+- **Signal Details** (`/signals/{agent}/{symbol}`) — All signals for a specific symbol, newest first, with decision badges and risk flags.
+- **Signal + Decisions** (`/signals/{agent}/{symbol}/{index}`) — Full signal JSON and backing decisions from the same time window.
+- **Settings** (`/settings`) — Edit watchlist and position files directly. Changes take effect on the next scheduler tick (data files are re-read on every cron run).
+- **Chat** (`/chat`) — Ask questions about your portfolio. Uses the same Azure OpenAI model with recent decisions as context.
+
+> **Note:** The web dashboard and scheduler run independently — start one or both as needed.
 
 ## Output
 
@@ -418,6 +439,20 @@ options-agent/
 │   ├── opened_calls.txt                  # Open call positions to monitor (EXCHANGE-SYMBOL,strike,expiration)
 │   └── opened_puts.txt                   # Open put positions to monitor
 ├── logs/                                 # Created at runtime — JSONL decision + signal logs
+├── web/
+│   ├── __init__.py
+│   ├── app.py                            # FastAPI web dashboard — all routes + JSONL utilities
+│   ├── templates/                        # Jinja2 HTML templates (dark trading theme)
+│   │   ├── base.html                     # Base layout with nav
+│   │   ├── dashboard.html                # Main dashboard — signal overview + activity feed
+│   │   ├── signals.html                  # Signal list for agent+symbol
+│   │   ├── signal_detail.html            # Single signal + backing decisions
+│   │   ├── settings.html                 # Data file editor
+│   │   └── chat.html                     # Chat interface
+│   └── static/
+│       ├── style.css                     # Dark trading theme CSS
+│       └── app.js                        # Client-side JS (row clicks, auto-refresh)
+├── run_web.py                            # Web dashboard entry point
 ├── requirements.txt
 └── README.md
 ```

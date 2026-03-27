@@ -396,8 +396,27 @@ Replaced the pipe-delimited output format across ALL 8 instruction files, plus u
 - Enhanced Project Structure with `tv_data_fetcher.py` and 1-line descriptions for every file.
 - Key approach: read all source files first to document actual behavior, not assumed behavior.
 
+### Profit Optimization Signals (2025-07)
+- Added profit optimization logic to both open position monitor instruction files: ROLL_DOWN for calls (lower strike → more premium when bearish) and ROLL_UP for puts (higher strike → more premium when bullish).
+- Key design: 9-condition unanimous consensus gate. ALL conditions must pass — deep OTM, very low delta, technicals aligned, MAs aligned, no catalysts, analyst sentiment not contrary, low IV, DTE > 14, stable decision history. If even one is ambiguous → WAIT.
+- `agent_runner.py` required zero changes — `_ROLL_DECISIONS` already includes ROLL_DOWN/ROLL_UP, and `risk_flags` is already in `_ROLL_SIGNAL_FIELDS`. The `"profit_optimization"` flag is the semantic marker distinguishing profit rolls from defensive rolls.
+- No JSON schema changes needed — only instruction prompt enrichment. This is the correct pattern: schema stays stable, agent behavior evolves through instructions.
+- Added output examples in both instruction files showing the profit optimization JSON shape with the `profit_optimization` risk flag.
+
 ### TradingView Overview Page Addition (2025-07)
 - Added `fetch_overview()` as 4th pre-fetched resource in `TradingViewFetcher`. Follows same `browser_run_code` + innerText pattern as technicals/forecast.
 - Overview page (`/symbols/{EXCHANGE}:{TICKER}/`) provides fundamentals: price, market cap, P/E, dividend yield, 52-week range, volume, sector/industry. Previously skipped to save context — now re-added as first fetch.
 - CSP instructions updated: Investment Worthiness Assessment no longer needs the "main page not loaded" workaround — overview data now available directly.
 - Instruction files renumbered: overview=1, technicals=2, forecast=3, options chain=4 in both covered call and CSP.
+
+### Web Dashboard (2025-07)
+- Built a full web UI using FastAPI + Jinja2 + vanilla JS (no build step). Dark trading theme with card-based layout.
+- Architecture: `web/app.py` has all routes + JSONL utility functions. Templates in `web/templates/`, static assets in `web/static/`. Entry point `run_web.py` at project root.
+- Dashboard reads JSONL log files directly — no database. Parses timestamps, groups by symbol, counts by time range (today/week/month/total).
+- Signal detail pages show full signal JSON + backing decisions found by matching symbol + timestamp within a 2-hour window.
+- Settings page edits data files with a form POST; changes are picked up on the next scheduler tick since `_read_symbols()` and `_read_positions()` already read from disk on every call (verified — no caching).
+- Chat feature uses Azure OpenAI directly (not agent framework) with the last 20 decisions from each log file as context.
+- For the AzureOpenAI client, the `/api` suffix on the project endpoint must be stripped.
+- Config is loaded via raw YAML read (not `src.config.Config`) to avoid requiring MCP env vars that the web app doesn't need.
+- Added auto-refresh toggle (60s interval, persisted in localStorage), clickable table rows, responsive CSS for mobile.
+- Dependencies: fastapi, uvicorn[standard], jinja2, python-multipart, openai.

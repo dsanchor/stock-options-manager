@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Chat — Options Agent{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Chat</h1>
+    <p class="subtitle">Ask questions about your positions and recent analysis.</p>
+</div>
+
+<div class="card chat-card">
+    <div id="chatMessages" class="chat-messages">
+        <div class="chat-msg assistant">
+            <div class="chat-bubble">
+                Hello! I'm your options trading advisor. I have access to your recent analysis decisions.
+                Ask me about your positions, risks, or recommended actions.
+            </div>
+        </div>
+    </div>
+    <div class="chat-input-row">
+        <input type="text" id="chatInput" placeholder="Ask about your positions..." autocomplete="off">
+        <button id="chatSend" class="btn btn-primary">Send</button>
+    </div>
+    <div id="chatError" class="alert alert-error" style="display:none;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    const messagesEl = document.getElementById('chatMessages');
+    const inputEl = document.getElementById('chatInput');
+    const sendBtn = document.getElementById('chatSend');
+    const errorEl = document.getElementById('chatError');
+
+    // Client-side conversation history
+    let history = [];
+
+    function addMessage(role, content) {
+        const div = document.createElement('div');
+        div.className = 'chat-msg ' + role;
+        const bubble = document.createElement('div');
+        bubble.className = 'chat-bubble';
+        bubble.textContent = content;
+        div.appendChild(bubble);
+        messagesEl.appendChild(div);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    async function sendMessage() {
+        const text = inputEl.value.trim();
+        if (!text) return;
+
+        inputEl.value = '';
+        errorEl.style.display = 'none';
+        addMessage('user', text);
+        history.push({role: 'user', content: text});
+
+        sendBtn.disabled = true;
+        sendBtn.textContent = '...';
+
+        try {
+            const res = await fetch('/api/chat', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({messages: history}),
+            });
+            const data = await res.json();
+
+            if (data.error) {
+                errorEl.textContent = '⚠️ ' + data.error;
+                errorEl.style.display = 'block';
+            } else {
+                addMessage('assistant', data.reply);
+                history.push({role: 'assistant', content: data.reply});
+            }
+        } catch (e) {
+            errorEl.textContent = '⚠️ Network error: ' + e.message;
+            errorEl.style.display = 'block';
+        } finally {
+            sendBtn.disabled = false;
+            sendBtn.textContent = 'Send';
+        }
+    }
+
+    sendBtn.addEventListener('click', sendMessage);
+    inputEl.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
+    });
+
+    inputEl.focus();
+})();
+</script>
+{% endblock %}

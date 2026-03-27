@@ -26,7 +26,7 @@ _fmt = logging.Formatter(
 )
 
 _console_handler = logging.StreamHandler()
-_console_handler.setLevel(logging.DEBUG)
+_console_handler.setLevel(logging.INFO)
 _console_handler.setFormatter(_fmt)
 
 logger.addHandler(_console_handler)

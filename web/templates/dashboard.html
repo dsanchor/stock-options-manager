@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Options Agent{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Dashboard</h1>
+    <div class="header-controls">
+        <label class="auto-refresh-toggle">
+            <input type="checkbox" id="autoRefresh"> Auto-refresh (60s)
+        </label>
+    </div>
+</div>
+
+<!-- Summary cards -->
+<div class="summary-row">
+    <div class="summary-card">
+        <div class="summary-value">{{ grand_totals.today }}</div>
+        <div class="summary-label">Signals Today</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-value">{{ grand_totals.week }}</div>
+        <div class="summary-label">This Week</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-value">{{ grand_totals.month }}</div>
+        <div class="summary-label">This Month</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-value">{{ grand_totals.total }}</div>
+        <div class="summary-label">Total Signals</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-value">{{ symbol_count }}</div>
+        <div class="summary-label">Symbols Watched</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-value">{{ position_count }}</div>
+        <div class="summary-label">Open Positions</div>
+    </div>
+</div>
+
+<!-- Scheduler info -->
+<div class="scheduler-bar">
+    <span>🕐 Cron: <code>{{ cron_expr }}</code></span>
+    <span>Last run: <strong>{{ last_run or "Never" }}</strong></span>
+    <span>Next run: <strong>{{ next_run or "N/A" }}</strong></span>
+</div>
+
+<!-- Agent tables -->
+{% for agent in agent_tables %}
+<div class="card agent-card">
+    <div class="card-header">
+        <h2>{{ agent.label }}</h2>
+        <div class="card-badge">{{ agent.totals.total }} total</div>
+    </div>
+    {% if agent.rows %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>{{ "Position" if agent.is_position_monitor else "Symbol" }}</th>
+                    <th class="num">Today</th>
+                    <th class="num">This Week</th>
+                    <th class="num">This Month</th>
+                    <th class="num">Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in agent.rows %}
+                <tr class="clickable-row" data-href="/signals/{{ agent.key }}/{{ row.key }}">
+                    <td><strong>{{ row.display }}</strong></td>
+                    <td class="num">{{ row.today }}</td>
+                    <td class="num">{{ row.week }}</td>
+                    <td class="num">{{ row.month }}</td>
+                    <td class="num">{{ row.total }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No signals recorded yet</p>
+    {% endif %}
+</div>
+{% endfor %}
+
+<!-- Recent activity -->
+{% if activity %}
+<div class="card">
+    <div class="card-header">
+        <h2>Recent Activity</h2>
+    </div>
+    <div class="activity-feed">
+        {% for item in activity %}
+        <div class="activity-item">
+            <div class="activity-time">{{ item.timestamp[:19] }}</div>
+            <span class="badge badge-{{ item.decision | lower if item.decision else 'info' }}">{{ item.decision or "N/A" }}</span>
+            <span class="activity-agent">{{ item._agent_label }}</span>
+            <strong>{{ item.symbol }}</strong>
+            {% if item.strike %}
+            <span class="mono">${{ item.strike }}</span>
+            {% endif %}
+            {% if item.confidence %}
+            <span class="confidence confidence-{{ item.confidence }}">{{ item.confidence }}</span>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}

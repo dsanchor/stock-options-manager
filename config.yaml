@@ -49,3 +49,7 @@ open_put_monitor:
   positions_file: "data/opened_puts.txt"
   decision_log: "logs/open_put_monitor_decisions.jsonl"
   signal_log: "logs/open_put_monitor_signals.jsonl"
+
+web:
+  host: "0.0.0.0"
+  port: 8000
