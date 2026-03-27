@@ -5,6 +5,7 @@ TradingView before the agent runs. Returns clean text data the agent can
 analyze without needing any browser tools.
 """
 
+import asyncio
 import logging
 import os
 import re
@@ -55,6 +56,39 @@ class TradingViewFetcher:
                         text = text[1:-1]
                 return text
         return ""
+
+    # Retry delays in seconds for transient fetch failures
+    _RETRY_DELAYS = (5, 10)
+
+    async def _with_retry(self, fetch_coro_factory, label: str) -> str:
+        """Call a fetch coroutine, retrying up to 2 times on error.
+
+        ``fetch_coro_factory`` is a no-arg callable that returns a new
+        awaitable each time (needed because coroutines are single-use).
+        """
+        last_error = None
+        for attempt in range(1 + len(self._RETRY_DELAYS)):
+            try:
+                result = await fetch_coro_factory()
+                if result and not result.startswith("[ERROR:"):
+                    return result
+                # Treat an [ERROR:…] string as a soft failure worth retrying
+                last_error = result
+            except Exception as e:
+                last_error = f"[ERROR: {e}]"
+                logger.warning(
+                    "%s attempt %d failed: %s", label, attempt + 1, e,
+                )
+
+            if attempt < len(self._RETRY_DELAYS):
+                delay = self._RETRY_DELAYS[attempt]
+                logger.info(
+                    "Retrying %s in %ds (attempt %d/%d)",
+                    label, delay, attempt + 2, 1 + len(self._RETRY_DELAYS),
+                )
+                await asyncio.sleep(delay)
+
+        return last_error or "[ERROR: All retries exhausted]"
 
     # ------------------------------------------------------------------
     # Page fetchers
@@ -225,16 +259,28 @@ class TradingViewFetcher:
         # snapshot (accessibility tree) which is fragile.  Running it on a
         # clean browser avoids state pollution from prior browser_run_code
         # calls.
-        options_chain = await self.fetch_options_chain(full_symbol)
+        options_chain = await self._with_retry(
+            lambda fs=full_symbol: self.fetch_options_chain(fs),
+            f"options_chain({symbol})",
+        )
         logger.info("Options chain fetched: %d chars", len(options_chain))
 
-        overview = await self.fetch_overview(full_symbol)
+        overview = await self._with_retry(
+            lambda fs=full_symbol: self.fetch_overview(fs),
+            f"overview({symbol})",
+        )
         logger.info("Overview fetched: %d chars", len(overview))
 
-        technicals = await self.fetch_technicals(full_symbol)
+        technicals = await self._with_retry(
+            lambda fs=full_symbol: self.fetch_technicals(fs),
+            f"technicals({symbol})",
+        )
         logger.info("Technicals fetched: %d chars", len(technicals))
 
-        forecast = await self.fetch_forecast(full_symbol)
+        forecast = await self._with_retry(
+            lambda fs=full_symbol: self.fetch_forecast(fs),
+            f"forecast({symbol})",
+        )
         logger.info("Forecast fetched: %d chars", len(forecast))
 
         return {
