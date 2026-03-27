@@ -13,12 +13,12 @@ from azure.identity import AzureCliCredential
 from .logger import read_decision_log, read_signal_log, append_decision, append_signal
 
 # ---------------------------------------------------------------------------
-# Debug logging setup – outputs to console AND logs/mcp_debug.log
+# Debug logging setup – console only
 # ---------------------------------------------------------------------------
 os.makedirs("logs", exist_ok=True)
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)  # Set to INFO or DEBUG as needed
+logger.setLevel(logging.DEBUG)
 
 _fmt = logging.Formatter(
     "%(asctime)s [%(levelname)s] %(name)s – %(message)s",
@@ -29,12 +29,7 @@ _console_handler = logging.StreamHandler()
 _console_handler.setLevel(logging.DEBUG)
 _console_handler.setFormatter(_fmt)
 
-_file_handler = logging.FileHandler("logs/agents.log")
-_file_handler.setLevel(logging.DEBUG)
-_file_handler.setFormatter(_fmt)
-
 logger.addHandler(_console_handler)
-logger.addHandler(_file_handler)
 
 
 def _mask_url(url: str) -> str:
