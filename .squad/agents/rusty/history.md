@@ -492,3 +492,15 @@ Replaced the pipe-delimited output format across ALL 8 instruction files, plus u
 - LLM instruction schemas updated to `"timestamp": "auto-set by system"` — field kept in schema so LLM output remains parseable, but value is always replaced.
 - `web/app.py` `parse_timestamp()` updated to recognize `%Y-%m-%d %H:%M:%S` as the primary format (checked first, before ISO variants).
 - Key pattern: when you need consistent metadata across LLM outputs, always inject it from the calling code — never trust the LLM to generate accurate timestamps, IDs, or other metadata.
+
+### API Key Authentication Switch (2025-07)
+- Replaced `AzureCliCredential` with API key authentication for Azure OpenAI.
+- Removed `azure-identity` dependency from `requirements.txt` — simpler setup, better Docker compatibility.
+- `AzureOpenAIChatClient` now uses `api_key` parameter instead of `credential`.
+- Config changes: added `api_key: "${AZURE_OPENAI_API_KEY}"` to `config.yaml` azure section, with validation in `Config._validate()`.
+- `AgentRunner.__init__()` now accepts `api_key` parameter, passed from `Config.api_key` property.
+- README.md: replaced `az login` prerequisite with `AZURE_OPENAI_API_KEY` env var setup.
+- Dockerfile: removed `.azure` mount from Docker run commands, added `AZURE_OPENAI_API_KEY` env var to examples.
+- Troubleshooting: replaced "run az login" with "check your API key" guidance.
+- Key files: `src/agent_runner.py` (client init), `src/config.py` (api_key property + validation), `src/main.py` (runner instantiation), `config.yaml`, `requirements.txt`, `README.md`.
+- Key pattern: API key auth is simpler for containerized workloads — no need to mount Azure CLI state or manage token refresh.
