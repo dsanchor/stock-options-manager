@@ -9,6 +9,38 @@
 
 ## Learnings
 
+## Core Context
+
+**2024-03 Foundation Work Summary:**
+The options-agent project was bootstrapped with a complete Python implementation using Azure AI Agent Framework and MCP integration. Core architecture includes:
+- Azure AI Agents SDK with agent lifecycle management (create → run → cleanup)
+- MCP integration: initially HTTP-based (mistake), then corrected to stdio-based subprocess pattern using `agent-framework` package
+- Configuration system: YAML with environment variable substitution (${VAR_NAME})
+- Logging: dual-channel design (decision logs for all decisions, signal logs for SELL signals only)
+- Scheduling: Python `schedule` library with graceful shutdown handlers (SIGINT/SIGTERM)
+- Per-symbol analysis with historical context (last 20 decisions included in agent prompts)
+
+**2024-03-26 Key Implementation Patterns:**
+1. Env var substitution in YAML config with validation
+2. Stdio-based MCP subprocess launch (`uvx iflow-mcp_ferdousbhai_investor-agent`)
+3. Async agent execution with context managers for cleanup
+4. Decision log context injection for continuity learning
+5. Signal handlers for clean shutdown
+
+**Infrastructure Files (Rusty's domain):**
+- `config.py`: Config loader
+- `logger.py`: Dual log management
+- `agent_runner.py`: Agent execution + output parsing
+- `main.py`: Scheduler entry point
+- `covered_call_agent.py`, `cash_secured_put_agent.py`: Agent wrappers
+
+**Instruction Files (Linus's domain):**
+- `covered_call_instructions.py`: Covered call strategy prompts
+- `cash_secured_put_instructions.py`: CSP strategy prompts
+- Variants for different data providers (Massive.com, Alpha Vantage, TradingView)
+
+---
+
 ### 2024-03-26: Built Complete Options Agent Python Project
 
 Successfully implemented the complete Python project for periodic options trading agents using Azure AI Agents Framework and MCP integration.

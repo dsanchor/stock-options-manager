@@ -9,6 +9,34 @@
 
 ## Learnings
 
+## Core Context
+
+**2024-01 Foundation: Trading Agent Instructions Framework**
+Created comprehensive dual-strategy instruction files (Covered Call and Cash-Secured Put) defining analysis protocols, decision criteria, Greeks targets, and risk management principles. Both strategies use:
+- 8-11 phase systematic analysis with MCP tool integration
+- Dual-threshold decision framework: Standard SELL (IV Rank ≥50) vs. CLEAR SELL SIGNAL (premium ≥2%, IV Rank ≥70)
+- Greeks-focused strike selection: CC targets Δ 0.20-0.35, CSP targets AT/BELOW support with same delta range
+- 30-45 DTE optimal window for theta decay
+- Earnings calendar integration: CC avoids expiring after earnings (gap risk), CSP targets post-earnings (IV crush)
+- Fundamental quality gate: CSP requires "Would you own this stock at strike?" check before assignment
+
+**Key Decision Criteria (Summarized):**
+- **Covered Calls**: Time decay + sideways movement profits, avoid strong uptrends, never sell calls expiring after earnings
+- **Cash-Secured Puts**: Fundamentals-first approach, strike AT/BELOW support, ideal 1-3 days post-earnings for IV crush
+- **Output Format**: Standardized for parsing (legacy: pipe-delimited text, current: JSON with SUMMARY line)
+- **Capital Allocation**: <20% per stock (CSP), 50% position sizing (CC)
+
+**2024-01 MCP Server Migration:**
+Updated instruction DATA GATHERING sections from iflow-mcp-ferdousbhai to Massive.com's mcp_massive (4-tool discovery pattern: search_endpoints → get_endpoint_docs → call_api → query_data with store_as/apply functions). Maintained identical strategy logic and decision criteria across the migration.
+
+**2026-03 Current State:**
+- **3 Data Providers**: Massive.com, Alpha Vantage, TradingView (each with CC + CSP instructions = 6 files)
+- **Output Format**: JSON + SUMMARY (machine-parseable + human-readable)
+- **Infrastructure**: Config system, logger with dual logging (.jsonl + .log), agent_runner with JSON extraction + fallback
+- **Model**: gpt-5.1 (updated from gpt-5.4-mini for TradingView Playwright support)
+
+---
+
 ### 2024-01-15: Created Trading Agent Instructions
 Created comprehensive system prompts for both covered call and cash-secured put agents:
 
