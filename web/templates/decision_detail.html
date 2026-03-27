@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Decision Detail — {{ symbol }} — Options Agent{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <a href="/signals/{{ agent_type }}/{{ symbol }}" class="back-link">← {{ agent_label }}: {{ symbol }}</a>
+    <h1>Decision Detail</h1>
+    <p class="subtitle">{{ agent_label }} · {{ symbol }} · Decision #{{ decision_index + 1 }}</p>
+</div>
+
+<!-- Decision card -->
+<div class="card">
+    <div class="card-header">
+        <h2>Decision</h2>
+        <span class="badge badge-{{ decision.decision | lower }}">{{ decision.decision }}</span>
+    </div>
+
+    {% if decision.reason %}
+    <div class="decision-entry">
+        <p class="decision-reason">{{ decision.reason }}</p>
+    </div>
+    {% endif %}
+
+    <div class="detail-grid">
+        {% for key, value in decision.items() %}
+        {% if key != 'reason' %}
+        <div class="detail-field">
+            <div class="detail-label">{{ key }}</div>
+            <div class="detail-value {% if key in ('strike', 'underlying_price', 'premium', 'delta', 'iv', 'premium_pct', 'current_strike', 'new_strike') %}mono{% endif %}">
+                {% if value is mapping or value is iterable and value is not string %}
+                    {{ value | json_pretty }}
+                {% elif key in ('strike', 'underlying_price', 'premium', 'current_strike', 'new_strike') and value is not none %}
+                    ${{ value }}
+                {% elif key in ('premium_pct', 'iv') and value is not none %}
+                    {{ value }}%
+                {% else %}
+                    {{ value if value is not none else "—" }}
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Full decision JSON -->
+<div class="card">
+    <div class="card-header">
+        <h2>Raw Decision JSON</h2>
+    </div>
+    <pre class="json-block">{{ decision | json_pretty }}</pre>
+</div>
+{% endblock %}

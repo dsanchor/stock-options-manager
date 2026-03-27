@@ -425,6 +425,36 @@ async def signal_detail(request: Request, agent_type: str, symbol: str, signal_i
     })
 
 
+# ── Single decision detail ─────────────────────────────────────────────────
+
+@app.get("/decisions/{agent_type}/{symbol}/{decision_index}", response_class=HTMLResponse)
+async def decision_detail(request: Request, agent_type: str, symbol: str, decision_index: int):
+    if agent_type not in AGENT_TYPES:
+        return HTMLResponse("Agent type not found", status_code=404)
+
+    info = AGENT_TYPES[agent_type]
+    is_pm = info["is_position_monitor"]
+
+    all_decisions = read_jsonl(info["decision_log"])
+    filtered = [d for d in all_decisions if _signal_key(d, is_pm) == symbol]
+    filtered.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
+
+    if decision_index < 0 or decision_index >= len(filtered):
+        return HTMLResponse("Decision not found", status_code=404)
+
+    decision_entry = filtered[decision_index]
+
+    return templates.TemplateResponse("decision_detail.html", {
+        "request": request,
+        "agent_type": agent_type,
+        "agent_label": info["label"],
+        "symbol": symbol,
+        "decision_index": decision_index,
+        "decision": decision_entry,
+        "is_position_monitor": is_pm,
+    })
+
+
 # ── Settings ───────────────────────────────────────────────────────────────
 
 @app.get("/settings", response_class=HTMLResponse)

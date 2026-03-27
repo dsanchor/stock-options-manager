@@ -80,7 +80,7 @@
             </thead>
             <tbody>
                 {% for d in decisions %}
-                <tr>
+                <tr class="clickable-row" data-href="/decisions/{{ agent_type }}/{{ symbol }}/{{ loop.index0 }}">
                     <td class="mono">{{ d.timestamp[:19] }}</td>
                     <td><span class="badge badge-{{ d.decision | lower }}">{{ d.decision }}</span></td>
                     <td class="mono">${{ d.underlying_price if d.underlying_price else "—" }}</td>
