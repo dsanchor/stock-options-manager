@@ -120,7 +120,7 @@ class OptionsAgentScheduler:
 def main():
     """Entry point for the options agent scheduler."""
     print("="*70)
-    print(" Options Trading Agent Scheduler")
+    print(" Stock Options Manager Scheduler")
     print(" Using Microsoft Agent Framework + MCP Integration")
     print("="*70)
     print()

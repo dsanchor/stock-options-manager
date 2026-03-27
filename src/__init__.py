@@ -1,1 +1,1 @@
-# Options Agent Package
+# Stock Options Manager Package

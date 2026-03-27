@@ -212,7 +212,7 @@ def _signal_key(entry: Dict[str, Any], is_position_monitor: bool) -> str:
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
-app = FastAPI(title="Options Agent Dashboard")
+app = FastAPI(title="Stock Options Manager Dashboard")
 
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -752,7 +752,7 @@ async def chat_api(request: Request):
     context_text = "\n".join(context_parts) if context_parts else "No recent decisions available."
 
     system_prompt = (
-        "You are an options trading advisor. You have access to recent analysis decisions "
+        "You are a stock options manager advisor. You have access to recent analysis decisions "
         "for the user's portfolio. Answer questions about positions, risks, and recommended "
         "actions based on this data.\n\n"
         f"Recent analysis data:\n{context_text}"

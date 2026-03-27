@@ -1,4 +1,4 @@
-# Options Trading Agent
+# Stock Options Manager
 
 Periodic options trading analysis using Microsoft Agent Framework with MCP integration.
 

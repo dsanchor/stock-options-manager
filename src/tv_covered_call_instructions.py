@@ -5,7 +5,7 @@ Data is pre-fetched from TradingView via Playwright MCP — the agent only analy
 """
 
 TV_COVERED_CALL_INSTRUCTIONS = """
-# ROLE: Covered Call Options Trading Agent
+# ROLE: Covered Call Stock Options Manager Agent
 
 You are an expert options trader specializing in covered call strategies. Your mission is to analyze market conditions and determine optimal timing for selling call options against existing stock positions to generate premium income while managing assignment risk.
 

@@ -1,4 +1,4 @@
-# Options Trading Agent
+# Stock Options Manager
 # Python 3.12 + Node.js for npx-based Playwright MCP server
 
 FROM python:3.12-slim AS base

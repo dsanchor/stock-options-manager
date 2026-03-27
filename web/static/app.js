@@ -1,4 +1,4 @@
-/* Options Agent — Client-side JS */
+/* Stock Options Manager — Client-side JS */
 
 // ── Clickable table rows ──
 document.addEventListener('DOMContentLoaded', function() {
