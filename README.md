@@ -279,6 +279,59 @@ python run.py --scheduler-only
 
 The dashboard runs on `http://localhost:8000` by default (configurable in `config.yaml` under `web:`).
 
+### Running with Docker
+
+Build the image (pre-installs Playwright + Chromium):
+
+```bash
+docker build -t options-agent .
+```
+
+Run with volume mounts for data persistence:
+
+```bash
+docker run -d --name options-agent \
+  -p 8000:8000 \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/config.yaml:/app/config.yaml:ro \
+  -v $HOME/.azure:/root/.azure:ro \
+  -e AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com" \
+  -e MODEL_DEPLOYMENT="gpt-5.1" \
+  options-agent
+```
+
+| Mount / Variable | Purpose |
+|---|---|
+| `data/` | Watchlist and position files (user-editable) |
+| `logs/` | JSONL decision and signal logs (persisted across restarts) |
+| `config.yaml` | Configuration file (mounted read-only) |
+| `$HOME/.azure` | Azure CLI credentials for `AzureCliCredential` (read-only) |
+| `AZURE_AI_PROJECT_ENDPOINT` | Azure AI Foundry project endpoint |
+| `MODEL_DEPLOYMENT` | Model name (e.g. `gpt-5.1`, `gpt-5.4-mini`) |
+
+> **Azure auth:** The container uses `AzureCliCredential`. Mount your local `~/.azure` directory so the container can reuse your `az login` session.
+
+View logs:
+
+```bash
+docker logs -f options-agent
+```
+
+Pass flags (e.g. web-only mode):
+
+```bash
+docker run -d --name options-agent-web \
+  -p 8000:8000 \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/config.yaml:/app/config.yaml:ro \
+  -v $HOME/.azure:/root/.azure:ro \
+  -e AZURE_AI_PROJECT_ENDPOINT="..." \
+  -e MODEL_DEPLOYMENT="gpt-5.1" \
+  options-agent --web-only
+```
+
 **Pages:**
 - **Dashboard** (`/`) — Signals overview by agent type with time-range counts, scheduler status, recent activity feed, and position summary. Auto-refresh toggle (60s).
 - **Signal Details** (`/signals/{agent}/{symbol}`) — All signals for a specific symbol, newest first, with decision badges and risk flags.
