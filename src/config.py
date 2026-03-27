@@ -155,3 +155,11 @@ class Config:
     @property
     def cash_secured_put_config(self) -> Dict[str, str]:
         return self.config['cash_secured_put']
+
+    @property
+    def max_decision_entries(self) -> int:
+        return self.config.get('context', {}).get('max_decision_entries', 20)
+
+    @property
+    def max_signal_entries(self) -> int:
+        return self.config.get('context', {}).get('max_signal_entries', 10)

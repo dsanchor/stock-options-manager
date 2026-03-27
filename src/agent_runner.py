@@ -10,7 +10,7 @@ from agent_framework import ChatAgent, MCPStdioTool, MCPStreamableHTTPTool
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
-from .logger import read_decision_log, append_decision, append_signal
+from .logger import read_decision_log, read_signal_log, append_decision, append_signal
 
 # ---------------------------------------------------------------------------
 # Debug logging setup – outputs to console AND logs/mcp_debug.log
@@ -202,7 +202,9 @@ class AgentRunner:
         return "CLEAR SELL SIGNAL" in upper or "🚨" in response_text or "SIGNAL: SELL" in upper
     
     async def run_agent(self, name: str, instructions: str, symbols_file: str, 
-                       decision_log_path: str, signal_log_path: str):
+                       decision_log_path: str, signal_log_path: str,
+                       max_decision_entries: int = 20,
+                       max_signal_entries: int = 10):
         """Run agent analysis for all symbols.
         
         Args:
@@ -211,6 +213,8 @@ class AgentRunner:
             symbols_file: Path to file containing symbols (one per line)
             decision_log_path: Path to decision log
             signal_log_path: Path to signal log
+            max_decision_entries: Max recent decisions to inject per symbol
+            max_signal_entries: Max recent signals to inject per symbol
         """
         print(f"\n{'='*60}")
         print(f"Starting {name} analysis")
@@ -223,9 +227,6 @@ class AgentRunner:
             return
         
         print(f"Analyzing {len(symbols)} symbols: {', '.join(symbols)}")
-        
-        # Read previous decision log for context
-        previous_decisions = read_decision_log(decision_log_path, max_entries=20)
         
         # Validate API key is set (skip for providers that don't need one, e.g. Yahoo Finance)
         if self.mcp_env_key and not os.environ.get(self.mcp_env_key):
@@ -259,6 +260,12 @@ class AgentRunner:
                     try:
                         exchange, ticker = symbol.split('-', 1) if '-' in symbol else ("", symbol)
 
+                        # Read per-symbol context
+                        previous_decisions = read_decision_log(
+                            decision_log_path, max_entries=max_decision_entries, symbol=ticker)
+                        previous_signals = read_signal_log(
+                            signal_log_path, max_entries=max_signal_entries, symbol=ticker)
+
                         # Pre-fetch all TradingView data deterministically
                         data = await fetcher.fetch_all(symbol)
 
@@ -277,8 +284,11 @@ class AgentRunner:
 
 === END OF DATA ===
 
-Previous decisions for context:
+Previous decisions for {ticker}:
 {previous_decisions}
+
+Previous signals for {ticker}:
+{previous_signals}
 
 All market data has been pre-fetched above. Do NOT use any browser tools — analyze the data provided and output your decision in the required JSON format."""
 
@@ -410,10 +420,19 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
                         else:
                             exchange, ticker = "", symbol
 
+                        # Read per-symbol context
+                        previous_decisions = read_decision_log(
+                            decision_log_path, max_entries=max_decision_entries, symbol=ticker)
+                        previous_signals = read_signal_log(
+                            signal_log_path, max_entries=max_signal_entries, symbol=ticker)
+
                         message = f"""Analyze {ticker} (exchange: {exchange}, full symbol: {symbol}) and provide a trading decision.
 
-Previous decisions for context:
+Previous decisions for {ticker}:
 {previous_decisions}
+
+Previous signals for {ticker}:
+{previous_signals}
 
 Analyze {ticker} NOW. Use the available MCP tools to gather current data. The full exchange-symbol is {symbol}. Provide your decision in the required output format."""
 

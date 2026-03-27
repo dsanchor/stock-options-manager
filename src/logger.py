@@ -8,31 +8,51 @@ def ensure_logs_dir():
     os.makedirs("logs", exist_ok=True)
 
 
-def read_decision_log(log_path: str, max_entries: int = 20) -> str:
-    """Read last N entries from the .jsonl decision log for agent context.
-
-    Each line in the file is a JSON object. Returns a human-readable summary
-    built from the ``reason`` field (or the full JSON when ``reason`` is
-    absent) so the agent can use prior decisions as context.
+def _read_jsonl_log(log_path: str, max_entries: int, symbol: str | None,
+                    empty_msg: str) -> str:
+    """Read last N entries from a .jsonl log, optionally filtered by symbol.
 
     Args:
-        log_path: Path to the .jsonl decision log file.
+        log_path: Path to the .jsonl log file.
         max_entries: Maximum number of recent entries to return.
+        symbol: If provided, only include entries whose ``symbol`` field
+            matches (case-insensitive). The match checks the raw ``symbol``
+            value as well as the ``EXCHANGE-SYMBOL`` composite format stored
+            in config (e.g. ``"MO"`` matches entries with symbol ``"MO"``
+            when the caller passes ``"MO"`` extracted from ``"NYSE-MO"``).
+        empty_msg: Message returned when no matching entries are found.
 
     Returns:
-        Newline-separated string of recent decision summaries.
+        Newline-separated string of recent summaries.
     """
     if not os.path.exists(log_path):
-        return "No previous decisions recorded."
+        return empty_msg
 
     try:
         with open(log_path, 'r') as f:
             lines = [l.strip() for l in f if l.strip()]
 
+        if not lines:
+            return empty_msg
+
+        # Filter by symbol when requested
+        if symbol:
+            sym_lower = symbol.lower()
+            filtered: list[str] = []
+            for line in lines:
+                try:
+                    entry = json.loads(line)
+                    entry_sym = entry.get("symbol", "").lower()
+                    if entry_sym == sym_lower:
+                        filtered.append(line)
+                except json.JSONDecodeError:
+                    pass
+            lines = filtered
+
         recent = lines[-max_entries:]
 
         if not recent:
-            return "No previous decisions recorded."
+            return empty_msg
 
         summaries = []
         for line in recent:
@@ -44,7 +64,21 @@ def read_decision_log(log_path: str, max_entries: int = 20) -> str:
 
         return "\n".join(summaries)
     except Exception as e:
-        return f"Error reading decision log: {str(e)}"
+        return f"Error reading log: {str(e)}"
+
+
+def read_decision_log(log_path: str, max_entries: int = 20,
+                      symbol: str | None = None) -> str:
+    """Read last N decision entries, optionally filtered by symbol."""
+    return _read_jsonl_log(log_path, max_entries, symbol,
+                           "No previous decisions recorded.")
+
+
+def read_signal_log(log_path: str, max_entries: int = 10,
+                    symbol: str | None = None) -> str:
+    """Read last N signal entries, optionally filtered by symbol."""
+    return _read_jsonl_log(log_path, max_entries, symbol,
+                           "No previous signals recorded.")
 
 
 def append_decision(log_path: str, json_data: dict):

@@ -23,6 +23,10 @@ mcp:
     args: ["run", "-i", "--rm", "--init", "mcr.microsoft.com/playwright/mcp"]
     description: "Playwright MCP server (container) for browser automation — renders TradingView pages with full JavaScript support for technical analysis, forecasts, and options chain data"
 
+context:
+  max_decision_entries: 20   # How many recent decisions to inject as agent context
+  max_signal_entries: 10     # How many recent signals to inject as agent context
+
 scheduler:
   interval_minutes: 1  # How often to run the agents
 

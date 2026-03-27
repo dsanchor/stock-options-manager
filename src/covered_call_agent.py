@@ -30,5 +30,7 @@ async def run_covered_call_analysis(config, runner: AgentRunner):
         instructions=instructions,
         symbols_file=cc_config['symbols_file'],
         decision_log_path=cc_config['decision_log'],
-        signal_log_path=cc_config['signal_log']
+        signal_log_path=cc_config['signal_log'],
+        max_decision_entries=config.max_decision_entries,
+        max_signal_entries=config.max_signal_entries,
     )
