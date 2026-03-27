@@ -1,7 +1,7 @@
 """
 Open Put Monitor Agent System Instructions (TradingView)
 Expert-level guidance for monitoring open cash-secured put positions for assignment risk.
-Data is pre-fetched from TradingView via Playwright MCP — the agent only analyzes.
+Data is pre-fetched from TradingView via Playwright — the agent only analyzes.
 """
 
 TV_OPEN_PUT_INSTRUCTIONS = """

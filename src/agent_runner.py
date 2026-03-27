@@ -38,26 +38,19 @@ logger.addHandler(_console_handler)
 class AgentRunner:
     """Manages agent execution using Microsoft Agent Framework with TradingView pre-fetch."""
     
-    def __init__(self, project_endpoint: str, model: str, api_key: str, mcp_command: str, mcp_args: List[str], 
-                 mcp_description: str):
+    def __init__(self, project_endpoint: str, model: str, api_key: str):
         """Initialize the agent runner.
         
         Args:
             project_endpoint: Azure AI Foundry project endpoint URL
             model: Model deployment name
             api_key: Azure OpenAI API key
-            mcp_command: Command to launch Playwright MCP server (e.g., "npx")
-            mcp_args: Arguments for MCP command
-            mcp_description: Description of the MCP server capabilities
         """
         self.client = AzureOpenAIChatClient(
             endpoint=project_endpoint,
             deployment_name=model,
             api_key=api_key,
         )
-        self.mcp_command = mcp_command
-        self.mcp_args = mcp_args
-        self.mcp_description = mcp_description
     
     def _read_symbols(self, symbols_file: str) -> List[str]:
         """Read symbols from file, one per line, ignoring comments."""
@@ -320,7 +313,7 @@ class AgentRunner:
         
         from .tv_data_fetcher import TradingViewFetcher
 
-        async with TradingViewFetcher(self.mcp_command, self.mcp_args) as fetcher:
+        async with TradingViewFetcher() as fetcher:
             agent = ChatAgent(
                 chat_client=self.client,
                 name=name,
@@ -467,7 +460,7 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
 
         from .tv_data_fetcher import TradingViewFetcher
 
-        async with TradingViewFetcher(self.mcp_command, self.mcp_args) as fetcher:
+        async with TradingViewFetcher() as fetcher:
             agent = ChatAgent(
                 chat_client=self.client,
                 name=name,

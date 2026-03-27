@@ -1,4 +1,4 @@
-"""TradingView data fetcher using Playwright MCP.
+"""TradingView data fetcher using native Python Playwright.
 
 Pre-fetches overview, technicals, forecast, and options chain data from
 TradingView before the agent runs. Returns clean text data the agent can
@@ -7,55 +7,50 @@ analyze without needing any browser tools.
 
 import asyncio
 import logging
-import os
 import re
 
-from agent_framework import MCPStdioTool
+from playwright.async_api import async_playwright
 
 logger = logging.getLogger(__name__)
 
 
 class TradingViewFetcher:
-    """Fetches TradingView data via Playwright MCP container."""
+    """Fetches TradingView data via headless Chromium (Python Playwright)."""
 
-    def __init__(self, command: str, args: list[str]):
-        self.command = command
-        self.args = args
-        self._tool = None
-        self._funcs = {}
+    def __init__(self):
+        self._playwright = None
+        self._browser = None
 
     async def __aenter__(self):
-        self._tool = MCPStdioTool(
-            name="playwright",
-            command=self.command,
-            args=self.args,
-            approval_mode="never_require",
-            env=os.environ.copy(),
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-setuid-sandbox"],
         )
-        await self._tool.__aenter__()
-        self._funcs = {f.name: f for f in self._tool.functions if hasattr(f, "name")}
         return self
 
     async def __aexit__(self, *args):
-        if self._tool:
-            await self._tool.__aexit__(*args)
+        if self._browser:
+            await self._browser.close()
+        if self._playwright:
+            await self._playwright.stop()
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _extract_text(result) -> str:
-        """Pull plain text out of an MCP tool result list."""
-        for item in result:
-            if hasattr(item, "text"):
-                text = item.text
-                if "### Result" in text:
-                    text = text.split("### Result")[1].split("### Ran")[0].strip()
-                    if text.startswith('"') and text.endswith('"'):
-                        text = text[1:-1]
-                return text
-        return ""
+    async def _fetch_page_text(self, url: str) -> str:
+        """Navigate to *url* and return the ``<main>`` (or ``<body>``) innerText."""
+        page = await self._browser.new_page()
+        try:
+            await page.goto(url, wait_until="networkidle", timeout=30000)
+            await page.wait_for_timeout(2000)
+            text = await page.evaluate(
+                '(() => { const m = document.querySelector("main") || document.body; return m.innerText; })()'
+            )
+            return text or ""
+        finally:
+            await page.close()
 
     # Retry delays in seconds for transient fetch failures
     _RETRY_DELAYS = (5, 10)
@@ -96,25 +91,9 @@ class TradingViewFetcher:
 
     async def fetch_overview(self, full_symbol: str) -> str:
         """Fetch symbol overview page innerText (price, market cap, P/E, etc.)."""
-        run_code = self._funcs.get("browser_run_code")
-        if not run_code:
-            return "[ERROR: browser_run_code tool not available]"
-
         url = f"https://www.tradingview.com/symbols/{full_symbol}/"
-        js = (
-            'async (page) => {'
-            f'  await page.goto("{url}", {{ waitUntil: "networkidle" }});'
-            '  await page.waitForTimeout(2000);'
-            '  return await page.evaluate(() => {'
-            '    const main = document.querySelector("main") || document.body;'
-            '    return main.innerText;'
-            '  });'
-            '}'
-        )
-
         try:
-            result = await run_code(code=js)
-            text = self._extract_text(result)
+            text = await self._fetch_page_text(url)
             return text or "[ERROR: No text content in overview response]"
         except Exception as e:
             logger.error("Failed to fetch overview for %s: %s", full_symbol, e)
@@ -122,25 +101,9 @@ class TradingViewFetcher:
 
     async def fetch_technicals(self, full_symbol: str) -> str:
         """Fetch technicals page innerText (~3 K chars)."""
-        run_code = self._funcs.get("browser_run_code")
-        if not run_code:
-            return "[ERROR: browser_run_code tool not available]"
-
         url = f"https://www.tradingview.com/symbols/{full_symbol}/technicals/"
-        js = (
-            'async (page) => {'
-            f'  await page.goto("{url}", {{ waitUntil: "networkidle" }});'
-            '  await page.waitForTimeout(2000);'
-            '  return await page.evaluate(() => {'
-            '    const main = document.querySelector("main") || document.body;'
-            '    return main.innerText;'
-            '  });'
-            '}'
-        )
-
         try:
-            result = await run_code(code=js)
-            text = self._extract_text(result)
+            text = await self._fetch_page_text(url)
             return text or "[ERROR: No text content in technicals response]"
         except Exception as e:
             logger.error("Failed to fetch technicals for %s: %s", full_symbol, e)
@@ -148,66 +111,52 @@ class TradingViewFetcher:
 
     async def fetch_forecast(self, full_symbol: str) -> str:
         """Fetch forecast page innerText (~2.5 K chars)."""
-        run_code = self._funcs.get("browser_run_code")
-        if not run_code:
-            return "[ERROR: browser_run_code tool not available]"
-
         url = f"https://www.tradingview.com/symbols/{full_symbol}/forecast/"
-        js = (
-            'async (page) => {'
-            f'  await page.goto("{url}", {{ waitUntil: "networkidle" }});'
-            '  await page.waitForTimeout(2000);'
-            '  return await page.evaluate(() => {'
-            '    const main = document.querySelector("main") || document.body;'
-            '    return main.innerText;'
-            '  });'
-            '}'
-        )
-
         try:
-            result = await run_code(code=js)
-            text = self._extract_text(result)
+            text = await self._fetch_page_text(url)
             return text or "[ERROR: No text content in forecast response]"
         except Exception as e:
             logger.error("Failed to fetch forecast for %s: %s", full_symbol, e)
             return f"[ERROR: {e}]"
 
     async def fetch_options_chain(self, full_symbol: str) -> str:
-        """Fetch options chain: navigate, click best DTE row, snapshot.
+        """Fetch options chain: navigate, click best DTE row, extract text.
 
-        Uses browser_navigate (needs accessibility refs for clicking),
-        then clicks the best expiration row (30-45 DTE), then snapshots.
+        Loads the options chain page, finds the best expiration row
+        (30-45 DTE), clicks to expand it, then extracts the page text.
         """
-        nav = self._funcs.get("browser_navigate")
-        click = self._funcs.get("browser_click")
-        snapshot = self._funcs.get("browser_snapshot")
-
-        if not all([nav, click, snapshot]):
-            return "[ERROR: Required browser tools not available]"
-
         url = f"https://www.tradingview.com/symbols/{full_symbol}/options-chain/"
+        page = await self._browser.new_page()
 
         try:
-            # Step 1: Navigate to options chain
-            result = await nav(url=url)
-            snap_text = self._extract_text(result)
+            await page.goto(url, wait_until="networkidle", timeout=30000)
+            await page.wait_for_timeout(2000)
 
-            if not snap_text:
-                return "[ERROR: Empty options chain snapshot]"
+            # Get the accessibility snapshot to find DTE rows
+            snapshot = await page.accessibility.snapshot() or {}
+            snap_text = str(snapshot)
 
-            # Step 2: Find best expiration row (30-45 DTE)
-            # Rows look like: row "April 24 29 DTE AAPL" [ref=e460]
-            dte_pattern = r'row\s+"([^"]*?(\d+)\s+DTE[^"]*?)"\s+\[ref=([^\]]+)\]'
-            matches = re.findall(dte_pattern, snap_text)
+            # Also get visible text for fallback
+            page_text = await page.evaluate(
+                '(() => { const m = document.querySelector("main") || document.body; return m.innerText; })()'
+            ) or ""
 
-            if not matches:
+            if not page_text:
+                return "[ERROR: Empty options chain page]"
+
+            # Find expiration rows by looking for DTE patterns in the page text
+            # Lines look like: "Apr 24\n29 DTE" or similar
+            dte_pattern = r'(\d+)\s+DTE'
+            dte_matches = re.findall(dte_pattern, page_text)
+
+            if not dte_matches:
                 logger.warning("No DTE rows found in options chain for %s", full_symbol)
-                return f"OPTIONS CHAIN (collapsed, no expandable rows found):\n{snap_text}"
+                return f"OPTIONS CHAIN (collapsed, no expandable rows found):\n{page_text}"
 
             # Find closest to 30-45 DTE range
-            best_match = None
+            best_dte = None
             best_score = float("inf")
-            for row_text, dte_str, ref in matches:
+            for dte_str in dte_matches:
                 dte = int(dte_str)
                 if 30 <= dte <= 45:
                     score = 0
@@ -215,31 +164,36 @@ class TradingViewFetcher:
                     score = min(abs(dte - 30), abs(dte - 45))
                 if score < best_score:
                     best_score = score
-                    best_match = (row_text, dte, ref)
+                    best_dte = dte
 
-            if not best_match:
-                return f"OPTIONS CHAIN (no suitable DTE found):\n{snap_text}"
+            if best_dte is None:
+                return f"OPTIONS CHAIN (no suitable DTE found):\n{page_text}"
 
-            row_text, dte, ref = best_match
-            logger.info(
-                "Clicking expiration row: '%s' (%d DTE) ref=%s",
-                row_text, dte, ref,
-            )
+            logger.info("Clicking expiration row with %d DTE for %s", best_dte, full_symbol)
 
-            # Step 3: Click to expand
-            await click(element=row_text, ref=ref)
+            # Click the row containing the best DTE
+            dte_locator = page.get_by_text(re.compile(rf"\b{best_dte}\s+DTE\b"))
+            try:
+                await dte_locator.first.click(timeout=5000)
+                await page.wait_for_timeout(2000)
+            except Exception as click_err:
+                logger.warning("Could not click DTE row: %s", click_err)
+                return f"OPTIONS CHAIN (click failed, showing collapsed):\n{page_text}"
 
-            # Step 4: Snapshot expanded data
-            result = await snapshot()
-            expanded_text = self._extract_text(result)
+            # Extract expanded text
+            expanded_text = await page.evaluate(
+                '(() => { const m = document.querySelector("main") || document.body; return m.innerText; })()'
+            ) or ""
 
             if expanded_text:
                 return expanded_text
-            return f"OPTIONS CHAIN (click succeeded but snapshot empty):\n{snap_text}"
+            return f"OPTIONS CHAIN (click succeeded but page empty):\n{page_text}"
 
         except Exception as e:
             logger.error("Failed to fetch options chain for %s: %s", full_symbol, e)
             return f"[ERROR: {e}]"
+        finally:
+            await page.close()
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -255,10 +209,6 @@ class TradingViewFetcher:
 
         logger.info("Pre-fetching TradingView data for %s", symbol)
 
-        # Fetch options chain FIRST — it uses browser_navigate + click +
-        # snapshot (accessibility tree) which is fragile.  Running it on a
-        # clean browser avoids state pollution from prior browser_run_code
-        # calls.
         options_chain = await self._with_retry(
             lambda fs=full_symbol: self.fetch_options_chain(fs),
             f"options_chain({symbol})",

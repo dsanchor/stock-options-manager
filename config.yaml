@@ -3,11 +3,6 @@ azure:
   model_deployment: "${MODEL_DEPLOYMENT}" # options: "gpt-5.1", "gpt-5.4-mini"
   api_key: "${AZURE_OPENAI_API_KEY}"
 
-mcp:
-  command: "npx"
-  args: ["@playwright/mcp@latest", "--no-sandbox"]
-  description: "Playwright MCP server for browser automation — renders TradingView pages with full JavaScript support for technical analysis, forecasts, and options chain data"
-
 context:
   max_decision_entries: 5   # How many recent decisions to inject as agent context
   max_signal_entries: 1    # How many recent signals to inject as agent context

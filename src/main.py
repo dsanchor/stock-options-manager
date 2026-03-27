@@ -38,9 +38,6 @@ class OptionsAgentScheduler:
             project_endpoint=self.config.azure_endpoint,
             model=self.config.model_deployment,
             api_key=self.config.api_key,
-            mcp_command=self.config.mcp_command,
-            mcp_args=self.config.mcp_args,
-            mcp_description=self.config.mcp_description,
         )
         
         print(f"Scheduler configured with cron: {self.config.cron_expression}")
@@ -121,7 +118,7 @@ def main():
     """Entry point for the options agent scheduler."""
     print("="*70)
     print(" Stock Options Manager Scheduler")
-    print(" Using Microsoft Agent Framework + MCP Integration")
+    print(" Using Microsoft Agent Framework + Playwright")
     print("="*70)
     print()
     

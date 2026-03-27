@@ -52,14 +52,7 @@ class Config:
             if field not in obj:
                 raise ValueError(f"Missing required config: {'.'.join(path + [field])}")
         
-        # Validate MCP configuration
-        mcp = self.config.get('mcp', {})
-        if 'command' not in mcp:
-            raise ValueError(
-                "Missing required config: mcp.command. "
-                "The 'mcp' section must contain 'command' and 'args' for the "
-                "Playwright MCP server. See config.yaml for the expected format."
-            )
+
     
     @property
     def azure_endpoint(self) -> str:
@@ -72,18 +65,6 @@ class Config:
     @property
     def api_key(self) -> str:
         return self.config['azure']['api_key']
-    
-    @property
-    def mcp_command(self) -> str:
-        return self.config['mcp']['command']
-    
-    @property
-    def mcp_args(self) -> list:
-        return self.config['mcp'].get('args', [])
-    
-    @property
-    def mcp_description(self) -> str:
-        return self.config['mcp'].get('description', 'Playwright MCP server for TradingView')
     
     @property
     def cron_expression(self) -> str:

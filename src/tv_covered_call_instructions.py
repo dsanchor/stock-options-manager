@@ -1,7 +1,7 @@
 """
 Covered Call Agent System Instructions (TradingView)
 Expert-level guidance for selling call options on owned stock positions.
-Data is pre-fetched from TradingView via Playwright MCP — the agent only analyzes.
+Data is pre-fetched from TradingView via Playwright — the agent only analyzes.
 """
 
 TV_COVERED_CALL_INSTRUCTIONS = """

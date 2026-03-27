@@ -1,6 +1,6 @@
 # Stock Options Manager
 
-Periodic options trading analysis using Microsoft Agent Framework with MCP integration.
+Periodic options trading analysis using Microsoft Agent Framework with Playwright-based data fetching.
 
 ## Architecture
 
@@ -12,7 +12,7 @@ Four specialized agents handle options trading:
 
 The first two agents (sell-side) decide whether to **open** new positions. The last two (position monitors) decide whether to **hold or adjust** existing positions.
 
-Both sell-side agents use the Microsoft Agent Framework (`agent-framework`) with TradingView as the data source. Market data is pre-fetched deterministically via [Playwright MCP](https://github.com/microsoft/playwright-mcp) (headless browser) and passed to the LLM for analysis — the LLM never touches the browser directly.
+Both sell-side agents use the Microsoft Agent Framework (`agent-framework`) with TradingView as the data source. Market data is pre-fetched deterministically via [Playwright](https://playwright.dev/python/) (headless Chromium) and passed to the LLM for analysis — the LLM never touches the browser directly.
 
 ## How It Works
 
@@ -42,7 +42,7 @@ Scheduler (main.py)
        (same loop, different positions file + instructions)
 ```
 
-**Data gathering:** Python pre-fetches ALL TradingView data deterministically — overview, technicals, forecast, and options chain — using the Playwright MCP server driven from `tv_data_fetcher.py`. The LLM never touches the browser. It receives the data as text and only performs analysis. See [Pre-fetch Architecture](#pre-fetch-architecture-tradingview) below.
+**Data gathering:** Python pre-fetches ALL TradingView data deterministically — overview, technicals, forecast, and options chain — using the Playwright Python package driven from `tv_data_fetcher.py`. The LLM never touches the browser. It receives the data as text and only performs analysis. See [Pre-fetch Architecture](#pre-fetch-architecture-tradingview) below.
 
 **Per-symbol context injection:** Before each symbol is analyzed, the runner reads that symbol's recent decisions and signals from the JSONL logs and injects them into the prompt. The LLM sees only context for the symbol it's currently analyzing — not a mix of all symbols. Context limits are configurable in `config.yaml` (`context.max_decision_entries`, `context.max_signal_entries`).
 
@@ -90,14 +90,14 @@ Lines starting with `#` are comments. Empty lines are skipped. If the file has n
 
 LLMs don't reliably make multi-step browser tool calls. When given Playwright tools directly, they skip pages, fabricate navigation errors, and ignore sequencing instructions.
 
-The solution: `TradingViewFetcher` (`src/tv_data_fetcher.py`) drives the Playwright MCP server from Python — deterministically, with no LLM involvement. It fetches four pages per symbol:
+The solution: `TradingViewFetcher` (`src/tv_data_fetcher.py`) drives Playwright's headless Chromium directly from Python — deterministically, with no LLM involvement. It fetches four pages per symbol:
 
 | Page | Method | Typical Size | Content |
 |------|--------|-------------|---------|
-| Overview | `browser_run_code` (innerText) | ~variable | Current price, market cap, P/E ratio, dividend yield, 52-week range, volume, sector, industry, earnings date |
-| Technicals | `browser_run_code` (innerText) | ~3K chars | RSI, MACD, Stochastic, all MAs (10-200), pivot points (R1-R3, S1-S3) with Buy/Sell/Neutral signals |
-| Forecast | `browser_run_code` (innerText) | ~2.5K chars | Analyst consensus, price targets, EPS history, revenue data |
-| Options chain | `browser_navigate` + `click` + `snapshot` | ~65K chars | Full chain expanded to best 30-45 DTE expiration via accessibility snapshot |
+| Overview | `page.goto` + `innerText` | ~variable | Current price, market cap, P/E ratio, dividend yield, 52-week range, volume, sector, industry, earnings date |
+| Technicals | `page.goto` + `innerText` | ~3K chars | RSI, MACD, Stochastic, all MAs (10-200), pivot points (R1-R3, S1-S3) with Buy/Sell/Neutral signals |
+| Forecast | `page.goto` + `innerText` | ~2.5K chars | Analyst consensus, price targets, EPS history, revenue data |
+| Options chain | `page.goto` + `click` + `innerText` | ~65K chars | Full chain expanded to best 30-45 DTE expiration |
 
 The agent is created with **no tools** — it only analyzes the pre-fetched data included in its prompt. This is the key pattern: move deterministic multi-step workflows to the host language; let the LLM do what it's good at — analysis.
 
@@ -121,7 +121,6 @@ All output is [JSON Lines](https://jsonlines.org/) — one JSON object per line.
 1. **Python 3.12+**
 2. **Azure AI Foundry Project** with access to a model deployment (e.g. `gpt-5.1`, `gpt-5.4-mini`)
 3. **Azure OpenAI API Key** - Get your API key from Azure Portal
-4. **[Node.js](https://nodejs.org/)** - Required for the Playwright MCP server (runs via `npx`)
 
 ## Setup
 
@@ -131,24 +130,15 @@ All output is [JSON Lines](https://jsonlines.org/) — one JSON object per line.
 python -m venv venv
 source venv/bin/activate 
 pip install -r requirements.txt
+playwright install chromium
 ```
 
 This installs:
 - `agent-framework[foundry]` - Microsoft Agent Framework with Foundry support
+- `playwright` - Headless Chromium for TradingView data fetching
 - `pyyaml`, `croniter`, `python-dotenv` - Configuration and scheduling
 
-### 2. Install the Playwright MCP Server
-
-TradingView data is fetched via the [Playwright MCP server](https://github.com/microsoft/playwright-mcp) running locally via `npx`. No API key needed.
-
-```bash
-# Test it works (first run downloads Playwright + Chromium automatically):
-npx @playwright/mcp@latest --help
-```
-
-> Playwright MCP bundles Chromium and fully renders JavaScript, so options chains, financials, and all dynamic content are available.
-
-### 3. Configure Environment Variables
+### 2. Configure Environment Variables
 
 Set your Azure AI Project endpoint and API key:
 
@@ -160,18 +150,7 @@ export AZURE_OPENAI_API_KEY="your-api-key-here"
 # No API key needed for TradingView — data is free via Playwright browser automation
 ```
 
-### 4. MCP Server Configuration
-
-The Playwright MCP server is launched automatically as a subprocess via `npx` when agents run. Configure in `config.yaml`:
-
-```yaml
-mcp:
-  command: "npx"
-  args: ["@playwright/mcp@latest"]
-  description: "Playwright MCP server for browser automation..."
-```
-
-### 5. Configure Symbols
+### 3. Configure Symbols
 
 Edit the symbol files to analyze your desired stocks:
 
@@ -202,7 +181,7 @@ NASDAQ-AAPL,200,2026-05-16
 
 Position monitors only run when there are uncommented lines in the file. Start with all lines commented out and uncomment when you have open positions to track.
 
-### 6. Adjust Configuration (Optional)
+### 4. Adjust Configuration (Optional)
 
 Edit `config.yaml` to customize:
 
@@ -210,11 +189,6 @@ Edit `config.yaml` to customize:
 azure:
   project_endpoint: "${AZURE_AI_PROJECT_ENDPOINT}"
   model_deployment: "${MODEL_DEPLOYMENT}"  # From env variable (e.g. gpt-5.1, gpt-5.4-mini)
-
-mcp:
-  command: "npx"
-  args: ["@playwright/mcp@latest"]
-  description: "Playwright MCP server for browser automation..."
 
 context:
   max_decision_entries: 5               # Recent decisions injected per symbol
@@ -278,7 +252,7 @@ The dashboard runs on `http://localhost:8000` by default (configurable in `confi
 
 ### Running with Docker
 
-Build the image (pre-installs Playwright + Chromium):
+Build the image (pre-installs Playwright + Chromium — no Node.js needed):
 
 ```bash
 docker build -t options-agent .
@@ -373,14 +347,13 @@ For `SELL` decisions, `strike`, `expiration`, and premium fields are populated. 
 
 ```
 options-agent/
-├── config.yaml                           # All configuration (MCP, symbols, scheduling, context limits)
+├── config.yaml                           # All configuration (symbols, scheduling, context limits)
 ├── src/
 │   ├── __init__.py
 │   ├── main.py                           # Entry point — scheduler with immediate + periodic runs
 │   ├── config.py                         # YAML config loader with env var substitution and validation
 │   ├── agent_runner.py                   # Core execution engine — TradingView pre-fetch + per-symbol loop
-│   ├── tv_data_fetcher.py                # TradingView pre-fetch module — drives Playwright from Python
-│   ├── covered_call_agent.py             # Covered call wrapper
+│   ├── tv_data_fetcher.py                # TradingView pre-fetch module — drives Playwright from Python│   ├── covered_call_agent.py             # Covered call wrapper
 │   ├── cash_secured_put_agent.py         # Cash secured put wrapper
 │   ├── open_call_monitor_agent.py        # Open call position monitor wrapper
 │   ├── open_put_monitor_agent.py         # Open put position monitor wrapper
@@ -415,15 +388,15 @@ options-agent/
 
 ## Deploy to Azure Container Apps
 
-This section deploys the Stock Options Manager to Azure Container Apps with persistent storage via Azure Files. It assumes your Azure AI Foundry project and model deployment already exist.
+This section deploys the Stock Options Manager to Azure Container Apps with persistent storage via Azure Files. It assumes your Microsoft Foundry project and model deployment already exist.
 
 ### 1. Set Environment Variables
 
 ```bash
 # Azure resource configuration
 export RESOURCE_GROUP="rg-stock-options-manager"
-export LOCATION="eastus2"
-export STORAGE_ACCOUNT="stoptionsmanager"        # must be globally unique, lowercase, no dashes
+export LOCATION="swedencentral"
+export STORAGE_ACCOUNT="stoptionsmanagerdsr"        # must be globally unique, lowercase, no dashes
 export CONTAINER_ENV="cae-stock-options-manager"
 export CONTAINER_APP="ca-stock-options-manager"
 
@@ -507,13 +480,12 @@ az containerapp create \
   --ingress external \
   --min-replicas 1 \
   --max-replicas 1 \
-  --cpu 2 \
-  --memory 4Gi \
+  --cpu 1 \
+  --memory 2Gi \
   --env-vars \
     AZURE_AI_PROJECT_ENDPOINT="$AZURE_AI_PROJECT_ENDPOINT" \
     MODEL_DEPLOYMENT="$MODEL_DEPLOYMENT" \
-    AZURE_OPENAI_API_KEY="$AZURE_OPENAI_API_KEY" \
-  --registry-server ghcr.io
+    AZURE_OPENAI_API_KEY="$AZURE_OPENAI_API_KEY"
 ```
 
 > **Note:** If your GHCR package is private, add `--registry-username <github-username> --registry-password <github-pat>` with a PAT that has `read:packages` scope.
@@ -592,11 +564,10 @@ az containerapp update \
 ### "Environment variable AZURE_AI_PROJECT_ENDPOINT not set"
 Make sure you've exported the environment variable with your Azure AI Foundry project endpoint.
 
-### MCP Server Launch Errors
-- Ensure Node.js is installed and `npx` is available in PATH
-- First run may be slow while downloading `@playwright/mcp` and Chromium
-- Test manually: `npx @playwright/mcp@latest --help`
-- View detailed MCP logs in the agent output
+### Playwright / Chromium Issues
+- Ensure Chromium is installed: `playwright install chromium`
+- First run may be slow while downloading Chromium
+- In Docker, Chromium is pre-installed during image build
 
 ### Authentication Errors
 Ensure your `AZURE_OPENAI_API_KEY` environment variable is set correctly. You can get your API key from the Azure Portal under your Azure OpenAI resource.
@@ -623,7 +594,7 @@ Key components:
 - `agent_framework.Agent` - Main agent class
 - `agent_framework.foundry.FoundryChatClient` - Azure AI Foundry integration
 
-TradingView data is fetched via the Playwright MCP server (`npx @playwright/mcp@latest`). The server is driven from Python (`tv_data_fetcher.py`), not by the LLM. The LLM receives pre-fetched data as text and performs analysis only — no tools are given to the agent.
+TradingView data is fetched via the Python Playwright package using headless Chromium. The browser is driven from Python (`tv_data_fetcher.py`), not by the LLM. The LLM receives pre-fetched data as text and performs analysis only — no tools are given to the agent.
 
 ---
 
