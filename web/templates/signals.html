@@ -36,7 +36,7 @@
                 {% for sig in signals %}
                 <tr class="clickable-row" data-href="/signals/{{ agent_type }}/{{ symbol }}/{{ loop.index0 }}">
                     <td class="mono">{{ sig.timestamp[:19] }}</td>
-                    <td><span class="badge badge-{{ sig.decision | lower }}">{{ sig.decision }}</span></td>
+                    <td><span class="badge badge-{{ (sig.decision | default("UNKNOWN", true)) | lower }}">{{ sig.decision | default("—", true) }}</span></td>
                     {% if not is_position_monitor %}
                     <td class="mono">${{ sig.strike if sig.strike else "—" }}</td>
                     <td class="mono">{{ sig.expiration or "—" }}</td>

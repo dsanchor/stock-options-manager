@@ -134,6 +134,59 @@ def parse_timestamp(ts: str) -> Optional[datetime]:
     return None
 
 
+def _enrich_signal_from_decisions(
+    signal: Dict[str, Any],
+    decisions: List[Dict[str, Any]],
+    is_pm: bool,
+) -> None:
+    """Copy missing fields from the closest matching decision into *signal*.
+
+    For position monitors (is_pm=True): fills ``decision``, ``moneyness``,
+    ``assignment_risk`` from the decision log.
+    For strategy agents (is_pm=False): fills ``iv``, ``premium``, ``delta``.
+
+    Matching key:
+      - PMs: symbol + current_strike + current_expiration
+      - Strategy agents: symbol only
+    Closest timestamp within ±2 hours wins.  Existing signal fields are never
+    overwritten.
+    """
+    sig_ts = parse_timestamp(signal.get("timestamp", ""))
+    if sig_ts is None:
+        return
+
+    sig_key = _signal_key(signal, is_pm)
+    best: Optional[Dict[str, Any]] = None
+    best_diff: float = float("inf")
+
+    for d in decisions:
+        if _signal_key(d, is_pm) != sig_key:
+            continue
+        d_ts = parse_timestamp(d.get("timestamp", ""))
+        if d_ts is None:
+            continue
+        diff = abs((sig_ts - d_ts).total_seconds())
+        if diff <= 7200 and diff < best_diff:
+            best_diff = diff
+            best = d
+
+    if is_pm:
+        fields = ("decision", "moneyness", "assignment_risk")
+    else:
+        fields = ("iv", "premium", "delta")
+
+    if best:
+        for f in fields:
+            if f not in signal or signal[f] is None:
+                val = best.get(f)
+                if val is not None:
+                    signal[f] = val
+
+    # Fallback for PMs: promote action → decision when still missing
+    if is_pm and not signal.get("decision") and signal.get("action"):
+        signal["decision"] = signal["action"]
+
+
 def _symbol_display(entry: Dict[str, Any], is_position_monitor: bool) -> str:
     """Build the display label for a symbol/position."""
     symbol = entry.get("symbol", "?")
@@ -401,6 +454,11 @@ async def signals_list(request: Request, agent_type: str, symbol: str):
 
     # Also load recent decisions for context
     all_decisions = read_jsonl(info["decision_log"])
+
+    # Enrich signals with fields from matching decisions at render time
+    for sig in filtered:
+        _enrich_signal_from_decisions(sig, all_decisions, is_pm)
+
     decisions = [d for d in all_decisions if _signal_key(d, is_pm) == symbol]
     decisions.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
     decisions = decisions[:20]
@@ -437,8 +495,11 @@ async def signal_detail(request: Request, agent_type: str, symbol: str, signal_i
     signal_entry = filtered[signal_index]
     signal_ts = parse_timestamp(signal_entry.get("timestamp", ""))
 
-    # Find backing decisions — same symbol, within 2 hours before the signal
+    # Find backing decisions — same symbol, within 2 hours of the signal
     decisions = read_jsonl(info["decision_log"])
+
+    # Enrich signal with fields from closest matching decision at render time
+    _enrich_signal_from_decisions(signal_entry, decisions, is_pm)
     backing = []
     signal_symbol = signal_entry.get("symbol", "").lower()
     for d in decisions:

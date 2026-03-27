@@ -12,7 +12,7 @@
 <div class="card">
     <div class="card-header">
         <h2>Signal</h2>
-        <span class="badge badge-{{ signal.decision | lower }}">{{ signal.decision }}</span>
+        <span class="badge badge-{{ (signal.decision | default("UNKNOWN", true)) | lower }}">{{ signal.decision | default("—", true) }}</span>
     </div>
     <div class="detail-grid">
         {% for key, value in signal.items() %}
