@@ -21,12 +21,13 @@ A covered call involves selling call options on stock you already own. This stra
 
 For each analysis of a symbol, use the Playwright MCP server tools to navigate TradingView pages in a real browser and extract comprehensive market data. Playwright renders all JavaScript, so dynamic content (options chains, interactive charts, financials) is fully available. The key tools are:
 
-- `browser_navigate(url)` — Navigates the browser to a URL and returns the page's accessibility snapshot (the fully rendered DOM as structured text)
+- `browser_run_code(code)` — Runs a JavaScript async function against the Playwright `page` object. Use this for technicals and forecast pages to navigate AND extract clean text in one call, dramatically reducing response size.
+- `browser_navigate(url)` — Navigates the browser to a URL and returns the page's accessibility snapshot (the fully rendered DOM as structured text). Use for the options chain page where you need element refs for clicking.
 - `browser_snapshot()` — Takes a fresh accessibility snapshot of the current page (use after waiting or interacting)
 - `browser_click(element, ref)` — Clicks an element identified by its `ref` from the snapshot (useful for expanding dropdowns, selecting expiration dates, etc.)
 - `browser_wait(time)` — Waits for a specified number of milliseconds (useful for JS content to finish loading)
 
-**How it works:** Playwright launches a real browser that fully executes JavaScript. `browser_navigate` returns an accessibility snapshot — a structured text representation of all rendered content on the page, including JS-generated tables, dynamic data, and interactive elements. No pagination needed; the snapshot contains the full page.
+**How it works:** Playwright launches a real browser that fully executes JavaScript. For technicals and forecast pages, `browser_run_code` navigates to the URL and returns the page's `innerText` (~3K chars) — clean, tab-separated text with all the data. For the options chain, `browser_navigate` returns an accessibility snapshot with element refs needed for `browser_click` to expand expiration rows.
 
 **Important Notes:**
 - Values may show "—" during non-market hours — note this and proceed with available data
@@ -42,13 +43,16 @@ For each analysis of a symbol, use the Playwright MCP server tools to navigate T
 - Forecast: `https://www.tradingview.com/symbols/{EXCHANGE}-{TICKER}/forecast/`
 - Options chain: `https://www.tradingview.com/symbols/{EXCHANGE}-{TICKER}/options-chain/`
 
-**Context Budget — Why Only 3 Pages:** Each TradingView page returns 30-65K characters of rendered content via the accessibility snapshot. Loading all 4 available pages (main symbol + technicals + forecast + options chain) would produce ~245K characters total, exceeding model context limits. The main symbol page alone is ~103K characters and its essential data (current price, earnings date, analyst targets) is available on the other pages. Therefore, we load only 3 pages: technicals (smallest, most valuable for trading decisions), forecast (earnings + analyst consensus), and options chain (strikes, premiums, IV, Greeks).
+**Context Budget — Tool Selection Strategy:** We use TWO different tools depending on the page's needs:
+- **Technicals & Forecast** → `browser_run_code`: Navigates to the page and returns `innerText` (~3K chars each). This is 15-16x smaller than the accessibility snapshot (~48K and ~38K respectively), keeping context usage minimal while preserving ALL data (oscillators, MAs, pivots, earnings, analyst consensus).
+- **Options Chain** → `browser_navigate` + `browser_click` + `browser_snapshot`: Needs the accessibility tree with element refs to click and expand expiration rows. Cannot use `browser_run_code` here because we need interactive element references.
+The main symbol page (~103K chars) is NOT loaded — its essential data (current price, earnings date, analyst targets) is available on the other pages.
 
 ### Phase 1: Core Market Data Collection
 
-1. **Technical Analysis** — Navigate to technicals page
-   - Call: `browser_navigate(url="https://www.tradingview.com/symbols/{full_symbol}/technicals/")`
-   - Extract the following sections from the accessibility snapshot:
+1. **Technical Analysis** — Extract technicals via `browser_run_code`
+   - Call: `browser_run_code(code='async (page) => { await page.goto("https://www.tradingview.com/symbols/{full_symbol}/technicals/", { waitUntil: "networkidle" }); await page.waitForTimeout(2000); return await page.evaluate(() => { const main = document.querySelector("main") || document.body; return main.innerText; }); }')`
+   - The response is clean tab-separated text (~3K chars) containing all rendered technical data. Extract the following sections:
      - **Summary Gauges**: Overall / Oscillators / Moving Averages — each rated from Strong Sell to Strong Buy
      - **Oscillators Table**: RSI (14), Stochastic %K, CCI (20), ADX (14), Awesome Oscillator, Momentum, MACD Level, Stochastic RSI Fast, Williams %R, Bull Bear Power, Ultimate Oscillator — each with computed value AND Buy/Sell/Neutral action
      - **Moving Averages Table**: EMA/SMA for periods 10, 20, 30, 50, 100, 200 plus Ichimoku Base Line, VWMA (20), Hull MA (9) — each with computed value AND Buy/Sell action
@@ -57,9 +61,9 @@ For each analysis of a symbol, use the Playwright MCP server tools to navigate T
    - **For Covered Calls**: Use R1-R3 pivot points as strike price targets — set strike at or above resistance levels
    - Purpose: Complete technical assessment without manual computation
 
-2. **Forecast & Analyst Consensus** — Navigate to forecast page
-   - Call: `browser_navigate(url="https://www.tradingview.com/symbols/{full_symbol}/forecast/")`
-   - Extract from the accessibility snapshot:
+2. **Forecast & Analyst Consensus** — Extract forecast via `browser_run_code`
+   - Call: `browser_run_code(code='async (page) => { await page.goto("https://www.tradingview.com/symbols/{full_symbol}/forecast/", { waitUntil: "networkidle" }); await page.waitForTimeout(2000); return await page.evaluate(() => { const main = document.querySelector("main") || document.body; return main.innerText; }); }')`
+   - The response is clean text (~2.4K chars) with all forecast data. Extract:
      - EPS actual vs estimate for most recent quarter (beat/miss/meet)
      - EPS estimate for next quarter
      - Number of analysts covering the stock

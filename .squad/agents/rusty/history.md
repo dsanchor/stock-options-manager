@@ -355,3 +355,18 @@ Replaced the pipe-delimited output format across ALL 8 instruction files, plus u
 
 **Model Update:** gpt-5.4-mini → gpt-5.1 in team.md and history.md project context.
 
+### 2025-07: Switched Technicals/Forecast to browser_run_code (Context Reduction)
+
+**Problem:** TradingView agent was reporting "technicals/forecast pages failed to load" even though navigation worked fine. Root cause: `browser_navigate` returns full accessibility snapshots (~48K + ~38K = ~86K chars for just those two pages), overwhelming the model's context window.
+
+**Solution:** Replaced `browser_navigate` with `browser_run_code` for technicals and forecast pages. `browser_run_code` takes a Playwright JS function that navigates to the URL AND extracts `innerText`, returning only ~3K chars (technicals) and ~2.4K chars (forecast) — a 15-16x reduction. The `innerText` contains ALL the same data (oscillators, MAs, pivots, earnings, analyst consensus) in clean tab-separated format.
+
+**Key Details:**
+- `browser_run_code(code='async (page) => { await page.goto(URL, { waitUntil: "networkidle" }); await page.waitForTimeout(2000); return await page.evaluate(() => { const main = document.querySelector("main") || document.body; return main.innerText; }); }')`
+- Options chain KEPT as `browser_navigate` + `browser_click` + `browser_snapshot` — it needs accessibility tree element refs for clicking to expand expiration rows
+- Updated Context Budget note to explain the two-tool strategy
+- Updated tool listings to include `browser_run_code` in both instruction files
+- Both files: `tv_covered_call_instructions.py`, `tv_cash_secured_put_instructions.py`
+
+**Context savings per analysis run:** ~80K chars freed (from ~188K total down to ~108K), leaving much more room for the options chain data and the model's analysis.
+
