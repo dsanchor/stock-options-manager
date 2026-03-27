@@ -103,6 +103,9 @@
             {% if item.confidence %}
             <span class="confidence confidence-{{ item.confidence }}">{{ item.confidence }}</span>
             {% endif %}
+            {% if item.waiting_for %}
+            <span class="badge badge-waiting">⏳ {{ item.waiting_for }}</span>
+            {% endif %}
         </div>
         {% endfor %}
     </div>
