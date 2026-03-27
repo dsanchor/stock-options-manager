@@ -17,20 +17,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # Agent type registry — maps URL slugs to file paths and metadata
 # ---------------------------------------------------------------------------
 AGENT_TYPES = {
-    "covered_call": {
-        "label": "Covered Call",
-        "source_file": "data/covered_call_symbols.txt",
-        "decision_log": "logs/covered_call_decisions.jsonl",
-        "signal_log": "logs/covered_call_signals.jsonl",
-        "is_position_monitor": False,
-    },
-    "cash_secured_put": {
-        "label": "Cash-Secured Put",
-        "source_file": "data/cash_secured_put_symbols.txt",
-        "decision_log": "logs/cash_secured_put_decisions.jsonl",
-        "signal_log": "logs/cash_secured_put_signals.jsonl",
-        "is_position_monitor": False,
-    },
     "open_call_monitor": {
         "label": "Open Call Monitor",
         "source_file": "data/opened_calls.txt",
@@ -44,6 +30,20 @@ AGENT_TYPES = {
         "decision_log": "logs/open_put_monitor_decisions.jsonl",
         "signal_log": "logs/open_put_monitor_signals.jsonl",
         "is_position_monitor": True,
+    },
+    "covered_call": {
+        "label": "Following · Covered Call",
+        "source_file": "data/covered_call_symbols.txt",
+        "decision_log": "logs/covered_call_decisions.jsonl",
+        "signal_log": "logs/covered_call_signals.jsonl",
+        "is_position_monitor": False,
+    },
+    "cash_secured_put": {
+        "label": "Following · Cash-Secured Put",
+        "source_file": "data/cash_secured_put_symbols.txt",
+        "decision_log": "logs/cash_secured_put_decisions.jsonl",
+        "signal_log": "logs/cash_secured_put_signals.jsonl",
+        "is_position_monitor": False,
     },
 }
 
