@@ -1,0 +1,2 @@
+# Open covered call positions (EXCHANGE-SYMBOL,strike,expiration)
+# NYSE-MO,72,2026-04-24

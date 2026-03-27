@@ -4,11 +4,15 @@ Periodic options trading analysis using Microsoft Agent Framework with MCP integ
 
 ## Architecture
 
-Two specialized agents analyze options trading opportunities:
+Four specialized agents handle options trading:
 - **Covered Call Agent**: Analyzes stocks for covered call writing opportunities
 - **Cash Secured Put Agent**: Analyzes stocks for cash secured put opportunities
+- **Open Call Monitor**: Monitors open covered call positions for assignment risk
+- **Open Put Monitor**: Monitors open cash-secured put positions for assignment risk
 
-Both agents use the Microsoft Agent Framework (`agent-framework`) with MCP (Model Context Protocol) integration to access real-time market data and options pricing. Four data providers are supported — switch between them in `config.yaml`:
+The first two agents (sell-side) decide whether to **open** new positions. The last two (position monitors) decide whether to **hold or adjust** existing positions.
+
+Both sell-side agents use the Microsoft Agent Framework (`agent-framework`) with MCP (Model Context Protocol) integration to access real-time market data and options pricing. Four data providers are supported — switch between them in `config.yaml`:
 
 | Provider | MCP Server | Transport | Key Features |
 |----------|-----------|-----------|--------------|
@@ -31,8 +35,18 @@ Scheduler (main.py)
   │      3. LLM analyzes data → structured JSON decision
   │      4. Log decision to JSONL; if SELL → also log to signal file
   │
-  └─ Cash Secured Put Agent
-       (same loop, different symbols file + instructions)
+  ├─ Cash Secured Put Agent
+  │    (same loop, different symbols file + instructions)
+  │
+  ├─ Open Call Monitor (TradingView only)
+  │    for each position in data/opened_calls.txt:
+  │      1. Parse position (symbol, strike, expiration)
+  │      2. Pre-fetch TradingView data
+  │      3. LLM assesses assignment risk → WAIT or ROLL decision
+  │      4. Log decision; if ROLL/CLOSE → also log to signal file
+  │
+  └─ Open Put Monitor (TradingView only)
+       (same loop, different positions file + instructions)
 ```
 
 **Data gathering differs by provider:**
@@ -42,15 +56,44 @@ Scheduler (main.py)
 
 **Per-symbol context injection:** Before each symbol is analyzed, the runner reads that symbol's recent decisions and signals from the JSONL logs and injects them into the prompt. The LLM sees only context for the symbol it's currently analyzing — not a mix of all symbols. Context limits are configurable in `config.yaml` (`context.max_decision_entries`, `context.max_signal_entries`).
 
-**Output:** Every symbol produces a decision (SELL, WAIT, or HOLD) written to the decision log. Only SELL decisions are additionally written to the signal log — the actionable alerts that downstream systems watch.
+**Output:** Every symbol produces a decision (SELL, WAIT, or HOLD) written to the decision log. Only SELL decisions are additionally written to the signal log — the actionable alerts that downstream systems watch. Position monitors produce WAIT or ROLL decisions, with ROLL/CLOSE written to their signal logs.
 
 ## Key Concepts
 
 ### Decision vs Signal
 
-A **decision** is recorded for EVERY symbol on EVERY run. Possible values: `SELL`, `WAIT`, or `HOLD`. The decision log is the complete audit trail.
+**Sell-side agents (Covered Call, Cash Secured Put):**
+A **decision** is recorded for EVERY symbol on EVERY run. Possible values: `SELL`, `WAIT`, or `HOLD`. The decision log is the complete audit trail. A **signal** is the subset of decisions where the action is `SELL` — the actionable alerts.
 
-A **signal** is the subset of decisions where the action is `SELL` — the actionable alerts. The signal log is intentionally sparse: it only contains opportunities the agent recommends acting on. Downstream automation or human review watches the signal log.
+**Position monitors (Open Call Monitor, Open Put Monitor):**
+A **decision** is recorded for EVERY position on EVERY run. Possible values: `WAIT`, `ROLL_UP`, `ROLL_DOWN`, `ROLL_OUT`, `ROLL_UP_AND_OUT`, `ROLL_DOWN_AND_OUT`, or `CLOSE`. A **signal** is any decision that is NOT `WAIT` — any roll or close action that requires attention.
+
+### Open Position Monitors
+
+The Open Call Monitor and Open Put Monitor watch **existing** short options positions for assignment risk. They differ from the sell-side agents in several ways:
+
+| | Sell-Side Agents | Position Monitors |
+|---|---|---|
+| **Input** | Symbol list (`EXCHANGE-SYMBOL`) | Position file (`EXCHANGE-SYMBOL,strike,expiration`) |
+| **Decisions** | SELL / WAIT | WAIT / ROLL_UP / ROLL_DOWN / ROLL_OUT / ROLL_UP_AND_OUT / ROLL_DOWN_AND_OUT / CLOSE |
+| **Signals** | SELL only | Any ROLL or CLOSE |
+| **Providers** | All 4 (Massive, Alpha Vantage, Yahoo, TradingView) | TradingView only |
+| **Focus** | "Should I open a new position?" | "Is my existing position safe?" |
+
+**Position file format** (`data/opened_calls.txt` or `data/opened_puts.txt`):
+```
+# Open covered call positions (EXCHANGE-SYMBOL,strike,expiration)
+NYSE-MO,72,2026-04-24
+NASDAQ-AAPL,200,2026-05-16
+```
+Lines starting with `#` are comments. Empty lines are skipped. If the file has no uncommented lines, the monitor skips gracefully.
+
+**Roll types:**
+- **ROLL_UP** — Higher strike, same expiration (gives more room above for calls)
+- **ROLL_DOWN** — Lower strike, same expiration (gives more room below for puts)
+- **ROLL_OUT** — Same strike, later expiration (more time value)
+- **ROLL_UP_AND_OUT** / **ROLL_DOWN_AND_OUT** — Combined strike + expiration adjustment
+- **CLOSE** — Buy back without re-selling (exit the position entirely)
 
 ### Pre-fetch Architecture (TradingView)
 
@@ -216,6 +259,20 @@ NASDAQ-MSFT
 
 The exchange prefix is used by the TradingView provider to construct URLs. For other providers, the ticker symbol is automatically extracted (e.g., `NASDAQ-AAPL` → `AAPL`).
 
+**Position files** (for Open Position Monitors):
+
+- `data/opened_calls.txt` - Open covered call positions to monitor
+- `data/opened_puts.txt` - Open cash-secured put positions to monitor
+
+One position per line, in `EXCHANGE-SYMBOL,strike,expiration` format:
+```
+# Open covered call positions (EXCHANGE-SYMBOL,strike,expiration)
+NYSE-MO,72,2026-04-24
+NASDAQ-AAPL,200,2026-05-16
+```
+
+Position monitors only run when there are uncommented lines in the file. Start with all lines commented out and uncomment when you have open positions to track.
+
 ### 6. Adjust Configuration (Optional)
 
 Edit `config.yaml` to customize:
@@ -259,6 +316,16 @@ cash_secured_put:
   symbols_file: "data/cash_secured_put_symbols.txt"
   decision_log: "logs/cash_secured_put_decisions.jsonl"
   signal_log: "logs/cash_secured_put_signals.jsonl"
+
+open_call_monitor:
+  positions_file: "data/opened_calls.txt"
+  decision_log: "logs/open_call_monitor_decisions.jsonl"
+  signal_log: "logs/open_call_monitor_signals.jsonl"
+
+open_put_monitor:
+  positions_file: "data/opened_puts.txt"
+  decision_log: "logs/open_put_monitor_decisions.jsonl"
+  signal_log: "logs/open_put_monitor_signals.jsonl"
 ```
 
 Only the selected provider's section is loaded — environment variables for inactive providers are not required. Providers without `env_key` (Yahoo, TradingView) skip API key validation entirely.
@@ -286,10 +353,14 @@ All logs use [JSONL format](#jsonl-output-format) — one JSON object per line.
 ### Decision Logs (complete audit trail)
 - `logs/covered_call_decisions.jsonl` - All covered call analysis results
 - `logs/cash_secured_put_decisions.jsonl` - All cash secured put analysis results
+- `logs/open_call_monitor_decisions.jsonl` - All open call position monitor results
+- `logs/open_put_monitor_decisions.jsonl` - All open put position monitor results
 
 ### Signal Logs (actionable alerts only)
 - `logs/covered_call_signals.jsonl` - Only SELL signals for covered calls
 - `logs/cash_secured_put_signals.jsonl` - Only SELL signals for cash secured puts
+- `logs/open_call_monitor_signals.jsonl` - Only ROLL/CLOSE signals for open calls
+- `logs/open_put_monitor_signals.jsonl` - Only ROLL/CLOSE signals for open puts
 
 ### Example Decision Object
 
@@ -326,6 +397,8 @@ options-agent/
 │   ├── tv_data_fetcher.py                # TradingView pre-fetch module — drives Playwright from Python
 │   ├── covered_call_agent.py             # Covered call wrapper — selects instructions by provider
 │   ├── cash_secured_put_agent.py         # Cash secured put wrapper — selects instructions by provider
+│   ├── open_call_monitor_agent.py        # Open call position monitor wrapper (TradingView only)
+│   ├── open_put_monitor_agent.py         # Open put position monitor wrapper (TradingView only)
 │   ├── covered_call_instructions.py      # Massive.com covered call instructions
 │   ├── cash_secured_put_instructions.py  # Massive.com cash secured put instructions
 │   ├── av_covered_call_instructions.py   # Alpha Vantage covered call instructions
@@ -334,10 +407,14 @@ options-agent/
 │   ├── yf_cash_secured_put_instructions.py # Yahoo Finance cash secured put instructions
 │   ├── tv_covered_call_instructions.py   # TradingView covered call instructions (no-tools variant)
 │   ├── tv_cash_secured_put_instructions.py # TradingView cash secured put instructions (no-tools variant)
+│   ├── tv_open_call_instructions.py      # TradingView open call monitor instructions
+│   ├── tv_open_put_instructions.py       # TradingView open put monitor instructions
 │   └── logger.py                         # JSONL read/write with per-symbol filtering
 ├── data/
 │   ├── covered_call_symbols.txt          # Symbols for covered call analysis (EXCHANGE-SYMBOL format)
-│   └── cash_secured_put_symbols.txt      # Symbols for cash secured put analysis
+│   ├── cash_secured_put_symbols.txt      # Symbols for cash secured put analysis
+│   ├── opened_calls.txt                  # Open call positions to monitor (EXCHANGE-SYMBOL,strike,expiration)
+│   └── opened_puts.txt                   # Open put positions to monitor
 ├── logs/                                 # Created at runtime — JSONL decision + signal logs
 ├── requirements.txt
 └── README.md
@@ -380,6 +457,8 @@ The agent instructions are defined in separate files per provider:
 - `src/yf_cash_secured_put_instructions.py` — Cash secured put instructions (Yahoo Finance)
 - `src/tv_covered_call_instructions.py` — Covered call instructions (TradingView)
 - `src/tv_cash_secured_put_instructions.py` — Cash secured put instructions (TradingView)
+- `src/tv_open_call_instructions.py` — Open call monitor instructions (TradingView only)
+- `src/tv_open_put_instructions.py` — Open put monitor instructions (TradingView only)
 
 The trading strategy logic is identical across providers — only the DATA GATHERING PROTOCOL differs to match each MCP server's tool interface.
 

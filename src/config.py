@@ -157,6 +157,14 @@ class Config:
         return self.config['cash_secured_put']
 
     @property
+    def open_call_monitor_config(self) -> Dict[str, str]:
+        return self.config.get('open_call_monitor', {})
+
+    @property
+    def open_put_monitor_config(self) -> Dict[str, str]:
+        return self.config.get('open_put_monitor', {})
+
+    @property
     def max_decision_entries(self) -> int:
         return self.config.get('context', {}).get('max_decision_entries', 20)
 

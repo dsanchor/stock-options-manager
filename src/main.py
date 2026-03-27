@@ -9,6 +9,8 @@ from .config import Config
 from .agent_runner import AgentRunner
 from .covered_call_agent import run_covered_call_analysis
 from .cash_secured_put_agent import run_cash_secured_put_analysis
+from .open_call_monitor_agent import run_open_call_monitor
+from .open_put_monitor_agent import run_open_put_monitor
 
 
 class OptionsAgentScheduler:
@@ -44,7 +46,7 @@ class OptionsAgentScheduler:
         asyncio.run(self._run_all_agents_async())
     
     async def _run_all_agents_async(self):
-        """Execute both covered call and cash secured put agents asynchronously."""
+        """Execute all agents asynchronously."""
         print(f"\n{'#'*70}")
         print(f"# Starting scheduled agent run at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"{'#'*70}\n")
@@ -55,6 +57,10 @@ class OptionsAgentScheduler:
             
             # Run cash secured put agent
             await run_cash_secured_put_analysis(self.config, self.runner)
+
+            # Run open position monitors (skip gracefully if no active positions)
+            await run_open_call_monitor(self.config, self.runner)
+            await run_open_put_monitor(self.config, self.runner)
             
         except Exception as e:
             print(f"ERROR during agent execution: {str(e)}")

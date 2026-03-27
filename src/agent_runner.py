@@ -85,6 +85,42 @@ class AgentRunner:
             symbols = [line.strip() for line in f if line.strip() and not line.startswith('#')]
         
         return symbols
+
+    @staticmethod
+    def _read_positions(positions_file: str) -> List[Tuple[str, float, str]]:
+        """Read positions from file. Each line: EXCHANGE-SYMBOL,strike,expiration.
+
+        Returns:
+            List of (symbol, strike, expiration) tuples.
+            symbol is the full EXCHANGE-SYMBOL string (e.g. "NYSE-MO").
+        """
+        if not os.path.exists(positions_file):
+            return []
+
+        positions: List[Tuple[str, float, str]] = []
+        with open(positions_file, 'r') as f:
+            for lineno, raw in enumerate(f, 1):
+                line = raw.strip()
+                if not line or line.startswith('#'):
+                    continue
+                parts = [p.strip() for p in line.split(',')]
+                if len(parts) != 3:
+                    logger.warning(
+                        "Skipping malformed position line %d in %s: %r",
+                        lineno, positions_file, line,
+                    )
+                    continue
+                symbol_str, strike_str, expiration = parts
+                try:
+                    strike = float(strike_str)
+                except ValueError:
+                    logger.warning(
+                        "Invalid strike %r on line %d of %s — skipping",
+                        strike_str, lineno, positions_file,
+                    )
+                    continue
+                positions.append((symbol_str, strike, expiration))
+        return positions
     
     # ── JSON / SUMMARY extraction ──────────────────────────────────────
 
@@ -192,6 +228,48 @@ class AgentRunner:
         "strike", "expiration", "underlying_price",
         "confidence", "risk_flags",
     )
+
+    # Fields for roll signal log (position monitors)
+    _ROLL_SIGNAL_FIELDS = (
+        "timestamp", "symbol", "exchange", "action",
+        "current_strike", "current_expiration",
+        "new_strike", "new_expiration",
+        "underlying_price", "confidence", "risk_flags",
+    )
+
+    _ROLL_DECISIONS = frozenset({
+        "ROLL_UP", "ROLL_DOWN", "ROLL_OUT",
+        "ROLL_UP_AND_OUT", "ROLL_DOWN_AND_OUT", "CLOSE",
+    })
+
+    def _is_roll_signal(self, response_text: str, json_data: Optional[Dict] = None) -> bool:
+        """Check if response indicates a roll or close signal."""
+        if json_data is not None:
+            decision = json_data.get("decision", "").upper()
+            if decision in self._ROLL_DECISIONS:
+                return True
+        # Fallback text check
+        upper = response_text.upper()
+        return any(f"DECISION: {rd}" in upper or f'"decision": "{rd}"' in upper.replace(" ", "")
+                   for rd in self._ROLL_DECISIONS)
+
+    def _build_roll_signal_data(self, symbol: str, json_data: Optional[Dict]) -> Dict:
+        """Build a roll signal entry with the allowed fields."""
+        exchange, ticker = (symbol.split('-', 1) if '-' in symbol
+                            else ("", symbol))
+        base: Dict = {
+            "timestamp": datetime.now().isoformat(),
+            "symbol": ticker,
+            "exchange": exchange,
+            "action": json_data.get("decision", "ROLL") if json_data else "ROLL",
+        }
+        if json_data is not None:
+            for key in self._ROLL_SIGNAL_FIELDS:
+                if key in json_data and key not in base:
+                    base[key] = json_data[key]
+        for key in self._ROLL_SIGNAL_FIELDS:
+            base.setdefault(key, None)
+        return base
 
     def _build_signal_data(self, symbol: str, json_data: Optional[Dict]) -> Dict:
         """Build a signal entry with only the allowed fields."""
@@ -538,4 +616,153 @@ Analyze {ticker} NOW. Use the available MCP tools to gather current data. The fu
 
         print(f"\n{'='*60}")
         print(f"Completed {name} analysis")
+        print(f"{'='*60}\n")
+
+    # ------------------------------------------------------------------
+    # Position Monitor Agent (TradingView-only)
+    # ------------------------------------------------------------------
+
+    async def run_position_monitor_agent(
+        self,
+        name: str,
+        instructions: str,
+        positions_file: str,
+        decision_log_path: str,
+        signal_log_path: str,
+        position_type: str = "call",
+        max_decision_entries: int = 20,
+        max_signal_entries: int = 10,
+    ):
+        """Run position monitor for open options positions (TradingView only).
+
+        Args:
+            name: Agent name (e.g. "OpenCallMonitor")
+            instructions: System instructions for the monitor agent
+            positions_file: Path to file with positions (EXCHANGE-SYMBOL,strike,expiration)
+            decision_log_path: Path to decision JSONL log
+            signal_log_path: Path to signal JSONL log (roll signals only)
+            position_type: "call" or "put"
+            max_decision_entries: Max recent decisions to inject per symbol
+            max_signal_entries: Max recent signals to inject per symbol
+        """
+        print(f"\n{'='*60}")
+        print(f"Starting {name} monitoring")
+        print(f"{'='*60}")
+
+        positions = self._read_positions(positions_file)
+        if not positions:
+            print(f"No active positions in {positions_file} — skipping {name}")
+            return
+
+        print(f"Monitoring {len(positions)} open {position_type} position(s)")
+
+        from .tv_data_fetcher import TradingViewFetcher
+
+        async with TradingViewFetcher(self.mcp_command, self.mcp_args) as fetcher:
+            agent = ChatAgent(
+                chat_client=self.client,
+                name=name,
+                instructions=instructions,
+            )
+            logger.debug("ChatAgent '%s' (position monitor, TradingView pre-fetch).", name)
+
+            for symbol, strike, expiration in positions:
+                exchange, ticker = (symbol.split('-', 1) if '-' in symbol
+                                    else ("", symbol))
+
+                print(f"\n--- Monitoring {ticker} ${strike} exp {expiration} ---")
+                logger.info(
+                    "Position monitor pre-fetch + agent.run() for %s strike=%s exp=%s",
+                    symbol, strike, expiration,
+                )
+
+                try:
+                    previous_decisions = read_decision_log(
+                        decision_log_path, max_entries=max_decision_entries, symbol=ticker)
+                    previous_signals = read_signal_log(
+                        signal_log_path, max_entries=max_signal_entries, symbol=ticker)
+
+                    data = await fetcher.fetch_all(symbol)
+
+                    message = f"""Analyze open {position_type} position for {ticker}:
+- Current strike: ${strike}
+- Current expiration: {expiration}
+- Exchange: {exchange}
+
+=== PRE-FETCHED TRADINGVIEW DATA ===
+
+--- OVERVIEW PAGE ({exchange}:{ticker}) ---
+{data['overview']}
+
+--- TECHNICALS PAGE ({exchange}:{ticker}) ---
+{data['technicals']}
+
+--- FORECAST PAGE ({exchange}:{ticker}) ---
+{data['forecast']}
+
+--- OPTIONS CHAIN ({exchange}:{ticker}) ---
+{data['options_chain']}
+
+=== END OF DATA ===
+
+Previous monitor decisions for {ticker}:
+{previous_decisions}
+
+Previous roll signals for {ticker}:
+{previous_signals}
+
+Analyze the position risk and output your decision in the required JSON format."""
+
+                    result = await agent.run(message)
+                    response_text = result.text or str(result)
+
+                    logger.info(
+                        "agent.run() completed for %s – response length=%d",
+                        symbol, len(response_text),
+                    )
+                    logger.debug(
+                        "Response first 500 chars for %s: %s",
+                        symbol, response_text[:500],
+                    )
+
+                    print(f"Response: {response_text[:200]}...")
+
+                    # Log decision (every position, every run)
+                    decision_line, json_data = self._extract_decision_line(symbol, response_text)
+                    if json_data is not None:
+                        append_decision(decision_log_path, json_data)
+                    else:
+                        append_decision(decision_log_path, {
+                            "symbol": ticker,
+                            "exchange": exchange,
+                            "current_strike": strike,
+                            "current_expiration": expiration,
+                            "summary": decision_line,
+                            "timestamp": datetime.now().isoformat(),
+                        })
+                    print(f"Logged decision")
+
+                    # Check for roll signal
+                    if self._is_roll_signal(response_text, json_data):
+                        signal_data = self._build_roll_signal_data(symbol, json_data)
+                        append_signal(signal_log_path, signal_data)
+                        print(f"⚠️ ROLL SIGNAL logged for {symbol} ${strike} exp {expiration}")
+
+                except Exception as e:
+                    logger.error(
+                        "Position monitor FAILED for %s strike=%s exp=%s:\n%s",
+                        symbol, strike, expiration, traceback.format_exc(),
+                    )
+                    print(f"Error monitoring {symbol} ${strike} exp {expiration}: {e}")
+                    append_decision(decision_log_path, {
+                        "error": str(e),
+                        "symbol": ticker,
+                        "exchange": exchange,
+                        "current_strike": strike,
+                        "current_expiration": expiration,
+                        "timestamp": datetime.now().isoformat(),
+                    })
+
+        print(f"\n{'='*60}")
+        print(f"Completed {name} monitoring")
         print(f"{'='*60}\n")

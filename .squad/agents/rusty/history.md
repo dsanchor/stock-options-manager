@@ -9,6 +9,15 @@
 
 ## Learnings
 
+### Open Position Monitor Architecture (2025-07)
+- Added two new agents (OpenCallMonitor, OpenPutMonitor) that reuse the TradingView pre-fetch architecture but operate on open positions instead of symbol watchlists.
+- Key difference: input is `EXCHANGE-SYMBOL,strike,expiration` (not just `EXCHANGE-SYMBOL`), and decisions are WAIT/ROLL (not SELL/WAIT).
+- Added `run_position_monitor_agent()` to AgentRunner — TradingView-only path, with position context injected into the message template (strike, expiration alongside pre-fetched data).
+- Roll signal detection (`_is_roll_signal`) and roll signal fields (`_ROLL_SIGNAL_FIELDS`) are separate from sell signal detection — different field sets, different decision values.
+- Position file parsing handles comments, blank lines, and malformed lines gracefully with per-line warnings.
+- Agent wrappers enforce TradingView-only: other providers get a warning and skip gracefully.
+- Scheduler integration: monitors run after sell-side agents and skip silently when position files have no active lines.
+
 ### TradingView Pre-Fetch Architecture (2025-07)
 - LLMs fundamentally cannot reliably make 3+ sequential browser tool calls — they skip pages, fabricate navigation errors, and ignore tool-calling instructions. Instruction-based fixes (reordering, innerText, browser_run_code) all failed.
 - Solution: Pre-fetch ALL TradingView data deterministically in Python using `TradingViewFetcher` (src/tv_data_fetcher.py), then pass the data to the agent as text. Agent receives NO tools — only analyzes.
@@ -378,3 +387,17 @@ Replaced the pipe-delimited output format across ALL 8 instruction files, plus u
 
 **Context savings per analysis run:** ~80K chars freed (from ~188K total down to ~108K), leaving much more room for the options chain data and the model's analysis.
 
+
+### README Documentation Enrichment (2025-07)
+- Added "How It Works" section with end-to-end flow diagram showing scheduler → agent → per-symbol loop → log.
+- Added "Key Concepts" section covering Decision vs Signal semantics, TradingView pre-fetch architecture rationale, per-symbol context filtering, and JSONL output format.
+- Enhanced Configuration section with full annotated `config.yaml` including the `context:` section.
+- Enhanced Output section with example decision JSON object from JSONL log.
+- Enhanced Project Structure with `tv_data_fetcher.py` and 1-line descriptions for every file.
+- Key approach: read all source files first to document actual behavior, not assumed behavior.
+
+### TradingView Overview Page Addition (2025-07)
+- Added `fetch_overview()` as 4th pre-fetched resource in `TradingViewFetcher`. Follows same `browser_run_code` + innerText pattern as technicals/forecast.
+- Overview page (`/symbols/{EXCHANGE}:{TICKER}/`) provides fundamentals: price, market cap, P/E, dividend yield, 52-week range, volume, sector/industry. Previously skipped to save context — now re-added as first fetch.
+- CSP instructions updated: Investment Worthiness Assessment no longer needs the "main page not loaded" workaround — overview data now available directly.
+- Instruction files renumbered: overview=1, technicals=2, forecast=3, options chain=4 in both covered call and CSP.

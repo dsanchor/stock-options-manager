@@ -1,0 +1,2 @@
+# Open cash-secured put positions (EXCHANGE-SYMBOL,strike,expiration)
+# NASDAQ-AAPL,200,2026-04-24
