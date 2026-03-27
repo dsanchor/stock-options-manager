@@ -27,7 +27,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Pre-install Playwright MCP + Chromium browser (avoids cold-start download)
 RUN npx @playwright/mcp@latest --help 2>/dev/null; \
-    npx playwright install chromium 2>/dev/null || true
+    npx playwright install chromium 2>/dev/null || true; \
+    npx playwright install-deps chromium 2>/dev/null || true
 
 # Application source + config
 COPY config.yaml run.py run_web.py ./

@@ -5,7 +5,7 @@ azure:
 
 mcp:
   command: "npx"
-  args: ["@playwright/mcp@latest"]
+  args: ["@playwright/mcp@latest", "--no-sandbox"]
   description: "Playwright MCP server for browser automation — renders TradingView pages with full JavaScript support for technical analysis, forecasts, and options chain data"
 
 context:
