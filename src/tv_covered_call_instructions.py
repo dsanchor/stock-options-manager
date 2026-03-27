@@ -78,30 +78,22 @@ For each analysis of a symbol, use the Playwright MCP server tools to navigate T
    - Purpose: Earnings context (recent beat/miss affects sentiment), institutional consensus gauge
    - Analysis: Strong consensus Buy with rising targets → caution selling calls (upside expectations)
 
-4. **Options Chain Data** — Navigate to options chain page
-   - Call: `browser_navigate(url="https://www.tradingview.com/symbols/{full_symbol}/options-chain/")`
-   - **CRITICAL: The options chain page loads with ALL expirations COLLAPSED.** The initial snapshot only shows expiration date rows (e.g., "March 27 1 DTE", "April 24 29 DTE") with NO strike/premium/IV data. You MUST expand an expiration to see actual options data.
-   - **Step-by-step to get options data:**
-     a. After `browser_navigate`, scan the snapshot for expiration rows. Look for rows like `"April 24 29 DTE AAPL"` — each shows the date and days to expiry (DTE).
-     b. **Find the best expiration for covered calls:** Target 30-45 DTE. Look for the row with DTE closest to 30-45 days. If no expiration falls in 30-45 DTE, the nearest expiration above 20 DTE is acceptable.
-     c. **If no expirations with 30+ DTE are visible**, the default filter may be "Next 30 days". Look for the button labeled `"Expiration Next 30 days"` in the snapshot and click it with `browser_click` to change it to a wider range (e.g., "Next 60 days" or "All"), then `browser_snapshot()` to see more expirations.
-     d. **Click on the target expiration row** to expand it: Use `browser_click(element="<expiration row text>", ref=<ref>)` on the row element (e.g., the row with text "April 24 29 DTE AAPL").
-     e. **Wait and re-read:** Call `browser_wait(time=2000)` then `browser_snapshot()` to get the expanded data.
-     f. **After expanding**, the snapshot will contain a full table with columns: Strike, Bid, Ask, LTP, IV, Delta, Gamma, Theta, Vega, Volume, Open Interest, and more — for BOTH calls and puts at each strike.
-     g. **To see more strikes:** If the view shows "±4 strikes" (only ~8 strikes around ATM), look for the strikes-range button and click it to expand to more strikes.
-   - Extract: Calls (primary focus), strikes, IV, bid/ask, volume, open interest, delta, gamma, theta if shown
-   - Use the options data for strike selection, IV assessment, premium evaluation, and Greeks analysis
-   - **If options chain data is still limited after expanding** (e.g., stock has low options volume or data is behind a login wall):
-     - Fall back to **technical analysis signals** (Strong Buy/Sell/Neutral) as the primary trading signal
-     - Use **pivot points** as strike selection guides:
-       - R1 = conservative strike target (nearest resistance)
-       - R2 = moderate strike target
-       - R3 = aggressive strike target (furthest resistance)
-     - Estimate appropriate strikes based on current price + technical levels
-     - Use **beta and volatility %** from the main page as implied volatility proxy:
-       - High beta (>1.3) + high volatility % → likely elevated IV → favorable for premium
-       - Low beta (<0.8) + low volatility % → likely low IV → premium may be insufficient
-     - Note in analysis that options chain data was limited and strike selection is based on technical levels
+4. **Options Chain Data** — **YOU MUST CLICK TO EXPAND** (3 tool calls required)
+   - **Step A** — Navigate: `browser_navigate(url="https://www.tradingview.com/symbols/{full_symbol}/options-chain/")`
+     The page loads COLLAPSED — you will see expiration rows like `row "April 24 29 DTE AAPL" [ref=e460]` but NO strike/IV/premium data yet.
+   - **Step B** — Find and CLICK the best expiration: In the snapshot, find the row with DTE closest to 30-45 days. Click it:
+     `browser_click(element="April 24 29 DTE AAPL", ref="e460")`
+     *(Use the actual text and ref from YOUR snapshot — the example refs will differ)*
+   - **Step C** — Read expanded data: `browser_snapshot()`
+     NOW the snapshot contains full data rows like:
+     `row "0.09 0.24 0.02 −0.18 0.61 2.99% 260.45 1.49% 26.50% 25.00% ... 250.0 31.57% ... 2.89 1.14% ..."` 
+     These rows contain: Delta, Gamma, Theta, Vega, IV%, Strike, Bid, Ask, Volume for both calls and puts.
+   - **DO NOT SKIP Steps B and C.** Without clicking, there is NO options data — only expiration headers.
+   - Extract: Strike prices, IV%, delta, bid/ask, volume from the expanded rows. Use for strike selection and premium evaluation.
+   - **Fallback** (only if click fails or data rows are empty after expanding):
+     - Use **pivot points** R1/R2/R3 as strike targets
+     - Use **beta and volatility %** as IV proxy
+     - Note that options chain data was unavailable
    - Purpose: Identify optimal call strikes, assess premium attractiveness, evaluate liquidity
 
 ### Phase 2: Analysis & Synthesis (no additional navigation needed)
@@ -153,7 +145,7 @@ The agent synthesizes all gathered data into a comprehensive analysis:
      - **Volatility %**: Percentage shown on main page
        - Use as direct IV approximation
      - **1Y Price Change**: Large moves suggest elevated realized volatility
-   - If options chain data IS available, use any IV values from it instead
+   - If options chain data IS available (from Step 4 expanded view), use the actual IV% values from the data rows instead of proxy
    - Calculate IV Rank proxy: Compare current volatility % to the range between 52-week high and low
    - Target: High beta + high volatility % for attractive covered call premiums
 
@@ -186,8 +178,9 @@ The agent synthesizes all gathered data into a comprehensive analysis:
   - Options chain fully accessible: Strikes, IV, bid/ask, volume, open interest, Greeks — all rendered by the browser
 
 - **TradingView via Playwright — Limitations:**
-  - **No explicit IV history** — Cannot compute IV Rank/Percentile from historical IV data; use current volatility % and beta as proxy
-  - **No Greeks guaranteed** — Greeks may or may not be shown on the options chain page depending on TradingView's layout; if absent, estimate from available data using technical levels and pivot points
+  - **No explicit IV history** — Cannot compute IV Rank/Percentile from historical IV data; use current volatility % and beta as proxy. However, per-strike IV IS available from the expanded options chain (Step 4).
+  - **Greeks are available** — After expanding the options chain (Step 4), each data row contains Delta, Gamma, Theta, Vega, Rho for each strike
+  - **Options chain requires click to expand** — The page loads collapsed; you MUST click an expiration row and then take a snapshot to see actual data (see Step 4)
   - **No dividend history endpoint** — Only current dividend info if shown on main page
   - **No income statement/cash flow details** — Only summary metrics (revenue, EPS, P/E) from main page
   - **No news articles** — No news feed or sentiment scores
@@ -195,7 +188,7 @@ The agent synthesizes all gathered data into a comprehensive analysis:
   - **Market hours dependency** — Some indicator values may show "—" outside trading hours
   - **No Fear & Greed Index** — No dedicated market sentiment endpoint
   - **No Google Trends** — No retail interest indicator
-  - Requires Node.js 18+ (for npx @playwright/mcp@latest)
+  - Requires Docker or Podman (for containerized Playwright MCP)
 
 - **Key Difference from Other Providers:**
   - TradingView provides **pre-analyzed technical signals** (Buy/Sell/Neutral summaries for oscillators, MAs, and overall) rather than raw data. The technicals page gives a ready-made technical assessment that Yahoo Finance and Alpha Vantage require manual calculation for.

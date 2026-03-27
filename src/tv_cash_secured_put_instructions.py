@@ -102,33 +102,27 @@ For each analysis of a symbol, use the Playwright MCP server tools to navigate T
      - Majority Sell ratings → risk of further decline → require deeper OTM strike or WAIT
    - Purpose: Validate institutional sentiment and earnings quality for fundamental gate
 
-4. **Options Chain Data for Puts** — Navigate to options chain page
-   - Call: `browser_navigate(url="https://www.tradingview.com/symbols/{full_symbol}/options-chain/")`
-   - **CRITICAL: The options chain page loads with ALL expirations COLLAPSED.** The initial snapshot only shows expiration date rows (e.g., "March 27 1 DTE", "April 24 29 DTE") with NO strike/premium/IV data. You MUST expand an expiration to see actual options data.
-   - **Step-by-step to get options data:**
-     a. After `browser_navigate`, scan the snapshot for expiration rows. Look for rows like `"April 24 29 DTE AAPL"` — each shows the date and days to expiry (DTE).
-     b. **Find the best expiration for cash-secured puts:** Target 30-45 DTE. Look for the row with DTE closest to 30-45 days. If no expiration falls in 30-45 DTE, the nearest expiration above 20 DTE is acceptable.
-     c. **If no expirations with 30+ DTE are visible**, the default filter may be "Next 30 days". Look for the button labeled `"Expiration Next 30 days"` in the snapshot and click it with `browser_click` to change it to a wider range (e.g., "Next 60 days" or "All"), then `browser_snapshot()` to see more expirations.
-     d. **Click on the target expiration row** to expand it: Use `browser_click(element="<expiration row text>", ref=<ref>)` on the row element (e.g., the row with text "April 24 29 DTE AAPL").
-     e. **Wait and re-read:** Call `browser_wait(time=2000)` then `browser_snapshot()` to get the expanded data.
-     f. **After expanding**, the snapshot will contain a full table with columns: Strike, Bid, Ask, LTP, IV, Delta, Gamma, Theta, Vega, Volume, Open Interest, and more — for BOTH calls and puts at each strike.
-     g. **To see more strikes:** If the view shows "±4 strikes" (only ~8 strikes around ATM), look for the strikes-range button and click it to expand to more strikes.
+4. **Options Chain Data for Puts** — **YOU MUST CLICK TO EXPAND** (3 tool calls required)
+   - **Step A** — Navigate: `browser_navigate(url="https://www.tradingview.com/symbols/{full_symbol}/options-chain/")`
+     The page loads COLLAPSED — you will see expiration rows like `row "April 24 29 DTE AAPL" [ref=e460]` but NO strike/IV/premium data yet.
+   - **Step B** — Find and CLICK the best expiration: In the snapshot, find the row with DTE closest to 30-45 days. Click it:
+     `browser_click(element="April 24 29 DTE AAPL", ref="e460")`
+     *(Use the actual text and ref from YOUR snapshot — the example refs will differ)*
+   - **Step C** — Read expanded data: `browser_snapshot()`
+     NOW the snapshot contains full data rows like:
+     `row "0.09 0.24 0.02 −0.18 0.61 ... 250.0 31.57% ... 2.89 1.14% ..."`
+     These rows contain: Delta, Gamma, Theta, Vega, IV%, Strike, Bid, Ask, Volume for both calls and puts.
+   - **DO NOT SKIP Steps B and C.** Without clicking, there is NO options data — only expiration headers.
    - **Put-Specific Data Extraction (from expanded table):**
+     - The data rows contain BOTH call and put data. Puts are in the right half of each row.
      - Identify put strikes at or below support levels (S1-S3 from technicals)
-     - Compare bid/ask spreads for liquidity assessment
      - Note IV for each strike — elevated put IV = fear premium = favorable for sellers
-     - Check volume and open interest for adequate liquidity (OI > 100 preferred)
-     - Look for put/call IV skew — elevated put skew = excellent for put sellers
      - Read delta values — target delta between -0.20 and -0.35 for conservative CSP
-   - **If options chain data is still limited after expanding** (e.g., stock has low options volume or data is behind a login wall):
-     - Fall back to **pivot points** as strike selection guides for support levels:
-       - S1 = nearest support → conservative strike (set strike at or below S1)
-       - S2 = deeper support → moderate strike
-       - S3 = deepest support → most conservative strike
-     - Use **beta and volatility %** from the main page as implied volatility proxy:
-       - High beta (>1.3) + high volatility % → likely elevated IV → good put premiums
-       - Low beta (<0.8) + low volatility % → likely low IV → premium may be insufficient
-     - Note in analysis which fields were unavailable
+     - Check volume for liquidity (higher = better)
+   - **Fallback** (only if click fails or data rows are empty after expanding):
+     - Use **pivot points** S1/S2/S3 as strike targets for support
+     - Use **beta and volatility %** as IV proxy
+     - Note that options chain data was unavailable
    - Purpose: Identify optimal put strikes at/below support, assess premium attractiveness, evaluate liquidity
 
 ### Phase 2: Analysis & Synthesis (no additional page navigations needed)
@@ -233,7 +227,7 @@ The agent synthesizes all gathered data into a comprehensive analysis:
 ### Important Notes on Data Availability
 
 - **TradingView via Playwright — Advantages:**
-  - FREE — No API key needed (requires Node.js 18+ for npx)
+  - FREE — No API key needed (requires Docker or Podman for containerized Playwright)
   - **Full JavaScript rendering** — Options chain, financials, and all dynamic content fully available via real browser automation
   - **Interactive page control** — `browser_click` can expand dropdowns, select expiration dates, switch tabs, and interact with the options chain table
   - Pre-calculated technical indicators: RSI, MACD, Stochastic, CCI, ADX, all MAs (10-200), Ichimoku, VWMA, Hull MA — with Buy/Sell/Neutral signals already computed (no manual calculation!)
@@ -246,8 +240,9 @@ The agent synthesizes all gathered data into a comprehensive analysis:
   - **Complete options chain** — Full strikes, expirations, bid/ask, volume, OI, IV rendered via JS — no longer a limitation
 
 - **TradingView via Playwright — Limitations:**
-  - **No explicit IV Rank/Percentile** — Must use volatility % and beta as proxy for implied volatility ranking (options chain IV values ARE available for individual strikes)
-  - **No Greeks** — Must estimate from available data; recommend strikes based on delta ranges using technical support levels and pivot points
+  - **No explicit IV Rank/Percentile** — Must use volatility % and beta as proxy for implied volatility ranking. However, per-strike IV IS available from the expanded options chain (Step 4).
+  - **Greeks ARE available** — After expanding the options chain (Step 4), each data row contains Delta, Gamma, Theta, Vega, Rho for each strike.
+  - **Options chain requires click to expand** — The page loads collapsed; you MUST click an expiration row and then take a snapshot to see actual data (see Step 4).
   - **No balance sheet** — Cannot directly assess debt-to-equity ratio, total debt, book value (important for CSP fundamental quality gate)
   - **No income statement/cash flow details** — Only summary metrics (revenue, EPS, P/E) from main page. Cannot assess margin trends, cash flow generation, or interest expense
   - **No dividend history endpoint** — Only current dividend info if shown on main page

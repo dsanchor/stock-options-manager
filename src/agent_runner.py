@@ -27,7 +27,7 @@ _console_handler = logging.StreamHandler()
 _console_handler.setLevel(logging.DEBUG)
 _console_handler.setFormatter(_fmt)
 
-_file_handler = logging.FileHandler("logs/mcp_debug.log")
+_file_handler = logging.FileHandler("logs/agents.log")
 _file_handler.setLevel(logging.DEBUG)
 _file_handler.setFormatter(_fmt)
 
