@@ -221,6 +221,13 @@ class TradingViewFetcher:
 
         logger.info("Pre-fetching TradingView data for %s", symbol)
 
+        # Fetch options chain FIRST — it uses browser_navigate + click +
+        # snapshot (accessibility tree) which is fragile.  Running it on a
+        # clean browser avoids state pollution from prior browser_run_code
+        # calls.
+        options_chain = await self.fetch_options_chain(full_symbol)
+        logger.info("Options chain fetched: %d chars", len(options_chain))
+
         overview = await self.fetch_overview(full_symbol)
         logger.info("Overview fetched: %d chars", len(overview))
 
@@ -229,9 +236,6 @@ class TradingViewFetcher:
 
         forecast = await self.fetch_forecast(full_symbol)
         logger.info("Forecast fetched: %d chars", len(forecast))
-
-        options_chain = await self.fetch_options_chain(full_symbol)
-        logger.info("Options chain fetched: %d chars", len(options_chain))
 
         return {
             "overview": overview,
