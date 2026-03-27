@@ -610,3 +610,106 @@ Instructions include explicit fallback protocol when options chain data is empty
 | Single-page fundamentals | No balance sheet / cash flow details |
 | Fewest fetch calls (4 URLs) | No news feed / sentiment scores |
 
+---
+
+## Decision: Structured JSON Output Format for Decisions
+
+**Date:** 2026-03-27  
+**Author:** Rusty (Agent Dev)  
+**Status:** Implemented  
+**Impact:** Team-wide (changes agent output parsing, logging, and instruction format)
+
+### Context
+
+Replaced the pipe-delimited human-readable output format with a machine-parseable JSON schema + SUMMARY line across all 8 instruction files and the agent runner infrastructure.
+
+### Decision
+
+1. **JSON decision block**: Agents output a fenced ```json block with a standardized schema containing all decision fields (symbol, decision, strike, expiration, IV metrics, premium, confidence, risk_flags, etc.)
+2. **SUMMARY line**: A one-line human-readable summary immediately after the JSON block
+3. **Dual logging**: JSON → `.jsonl` files, SUMMARY → existing `.log` files
+4. **Backward compatibility**: agent_runner tries JSON first, falls back to legacy pipe format
+
+### Schema Definition
+
+**Covered Call Decision Block:**
+```json
+{
+  "agent": "covered_call",
+  "symbol": "AAPL",
+  "decision": "SELL",
+  "strike": 175,
+  "expiration": "2026-04-17",
+  "dte": 21,
+  "iv_rank": 72,
+  "premium_percent": 2.3,
+  "confidence": 0.85,
+  "risk_flags": ["near_earnings"],
+  "reason": "Strong IV, premium >2%, clean technicals"
+}
+```
+
+**Cash-Secured Put Decision Block:**
+```json
+{
+  "agent": "cash_secured_put",
+  "symbol": "MSFT",
+  "decision": "SELL",
+  "strike": 410,
+  "expiration": "2026-04-17",
+  "support_level": 408,
+  "dte": 21,
+  "iv_rank": 68,
+  "premium_percent": 2.8,
+  "confidence": 0.90,
+  "risk_flags": [],
+  "reason": "Support identified at $408, premium strong"
+}
+```
+
+### Schema Differences
+
+- Covered call: `"agent": "covered_call"` — standard fields
+- Cash-secured put: `"agent": "cash_secured_put"` — adds `"support_level"` field
+
+### Trade-offs
+
+- **Pro**: Machine-parseable output enables downstream automation, dashboards, analytics
+- **Pro**: SUMMARY line preserves human readability
+- **Pro**: `.jsonl` format enables easy batch processing (one JSON per line)
+- **Con**: Larger instruction text (~2KB more per file) due to JSON examples
+- **Con**: Agent may occasionally produce malformed JSON (fallback handles this)
+
+### Implications for Team
+
+- **Linus**: Instruction files now specify JSON output format — any new instruction files must follow the same schema
+- **Basher**: Test cases should verify JSON extraction from agent responses
+- **Danny**: Downstream systems can now consume `.jsonl` files for structured decision data
+- **Scribe**: README may need updating to document the new output format
+
+---
+
+## User Directive: Model Configuration Change
+
+**Date:** 2026-03-27T09:18:56Z  
+**By:** dsanchor (via Copilot)  
+**Status:** Implemented in config/team.md
+
+### Context
+Updated model configuration from gpt-5.4-mini to gpt-5.1 based on performance observations with TradingView Playwright multi-step tool-calling workflows.
+
+### Directive
+
+**Switch model from gpt-5.4-mini to gpt-5.1**
+
+- **Reason:** gpt-5.1 shows superior performance on multi-step browser instruction sequences (navigate → click → snapshot for options chain data extraction from TradingView)
+- **Previous model performance:** gpt-5.4-mini unable to follow complex sequential browser commands reliably
+- **gpt-5.1 advantages:** Better instruction following on step-by-step workflows
+
+### Impact
+
+- Applies to all agent instruction files using TradingView provider
+- Updated in `config/team.md` model field
+- Existing Massive.com and Alpha Vantage workflows unaffected
+- Configuration propagates to all agents via team config inheritance
+

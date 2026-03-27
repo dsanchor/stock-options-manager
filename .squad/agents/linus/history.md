@@ -211,3 +211,29 @@ ROLE, STRATEGY OVERVIEW, ANALYSIS FRAMEWORK, DECISION CRITERIA, OUTPUT FORMAT, C
 **Status:** ✅ Completed 2026-03-26T22:40:00Z  
 **Team:** Coordination with Rusty (provider plumbing), Coordinator (README), Danny (feature request)
 
+### 2026-03-27: Output Format Updated to JSON+SUMMARY
+
+**Notification (from Rusty's work):** All instruction files (8 total: Massive.com, Alpha Vantage, and TradingView variants for both Covered Call and Cash-Secured Put) have been updated with a new dual-format output specification:
+
+**Changes Made by Rusty:**
+1. **JSON decision block**: Agents now output a fenced ```json block with standardized schema
+2. **SUMMARY line**: One-line human-readable summary follows the JSON block
+3. **Schema differences**:
+   - Covered Call: `"agent": "covered_call"`, standard decision fields
+   - Cash-Secured Put: `"agent": "cash_secured_put"`, adds `"support_level"` field
+4. **Backward compatibility**: agent_runner falls back to legacy pipe format if JSON parsing fails
+
+**Impact for Instruction Files:**
+- No logic changes — decision criteria, Greeks targets, DTE windows, fundamentals gates remain identical
+- Output section sections expanded with JSON examples (~2KB per file)
+- All new instruction files must follow this JSON+SUMMARY format going forward
+- Legacy pipe-delimited format still supported via fallback in agent_runner.py
+
+**Infrastructure Updates:**
+- agent_runner.py: Enhanced JSON extraction + legacy fallback
+- logger.py: Dual logging to `.jsonl` (structured) + `.log` (human-readable SUMMARY)
+- config/team.md: Model updated to gpt-5.1 for TradingView Playwright support
+
+**Status:** ✅ Accepted — instruction files compatible with new output format
+**Team:** Rusty (implementation), Infrastructure (agent_runner, logger)
+
