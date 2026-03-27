@@ -28,10 +28,10 @@ scheduler:
 
 covered_call:
   symbols_file: "data/covered_call_symbols.txt"
-  decision_log: "logs/covered_call_decisions.log"
-  signal_log: "logs/covered_call_signals.log"
+  decision_log: "logs/covered_call_decisions.jsonl"
+  signal_log: "logs/covered_call_signals.jsonl"
 
 cash_secured_put:
   symbols_file: "data/cash_secured_put_symbols.txt"
-  decision_log: "logs/cash_secured_put_decisions.log"
-  signal_log: "logs/cash_secured_put_signals.log"
+  decision_log: "logs/cash_secured_put_decisions.jsonl"
+  signal_log: "logs/cash_secured_put_signals.jsonl"

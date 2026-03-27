@@ -4,12 +4,13 @@ import logging
 import os
 import re
 import traceback
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from agent_framework import ChatAgent, MCPStdioTool, MCPStreamableHTTPTool
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
-from .logger import read_decision_log, append_decision, append_decision_json, append_signal
+from .logger import read_decision_log, append_decision, append_signal
 
 # ---------------------------------------------------------------------------
 # Debug logging setup – outputs to console AND logs/mcp_debug.log
@@ -333,18 +334,47 @@ Analyze {ticker} NOW. Use the available MCP tools to gather current data. The fu
                         symbol, response_text[:500],
                     )
 
+                    # Trace tool calls from the conversation to debug page-loading issues
+                    if result.messages:
+                        tool_calls_summary = []
+                        for msg in result.messages:
+                            role = getattr(msg, 'role', None) or getattr(msg, 'type', '?')
+                            if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                                for tc in msg.tool_calls:
+                                    fn_name = getattr(tc, 'name', None) or (tc.function.name if hasattr(tc, 'function') else '?')
+                                    fn_args = getattr(tc, 'arguments', None) or (tc.function.arguments if hasattr(tc, 'function') else '')
+                                    tool_calls_summary.append(f"{fn_name}({str(fn_args)[:120]})")
+                            elif hasattr(msg, 'content') and role in ('tool', 'function'):
+                                content_len = len(str(msg.content)) if msg.content else 0
+                                tool_calls_summary.append(f"  → response ({content_len} chars)")
+                        if tool_calls_summary:
+                            logger.debug(
+                                "Tool call trace for %s:\n  %s",
+                                symbol, "\n  ".join(tool_calls_summary),
+                            )
+
                     print(f"Response: {response_text[:200]}...")
 
                     # Log decision (extract structured JSON + summary from response)
                     decision_line, json_data = self._extract_decision_line(symbol, response_text)
-                    append_decision(decision_log_path, decision_line)
                     if json_data is not None:
-                        append_decision_json(decision_log_path, json_data)
+                        append_decision(decision_log_path, json_data)
+                    else:
+                        append_decision(decision_log_path, {
+                            "symbol": symbol,
+                            "summary": decision_line,
+                            "timestamp": datetime.now().isoformat(),
+                        })
                     print(f"Logged decision")
 
                     # Check for sell signal
                     if self._is_sell_signal(response_text, json_data):
-                        append_signal(signal_log_path, decision_line)
+                        signal_data = json_data if json_data is not None else {
+                            "symbol": symbol,
+                            "summary": decision_line,
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                        append_signal(signal_log_path, signal_data)
                         print(f"⚠️ SELL SIGNAL logged for {symbol}")
 
                 except Exception as e:
@@ -352,9 +382,12 @@ Analyze {ticker} NOW. Use the available MCP tools to gather current data. The fu
                         "agent.run() FAILED for %s:\n%s",
                         symbol, traceback.format_exc(),
                     )
-                    error_msg = f"{symbol} | DECISION: ERROR | Reason: {str(e)}"
                     print(f"Error analyzing {symbol}: {e}")
-                    append_decision(decision_log_path, error_msg)
+                    append_decision(decision_log_path, {
+                        "error": str(e),
+                        "symbol": symbol,
+                        "timestamp": datetime.now().isoformat(),
+                    })
 
         finally:
             # MCP cleanup – always exit the context manager
