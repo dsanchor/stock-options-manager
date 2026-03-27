@@ -413,6 +413,180 @@ options-agent/
 └── README.md
 ```
 
+## Deploy to Azure Container Apps
+
+This section deploys the Stock Options Manager to Azure Container Apps with persistent storage via Azure Files. It assumes your Azure AI Foundry project and model deployment already exist.
+
+### 1. Set Environment Variables
+
+```bash
+# Azure resource configuration
+export RESOURCE_GROUP="rg-stock-options-manager"
+export LOCATION="eastus2"
+export STORAGE_ACCOUNT="stoptionsmanager"        # must be globally unique, lowercase, no dashes
+export CONTAINER_ENV="cae-stock-options-manager"
+export CONTAINER_APP="ca-stock-options-manager"
+
+# Azure OpenAI (from your existing Foundry deployment)
+export AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com"
+export MODEL_DEPLOYMENT="gpt-5.1"
+export AZURE_OPENAI_API_KEY="your-api-key-here"
+
+# Container image (built by GitHub Actions)
+export IMAGE="ghcr.io/dsanchor/stock-options-manager:latest"
+```
+
+### 2. Create Resource Group
+
+```bash
+az group create \
+  --name $RESOURCE_GROUP \
+  --location $LOCATION
+```
+
+### 3. Create Azure Files Storage Account and File Shares
+
+```bash
+# Create storage account
+az storage account create \
+  --name $STORAGE_ACCOUNT \
+  --resource-group $RESOURCE_GROUP \
+  --location $LOCATION \
+  --sku Standard_LRS \
+  --kind StorageV2
+
+# Get storage account key
+export STORAGE_KEY=$(az storage account keys list \
+  --account-name $STORAGE_ACCOUNT \
+  --resource-group $RESOURCE_GROUP \
+  --query "[0].value" -o tsv)
+
+# Create file shares for data and logs
+az storage share create --name data --account-name $STORAGE_ACCOUNT --account-key $STORAGE_KEY
+az storage share create --name logs --account-name $STORAGE_ACCOUNT --account-key $STORAGE_KEY
+```
+
+### 4. Create Container Apps Environment with Storage Mounts
+
+```bash
+# Create the Container Apps environment
+az containerapp env create \
+  --name $CONTAINER_ENV \
+  --resource-group $RESOURCE_GROUP \
+  --location $LOCATION
+
+# Add Azure Files storage to the environment
+az containerapp env storage set \
+  --name $CONTAINER_ENV \
+  --resource-group $RESOURCE_GROUP \
+  --storage-name optionsdata \
+  --azure-file-account-name $STORAGE_ACCOUNT \
+  --azure-file-account-key $STORAGE_KEY \
+  --azure-file-share-name data \
+  --access-mode ReadWrite
+
+az containerapp env storage set \
+  --name $CONTAINER_ENV \
+  --resource-group $RESOURCE_GROUP \
+  --storage-name optionslogs \
+  --azure-file-account-name $STORAGE_ACCOUNT \
+  --azure-file-account-key $STORAGE_KEY \
+  --azure-file-share-name logs \
+  --access-mode ReadWrite
+```
+
+### 5. Deploy the Container App
+
+```bash
+az containerapp create \
+  --name $CONTAINER_APP \
+  --resource-group $RESOURCE_GROUP \
+  --environment $CONTAINER_ENV \
+  --image $IMAGE \
+  --target-port 8000 \
+  --ingress external \
+  --min-replicas 1 \
+  --max-replicas 1 \
+  --cpu 2 \
+  --memory 4Gi \
+  --env-vars \
+    AZURE_AI_PROJECT_ENDPOINT="$AZURE_AI_PROJECT_ENDPOINT" \
+    MODEL_DEPLOYMENT="$MODEL_DEPLOYMENT" \
+    AZURE_OPENAI_API_KEY="$AZURE_OPENAI_API_KEY" \
+  --registry-server ghcr.io
+```
+
+> **Note:** If your GHCR package is private, add `--registry-username <github-username> --registry-password <github-pat>` with a PAT that has `read:packages` scope.
+
+Now add the volume mounts (requires a YAML update since `az containerapp create` doesn't support volume mounts inline):
+
+```bash
+# Export current app config
+az containerapp show \
+  --name $CONTAINER_APP \
+  --resource-group $RESOURCE_GROUP \
+  -o yaml > app.yaml
+```
+
+Edit `app.yaml` to add volumes and volume mounts under the template section:
+
+```yaml
+template:
+  volumes:
+    - name: data-volume
+      storageName: optionsdata
+      storageType: AzureFile
+    - name: logs-volume
+      storageName: optionslogs
+      storageType: AzureFile
+  containers:
+    - name: ca-stock-options-manager
+      # ... existing properties ...
+      volumeMounts:
+        - volumeName: data-volume
+          mountPath: /app/data
+        - volumeName: logs-volume
+          mountPath: /app/logs
+```
+
+Apply the updated config:
+
+```bash
+az containerapp update \
+  --name $CONTAINER_APP \
+  --resource-group $RESOURCE_GROUP \
+  --yaml app.yaml
+```
+
+### 6. Verify Deployment
+
+```bash
+# Get the app URL
+export APP_URL=$(az containerapp show \
+  --name $CONTAINER_APP \
+  --resource-group $RESOURCE_GROUP \
+  --query "properties.configuration.ingress.fqdn" -o tsv)
+
+echo "Dashboard: https://$APP_URL"
+
+# Check logs
+az containerapp logs show \
+  --name $CONTAINER_APP \
+  --resource-group $RESOURCE_GROUP \
+  --follow
+```
+
+### Updating the Deployment
+
+After pushing new code (triggers the GitHub Actions workflow to build a new image):
+
+```bash
+az containerapp update \
+  --name $CONTAINER_APP \
+  --resource-group $RESOURCE_GROUP \
+  --image $IMAGE
+```
+
 ## Troubleshooting
 
 ### "Environment variable AZURE_AI_PROJECT_ENDPOINT not set"
