@@ -41,9 +41,9 @@
                     <td class="mono">${{ sig.strike if sig.strike else "—" }}</td>
                     <td class="mono">{{ sig.expiration or "—" }}</td>
                     <td class="mono">${{ sig.underlying_price if sig.underlying_price else "—" }}</td>
-                    <td class="num metric-value">{{ "%.1f%%" | format(sig.iv) if sig.iv is not none else "—" }}</td>
-                    <td class="num metric-value">{{ "$%.2f" | format(sig.premium) if sig.premium is not none else "—" }}</td>
-                    <td class="num metric-value">{{ "%.2f" | format(sig.delta) if sig.delta is not none else "—" }}</td>
+                    <td class="num metric-value">{% if sig.get('iv') is not none %}{{ "%.1f%%" | format(sig.iv) }}{% else %}—{% endif %}</td>
+                    <td class="num metric-value">{% if sig.get('premium') is not none %}{{ "$%.2f" | format(sig.premium) }}{% else %}—{% endif %}</td>
+                    <td class="num metric-value">{% if sig.get('delta') is not none %}{{ "%.2f" | format(sig.delta) }}{% else %}—{% endif %}</td>
                     {% else %}
                     <td>{{ sig.moneyness or "—" }}</td>
                     <td><span class="badge badge-risk-{{ sig.assignment_risk or 'low' | lower }}">{{ sig.assignment_risk or "—" }}</span></td>
