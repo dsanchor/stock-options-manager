@@ -30,7 +30,6 @@ For each analysis of a symbol, use the Playwright MCP server tools to navigate T
 
 **Important Notes:**
 - Values may show "—" during non-market hours — note this and proceed with available data
-- The main symbol page FAQ section contains excellent structured data (current price, analyst targets, ATH/ATL, 1Y change, volatility)
 - **FREE** — No API key needed
 - **Full JavaScript rendering** — Options chain, financials, and all dynamic content fully available
 - **Pre-calculated technicals** — TradingView provides RSI, MACD, Stochastic, CCI, ADX, all MAs (10-200) with Buy/Sell/Neutral signals already computed. No manual calculation needed.
@@ -39,25 +38,15 @@ For each analysis of a symbol, use the Playwright MCP server tools to navigate T
 - Requires Node.js 18+ (for npx)
 
 **URL Construction:** The agent message includes: "Analyze {TICKER} (exchange: {EXCHANGE}, full symbol: {EXCHANGE}-{TICKER})". Use the `full_symbol` (replacing "-" with "/") to construct TradingView URLs:
-- Pattern: `https://www.tradingview.com/symbols/{EXCHANGE}-{TICKER}/`
-- Example for NYSE-AA: `https://www.tradingview.com/symbols/NYSE-AA/`
+- Technicals: `https://www.tradingview.com/symbols/{EXCHANGE}-{TICKER}/technicals/`
+- Forecast: `https://www.tradingview.com/symbols/{EXCHANGE}-{TICKER}/forecast/`
+- Options chain: `https://www.tradingview.com/symbols/{EXCHANGE}-{TICKER}/options-chain/`
+
+**Context Budget — Why Only 3 Pages:** Each TradingView page returns 30-65K characters of rendered content via the accessibility snapshot. Loading all 4 available pages (main symbol + technicals + forecast + options chain) would produce ~245K characters total, exceeding model context limits. The main symbol page alone is ~103K characters and its essential data (current price, earnings date, analyst targets) is available on the other pages. Therefore, we load only 3 pages: technicals (smallest, most valuable for trading decisions), forecast (earnings + analyst consensus), and options chain (strikes, premiums, IV, Greeks).
 
 ### Phase 1: Core Market Data Collection
 
-1. **Company Profile & Current Price** — Navigate to main symbol page
-   - Call: `browser_navigate(url="https://www.tradingview.com/symbols/{full_symbol}/")`
-   - The accessibility snapshot returned contains ALL rendered content including JS-generated data
-   - Extract: Market cap, P/E ratio, EPS, revenue, beta, current price, 52-week high/low, next earnings date, analyst price targets (min/max/average), company description, volatility %, 1Y price change
-   - **Advantage**: Single page gives fundamentals, earnings date, analyst targets, and current price — no need for separate API calls
-   - **FAQ Section**: The snapshot includes FAQ data at the bottom with excellent structured data:
-     - "What is the current price of {TICKER}?" — current price
-     - "What do analysts forecast?" — analyst price targets (low/average/high)
-     - "What is the all-time high/low?" — ATH/ATL levels
-     - "What is the 1-year change?" — 1Y performance
-     - "When is the next earnings date?" — earnings date
-   - Purpose: Build fundamental picture and calendar context from a single data source
-
-2. **Technical Analysis** — Navigate to technicals page
+1. **Technical Analysis** — Navigate to technicals page
    - Call: `browser_navigate(url="https://www.tradingview.com/symbols/{full_symbol}/technicals/")`
    - Extract the following sections from the accessibility snapshot:
      - **Summary Gauges**: Overall / Oscillators / Moving Averages — each rated from Strong Sell to Strong Buy
@@ -68,7 +57,7 @@ For each analysis of a symbol, use the Playwright MCP server tools to navigate T
    - **For Covered Calls**: Use R1-R3 pivot points as strike price targets — set strike at or above resistance levels
    - Purpose: Complete technical assessment without manual computation
 
-3. **Forecast & Analyst Consensus** — Navigate to forecast page
+2. **Forecast & Analyst Consensus** — Navigate to forecast page
    - Call: `browser_navigate(url="https://www.tradingview.com/symbols/{full_symbol}/forecast/")`
    - Extract from the accessibility snapshot:
      - EPS actual vs estimate for most recent quarter (beat/miss/meet)
@@ -76,9 +65,11 @@ For each analysis of a symbol, use the Playwright MCP server tools to navigate T
      - Number of analysts covering the stock
      - Consensus rating breakdown (buy/sell/neutral/hold counts)
    - Purpose: Earnings context (recent beat/miss affects sentiment), institutional consensus gauge
+   - Extract: Current price (visible in page header), next earnings date, analyst price targets
+   - **Also provides**: Current price from page header, earnings date, analyst targets — data that would otherwise require the main symbol page
    - Analysis: Strong consensus Buy with rising targets → caution selling calls (upside expectations)
 
-4. **Options Chain Data** — **YOU MUST CLICK TO EXPAND** (3 tool calls required)
+3. **Options Chain Data** — **YOU MUST CLICK TO EXPAND** (3 tool calls required)
    - **Step A** — Navigate: `browser_navigate(url="https://www.tradingview.com/symbols/{full_symbol}/options-chain/")`
      The page loads COLLAPSED — you will see expiration rows like `row "April 24 29 DTE AAPL" [ref=e460]` but NO strike/IV/premium data yet.
    - **Step B** — Find and CLICK the best expiration: In the snapshot, find the row with DTE closest to 30-45 days. Click it:
@@ -89,10 +80,10 @@ For each analysis of a symbol, use the Playwright MCP server tools to navigate T
      `row "0.09 0.24 0.02 −0.18 0.61 2.99% 260.45 1.49% 26.50% 25.00% ... 250.0 31.57% ... 2.89 1.14% ..."` 
      These rows contain: Delta, Gamma, Theta, Vega, IV%, Strike, Bid, Ask, Volume for both calls and puts.
    - **DO NOT SKIP Steps B and C.** Without clicking, there is NO options data — only expiration headers.
-   - Extract: Strike prices, IV%, delta, bid/ask, volume from the expanded rows. Use for strike selection and premium evaluation.
+   - Extract: Strike prices, IV%, delta, bid/ask, volume from the expanded rows. Current price is also visible in the page header. Use for strike selection and premium evaluation.
    - **Fallback** (only if click fails or data rows are empty after expanding):
      - Use **pivot points** R1/R2/R3 as strike targets
-     - Use **beta and volatility %** as IV proxy
+     - Use IV% from nearby strikes as volatility proxy
      - Note that options chain data was unavailable
    - Purpose: Identify optimal call strikes, assess premium attractiveness, evaluate liquidity
 
@@ -100,7 +91,7 @@ For each analysis of a symbol, use the Playwright MCP server tools to navigate T
 
 The agent synthesizes all gathered data into a comprehensive analysis:
 
-5. **Technical Signal Interpretation**
+4. **Technical Signal Interpretation**
    - Combine oscillator summary and MA summary for overall direction:
      - Both "Sell" or "Strong Sell" → IDEAL for covered calls (stock expected flat/down, calls expire worthless)
      - Both "Neutral" → GOOD for covered calls (range-bound expectation)
@@ -115,7 +106,7 @@ The agent synthesizes all gathered data into a comprehensive analysis:
      - Price below SMA 20 and SMA 50: Downtrend → favorable for covered calls
      - Price above all MAs with "Strong Buy": Uptrend → caution, use higher strike
 
-6. **Support/Resistance from Pivot Points**
+5. **Support/Resistance from Pivot Points**
    - **Resistance Levels (for strike selection)**:
      - Classic R1: First resistance — conservative strike target
      - Classic R2: Second resistance — moderate strike target
@@ -126,7 +117,7 @@ The agent synthesizes all gathered data into a comprehensive analysis:
    - Cross-reference pivot levels with SMA/EMA levels from technicals for confluence
    - Confluence (pivot + MA at same level) = stronger support/resistance
 
-7. **Trend & Momentum Assessment**
+6. **Trend & Momentum Assessment**
    - Compare current price vs MA values (SMA 20, 50, 100, 200):
      - Price > SMA 20 > SMA 50: Uptrend → higher strike needed
      - Price < SMA 20 < SMA 50: Downtrend → lower strike acceptable
@@ -135,33 +126,34 @@ The agent synthesizes all gathered data into a comprehensive analysis:
      - Stochastic > 80: Overbought momentum → favorable for call selling
      - CCI > 100: Extended → mean reversion likely → favorable
 
-8. **Volatility & IV Proxy**
-   - TradingView does NOT provide explicit IV data via the symbol or technicals pages
-   - Use these proxies from the main symbol page:
-     - **Beta**: Measures stock's volatility relative to market
-       - Beta > 1.3: High volatility stock → likely elevated IV → good premiums
-       - Beta 0.8-1.3: Moderate volatility → standard premiums
-       - Beta < 0.8: Low volatility → premium may be thin
-     - **Volatility %**: Percentage shown on main page
-       - Use as direct IV approximation
-     - **1Y Price Change**: Large moves suggest elevated realized volatility
-   - If options chain data IS available (from Step 4 expanded view), use the actual IV% values from the data rows instead of proxy
-   - Calculate IV Rank proxy: Compare current volatility % to the range between 52-week high and low
-   - Target: High beta + high volatility % for attractive covered call premiums
+7. **Volatility & IV Assessment**
+   - **Primary source: Options chain IV** (from Step 3 expanded view):
+     - Extract actual IV% values from the expanded options chain data rows
+     - Compare IV across strikes — higher IV at lower strikes = put skew (normal)
+     - Use ATM IV as the primary volatility measure for the stock
+   - **IV Rank proxy**: Compare current ATM IV% to the range observed across available strikes and expirations
+   - **If options chain data IS available** (from Step 3), use actual IV% — this is always preferred over any proxy
+   - **If options chain data is NOT available** (fallback scenario):
+     - Use pivot point spread (R3-S3 range relative to current price) as volatility proxy
+     - Wider spread = higher implied volatility
+   - Target: Elevated IV% from expanded options chain for attractive covered call premiums
 
-9. **Earnings & Calendar Risk**
-   - Extract next earnings date from main page FAQ section
+8. **Earnings & Calendar Risk**
+   - Extract next earnings date from the forecast page (Step 2) — look for upcoming earnings date, EPS estimates, and reporting schedule
    - CRITICAL: NEVER sell calls expiring after next earnings date without careful consideration
      - Safe zone: >7 days after earnings, or expiration before earnings
      - IV crush helps call sellers (option loses value) but earnings gaps can cause assignment
-   - Check if ex-dividend date is mentioned on main page → if within DTE, assignment risk increases
+   - Check recent earnings results from forecast page: beat/miss affects near-term sentiment
    - Note any mentions of upcoming catalysts (FDA decisions, product launches, conferences)
 
-10. **Fundamental Context**
-    - From main page: Market cap, P/E, EPS, revenue — assess company health
-    - Analyst price targets from FAQ: If target significantly above current price → caution on selling calls
-    - Compare current price to all-time high: Near ATH → possible resistance → favorable for calls
-    - Company description for sector context and competitive positioning
+9. **Fundamental Context**
+    - **Note**: The main symbol page is NOT loaded (context budget optimization), so detailed fundamentals (P/E, EPS, revenue, market cap) are not directly available
+    - Use analyst consensus from the forecast page (Step 2) as investment context:
+      - Strong Buy consensus with rising targets → caution on selling calls (upside expectations)
+      - Hold/Sell consensus → stock less likely to rally sharply → favorable for covered calls
+      - Number of analysts covering → more coverage = more institutional interest
+    - Compare current price (from options chain page header) to analyst price targets from forecast page
+    - If target significantly above current price → caution on selling calls
 
 ### Important Notes on Data Availability
 
@@ -171,18 +163,18 @@ The agent synthesizes all gathered data into a comprehensive analysis:
   - **Interactive page control** — `browser_click` can expand dropdowns, select expiration dates, toggle views, and interact with any page element
   - Pre-calculated technical indicators: RSI, MACD, Stochastic, CCI, ADX, all MAs (10-200), Ichimoku, VWMA, Hull MA — with Buy/Sell/Neutral signals already computed (no manual calculation!)
   - Pivot points: Classic, Fibonacci, Camarilla, Woodie, DM — with R1-R3, S1-S3 — excellent for strike selection and support/resistance identification
-  - Single-page fundamentals: Market cap, P/E, EPS, beta, earnings date, analyst targets, current price, volatility all on one page
-  - Company context: Full description, sector, industry, CEO, founded date
-  - Analyst consensus: Number of analysts + buy/sell/neutral breakdown on forecast page
+  - Analyst consensus: Number of analysts + buy/sell/neutral breakdown + earnings data on forecast page
   - Pre-analyzed technical summary: "Strong Buy" to "Strong Sell" overall signal — no synthesis needed
   - Options chain fully accessible: Strikes, IV, bid/ask, volume, open interest, Greeks — all rendered by the browser
+  - Current price visible in options chain page header — no separate page needed
 
 - **TradingView via Playwright — Limitations:**
-  - **No explicit IV history** — Cannot compute IV Rank/Percentile from historical IV data; use current volatility % and beta as proxy. However, per-strike IV IS available from the expanded options chain (Step 4).
-  - **Greeks are available** — After expanding the options chain (Step 4), each data row contains Delta, Gamma, Theta, Vega, Rho for each strike
-  - **Options chain requires click to expand** — The page loads collapsed; you MUST click an expiration row and then take a snapshot to see actual data (see Step 4)
-  - **No dividend history endpoint** — Only current dividend info if shown on main page
-  - **No income statement/cash flow details** — Only summary metrics (revenue, EPS, P/E) from main page
+  - **Main symbol page NOT loaded** — To stay within context budget (~245K chars across 4 pages exceeds model limits), the main symbol page (~103K chars) is skipped. This means P/E, EPS, revenue, market cap, beta, company description are NOT available. Analyst targets, earnings date, and current price are available from the forecast and options chain pages.
+  - **No explicit IV history** — Cannot compute IV Rank/Percentile from historical IV data; use current IV% from expanded options chain. Per-strike IV IS available from the expanded options chain (Step 3).
+  - **Greeks are available** — After expanding the options chain (Step 3), each data row contains Delta, Gamma, Theta, Vega, Rho for each strike
+  - **Options chain requires click to expand** — The page loads collapsed; you MUST click an expiration row and then take a snapshot to see actual data (see Step 3)
+  - **No dividend history endpoint** — Only current dividend info if shown on page
+  - **No income statement/cash flow details** — Summary metrics (revenue, EPS, P/E) are not available without the main page
   - **No news articles** — No news feed or sentiment scores
   - **No historical price OHLCV data** — Cannot calculate historical volatility from raw price data
   - **Market hours dependency** — Some indicator values may show "—" outside trading hours
@@ -194,7 +186,7 @@ The agent synthesizes all gathered data into a comprehensive analysis:
   - TradingView provides **pre-analyzed technical signals** (Buy/Sell/Neutral summaries for oscillators, MAs, and overall) rather than raw data. The technicals page gives a ready-made technical assessment that Yahoo Finance and Alpha Vantage require manual calculation for.
   - The agent works from **analyzed signals** → synthesis, rather than raw data → calculation → synthesis.
   - Pivot points replace manual support/resistance identification from price history scanning.
-  - Beta + volatility % replace IV Rank/Percentile calculations from options chain IV history.
+  - Actual IV% from expanded options chain replaces proxy-based IV estimation.
   - **With Playwright**, the options chain is now fully rendered — the agent can read strikes, premiums, IV, and Greeks directly from the page, and use `browser_click` to switch expiration dates or expand sections.
 
 - **When Data is Missing:**
@@ -203,11 +195,12 @@ The agent synthesizes all gathered data into a comprehensive analysis:
   - If some indicator values show "—", note this and rely on available indicators
   - Document in analysis what data was unavailable
   - Apply more conservative criteria if key data points are missing (e.g., without IV data, require stronger technical signals)
+  - Without fundamentals (main page not loaded), rely on analyst consensus from forecast page for investment context
 
 - **Earnings Calendar:**
-  - Extract from main page FAQ section ("When is the next earnings date?")
+  - Extract from forecast page (Step 2) — look for upcoming earnings date and EPS estimates
   - CRITICAL: Never sell calls expiring after next earnings date
-  - If earnings date is not available, note this as a risk factor and apply conservative DTE
+  - If earnings date is not available from forecast page, note this as a risk factor and apply conservative DTE
 
 ## ANALYSIS FRAMEWORK
 
