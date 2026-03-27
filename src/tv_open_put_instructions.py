@@ -193,7 +193,7 @@ Output a **JSON decision block** inside a fenced code block, followed by a **SUM
 **JSON Schema (open_put_monitor):**
 ```json
 {
-  "timestamp": "YYYY-MM-DDTHH:MM:SSZ",
+  "timestamp": "USE the timestamp provided in the prompt — do NOT generate your own",
   "symbol": "TICKER",
   "exchange": "EXCHANGE",
   "agent": "open_put_monitor",

@@ -484,3 +484,11 @@ Replaced the pipe-delimited output format across ALL 8 instruction files, plus u
 - Removed auto-run on startup (`run_all_agents()` call in `run()` method). Scheduler now only fires on cron schedule.
 - JS trigger handler: fetch POST → visual feedback cycle (Running → Triggered/Error → reset after 3s). Button state managed via CSS classes `.running`, `.done`, `.error`.
 - Key pattern: for web↔scheduler communication, `app.state` is the simplest bridge — no module-level globals or import cycles needed.
+
+### Timestamp Consistency Fix (2025-07)
+- All decision and signal log timestamps now generated in Python (`datetime.now().strftime("%Y-%m-%d %H:%M:%S")`) BEFORE agent execution — LLM-generated timestamps are overridden.
+- Single `TIMESTAMP_FORMAT` constant in `agent_runner.py` used across all 6 logging paths (structured decisions, fallback decisions, error decisions, sell signals, roll signals — for both `run_agent` and `run_position_monitor_agent`).
+- `_build_signal_data()` and `_build_roll_signal_data()` now accept a `timestamp` parameter instead of generating their own.
+- LLM instruction schemas updated to `"timestamp": "auto-set by system"` — field kept in schema so LLM output remains parseable, but value is always replaced.
+- `web/app.py` `parse_timestamp()` updated to recognize `%Y-%m-%d %H:%M:%S` as the primary format (checked first, before ISO variants).
+- Key pattern: when you need consistent metadata across LLM outputs, always inject it from the calling code — never trust the LLM to generate accurate timestamps, IDs, or other metadata.

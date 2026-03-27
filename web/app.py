@@ -123,7 +123,7 @@ def _write_config(config: Dict[str, Any]):
 
 def parse_timestamp(ts: str) -> Optional[datetime]:
     """Parse a timestamp string into a timezone-aware UTC datetime."""
-    for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S%z"):
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S%z"):
         try:
             dt = datetime.strptime(ts, fmt)
             if dt.tzinfo is None:

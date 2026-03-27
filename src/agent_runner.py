@@ -12,6 +12,10 @@ from azure.identity import AzureCliCredential
 
 from .logger import read_decision_log, read_signal_log, append_decision, append_signal
 
+# Canonical timestamp format — used for ALL decision and signal log entries.
+# Must match the format expected by web/app.py parse_timestamp().
+TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+
 # ---------------------------------------------------------------------------
 # Debug logging setup – console only
 # ---------------------------------------------------------------------------
@@ -234,12 +238,13 @@ class AgentRunner:
         return any(f"DECISION: {rd}" in upper or f'"decision": "{rd}"' in upper.replace(" ", "")
                    for rd in self._ROLL_DECISIONS)
 
-    def _build_roll_signal_data(self, symbol: str, json_data: Optional[Dict]) -> Dict:
+    def _build_roll_signal_data(self, symbol: str, json_data: Optional[Dict],
+                                timestamp: str) -> Dict:
         """Build a roll signal entry with the allowed fields."""
         exchange, ticker = (symbol.split('-', 1) if '-' in symbol
                             else ("", symbol))
         base: Dict = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": timestamp,
             "symbol": ticker,
             "exchange": exchange,
             "action": json_data.get("decision", "ROLL") if json_data else "ROLL",
@@ -252,12 +257,13 @@ class AgentRunner:
             base.setdefault(key, None)
         return base
 
-    def _build_signal_data(self, symbol: str, json_data: Optional[Dict]) -> Dict:
+    def _build_signal_data(self, symbol: str, json_data: Optional[Dict],
+                            timestamp: str) -> Dict:
         """Build a signal entry with only the allowed fields."""
         exchange, ticker = (symbol.split('-', 1) if '-' in symbol
                             else ("", symbol))
         base: Dict = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": timestamp,
             "symbol": ticker,
             "exchange": exchange,
             "decision": "SELL",
@@ -331,6 +337,9 @@ class AgentRunner:
                 print(f"\n--- Analyzing {symbol} ---")
                 logger.info("Starting pre-fetch + agent.run() for symbol=%s", symbol)
 
+                # Capture timestamp BEFORE agent execution — single source of truth
+                analysis_ts = datetime.now().strftime(TIMESTAMP_FORMAT)
+
                 try:
                     exchange, ticker = symbol.split('-', 1) if '-' in symbol else ("", symbol)
 
@@ -367,7 +376,8 @@ Previous decisions for {ticker}:
 Previous signals for {ticker}:
 {previous_signals}
 
-All market data has been pre-fetched above. Do NOT use any browser tools — analyze the data provided and output your decision in the required JSON format."""
+Current timestamp: {analysis_ts}
+All market data has been pre-fetched above. Do NOT use any browser tools — analyze the data provided and output your decision in the required JSON format. Use the timestamp above in your JSON output; do NOT generate your own."""
 
                     result = await agent.run(message)
                     response_text = result.text or str(result)
@@ -383,21 +393,22 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
 
                     print(f"Response: {response_text[:200]}...")
 
-                    # Log decision
+                    # Log decision — always override timestamp from Python
                     decision_line, json_data = self._extract_decision_line(symbol, response_text)
                     if json_data is not None:
+                        json_data["timestamp"] = analysis_ts
                         append_decision(decision_log_path, json_data)
                     else:
                         append_decision(decision_log_path, {
                             "symbol": symbol,
                             "summary": decision_line,
-                            "timestamp": datetime.now().isoformat(),
+                            "timestamp": analysis_ts,
                         })
                     print(f"Logged decision")
 
                     # Check for sell signal
                     if self._is_sell_signal(response_text, json_data):
-                        signal_data = self._build_signal_data(symbol, json_data)
+                        signal_data = self._build_signal_data(symbol, json_data, analysis_ts)
                         append_signal(signal_log_path, signal_data)
                         print(f"⚠️ SELL SIGNAL logged for {symbol}")
 
@@ -410,7 +421,7 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
                     append_decision(decision_log_path, {
                         "error": str(e),
                         "symbol": symbol,
-                        "timestamp": datetime.now().isoformat(),
+                        "timestamp": analysis_ts,
                     })
 
         print(f"\n{'='*60}")
@@ -475,6 +486,9 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
                     symbol, strike, expiration,
                 )
 
+                # Capture timestamp BEFORE agent execution — single source of truth
+                analysis_ts = datetime.now().strftime(TIMESTAMP_FORMAT)
+
                 try:
                     previous_decisions = read_decision_log(
                         decision_log_path, max_entries=max_decision_entries, symbol=ticker)
@@ -510,7 +524,8 @@ Previous monitor decisions for {ticker}:
 Previous roll signals for {ticker}:
 {previous_signals}
 
-Analyze the position risk and output your decision in the required JSON format."""
+Current timestamp: {analysis_ts}
+Analyze the position risk and output your decision in the required JSON format. Use the timestamp above in your JSON output; do NOT generate your own."""
 
                     result = await agent.run(message)
                     response_text = result.text or str(result)
@@ -526,9 +541,10 @@ Analyze the position risk and output your decision in the required JSON format."
 
                     print(f"Response: {response_text[:200]}...")
 
-                    # Log decision (every position, every run)
+                    # Log decision — always override timestamp from Python
                     decision_line, json_data = self._extract_decision_line(symbol, response_text)
                     if json_data is not None:
+                        json_data["timestamp"] = analysis_ts
                         append_decision(decision_log_path, json_data)
                     else:
                         append_decision(decision_log_path, {
@@ -537,13 +553,13 @@ Analyze the position risk and output your decision in the required JSON format."
                             "current_strike": strike,
                             "current_expiration": expiration,
                             "summary": decision_line,
-                            "timestamp": datetime.now().isoformat(),
+                            "timestamp": analysis_ts,
                         })
                     print(f"Logged decision")
 
                     # Check for roll signal
                     if self._is_roll_signal(response_text, json_data):
-                        signal_data = self._build_roll_signal_data(symbol, json_data)
+                        signal_data = self._build_roll_signal_data(symbol, json_data, analysis_ts)
                         append_signal(signal_log_path, signal_data)
                         print(f"⚠️ ROLL SIGNAL logged for {symbol} ${strike} exp {expiration}")
 
@@ -559,7 +575,7 @@ Analyze the position risk and output your decision in the required JSON format."
                         "exchange": exchange,
                         "current_strike": strike,
                         "current_expiration": expiration,
-                        "timestamp": datetime.now().isoformat(),
+                        "timestamp": analysis_ts,
                     })
 
         print(f"\n{'='*60}")

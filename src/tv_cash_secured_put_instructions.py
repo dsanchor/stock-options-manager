@@ -454,7 +454,7 @@ Output a **JSON decision block** inside a fenced code block, followed by a **SUM
 **JSON Schema (cash_secured_put):**
 ```json
 {
-  "timestamp": "YYYY-MM-DDTHH:MM:SSZ",
+  "timestamp": "USE the timestamp provided in the prompt — do NOT generate your own",
   "symbol": "TICKER",
   "exchange": "EXCHANGE",
   "agent": "cash_secured_put",
