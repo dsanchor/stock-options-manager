@@ -414,3 +414,9 @@ Key components:
 - `agent_framework.foundry.FoundryChatClient` - Azure AI Foundry integration
 
 TradingView data is fetched via the Playwright MCP server running in a container (`docker`/`podman run -i --rm --init mcr.microsoft.com/playwright/mcp`). The server is driven from Python (`tv_data_fetcher.py`), not by the LLM. The LLM receives pre-fetched data as text and performs analysis only — no tools are given to the agent.
+
+---
+
+## Acknowledgments
+
+This project was built with [GitHub Copilot](https://github.com/features/copilot) and [Squad](https://github.com/bradygaster/squad) by [@bradygaster](https://github.com/bradygaster) — an AI team orchestration framework that runs inside Copilot CLI. Squad coordinated multiple specialized agents to develop, test, and iterate on this codebase.
