@@ -88,6 +88,10 @@ class Config:
     @property
     def cron_expression(self) -> str:
         return self.config['scheduler']['cron']
+
+    @cron_expression.setter
+    def cron_expression(self, value: str):
+        self.config['scheduler']['cron'] = value
     
     @property
     def covered_call_config(self) -> Dict[str, str]:
