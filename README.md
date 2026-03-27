@@ -17,6 +17,70 @@ Both agents use the Microsoft Agent Framework (`agent-framework`) with MCP (Mode
 | **Yahoo Finance** (`yahoo`) | `mcp-yahoo-finance` | Local stdio | **Free (no API key)**, 12 direct tools, full options chains with IV, earnings dates, analyst recommendations |
 | **TradingView** (`tradingview`) | `@playwright/mcp` | Local stdio | **Free (no API key)**, full JS rendering via headless browser, pre-calculated technical signals (Buy/Sell/Neutral), pivot points (R1-R3, S1-S3), complete options chains, analyst forecasts |
 
+## How It Works
+
+End-to-end flow for each scheduled run:
+
+```
+Scheduler (main.py)
+  │
+  ├─ Covered Call Agent
+  │    for each symbol in data/covered_call_symbols.txt:
+  │      1. Load per-symbol context (past decisions + signals)
+  │      2. Gather market data (provider-dependent — see below)
+  │      3. LLM analyzes data → structured JSON decision
+  │      4. Log decision to JSONL; if SELL → also log to signal file
+  │
+  └─ Cash Secured Put Agent
+       (same loop, different symbols file + instructions)
+```
+
+**Data gathering differs by provider:**
+
+- **TradingView (pre-fetch architecture):** Python pre-fetches ALL data deterministically — technicals, forecast, and options chain — using the Playwright MCP server driven from `tv_data_fetcher.py`. The LLM never touches the browser. It receives the data as text and only performs analysis. See [Pre-fetch Architecture](#pre-fetch-architecture-tradingview) below.
+- **All other providers (Massive, Alpha Vantage, Yahoo):** The LLM receives MCP tools directly and makes its own tool calls to gather data before analyzing.
+
+**Per-symbol context injection:** Before each symbol is analyzed, the runner reads that symbol's recent decisions and signals from the JSONL logs and injects them into the prompt. The LLM sees only context for the symbol it's currently analyzing — not a mix of all symbols. Context limits are configurable in `config.yaml` (`context.max_decision_entries`, `context.max_signal_entries`).
+
+**Output:** Every symbol produces a decision (SELL, WAIT, or HOLD) written to the decision log. Only SELL decisions are additionally written to the signal log — the actionable alerts that downstream systems watch.
+
+## Key Concepts
+
+### Decision vs Signal
+
+A **decision** is recorded for EVERY symbol on EVERY run. Possible values: `SELL`, `WAIT`, or `HOLD`. The decision log is the complete audit trail.
+
+A **signal** is the subset of decisions where the action is `SELL` — the actionable alerts. The signal log is intentionally sparse: it only contains opportunities the agent recommends acting on. Downstream automation or human review watches the signal log.
+
+### Pre-fetch Architecture (TradingView)
+
+LLMs don't reliably make multi-step browser tool calls. When given Playwright tools directly, they skip pages, fabricate navigation errors, and ignore sequencing instructions.
+
+The solution: `TradingViewFetcher` (`src/tv_data_fetcher.py`) drives the Playwright MCP server from Python — deterministically, with no LLM involvement. It fetches three pages per symbol:
+
+| Page | Method | Typical Size | Content |
+|------|--------|-------------|---------|
+| Technicals | `browser_run_code` (innerText) | ~3K chars | RSI, MACD, Stochastic, all MAs (10-200), pivot points (R1-R3, S1-S3) with Buy/Sell/Neutral signals |
+| Forecast | `browser_run_code` (innerText) | ~2.5K chars | Analyst consensus, price targets, EPS history, revenue data |
+| Options chain | `browser_navigate` + `click` + `snapshot` | ~65K chars | Full chain expanded to best 30-45 DTE expiration via accessibility snapshot |
+
+The agent is created with **no tools** — it only analyzes the pre-fetched data included in its prompt. This is the key pattern: move deterministic multi-step workflows to the host language; let the LLM do what it's good at — analysis.
+
+### Per-symbol Context Filtering
+
+Each symbol's analysis only sees its OWN prior decisions and signals. The logger reads the JSONL file, filters entries by the `symbol` field, and returns only matching entries up to the configured limit. This prevents cross-contamination between symbols and keeps context focused.
+
+Configurable in `config.yaml`:
+```yaml
+context:
+  max_decision_entries: 5   # Recent decisions injected per symbol
+  max_signal_entries: 1     # Recent signals injected per symbol
+```
+
+### JSONL Output Format
+
+All output is [JSON Lines](https://jsonlines.org/) — one JSON object per line. Machine-parseable for downstream automation. Files use the `.jsonl` extension.
+
 ## Prerequisites
 
 1. **Python 3.12+**
@@ -154,10 +218,49 @@ The exchange prefix is used by the TradingView provider to construct URLs. For o
 ### 6. Adjust Configuration (Optional)
 
 Edit `config.yaml` to customize:
-- `scheduler.interval_minutes` - How often agents run (default: 60 minutes)
-- `azure.model_deployment` - Model to use (default: gpt-5.4-mini)
-- `mcp.command` and `mcp.args` - MCP server launch command
-- Log file paths
+
+```yaml
+azure:
+  project_endpoint: "${AZURE_AI_PROJECT_ENDPOINT}"
+  model_deployment: "gpt-5.1"          # Model deployment name
+
+mcp:
+  provider: "tradingview"               # "massive", "alphavantage", "yahoo", or "tradingview"
+  # Per-provider sub-sections (only the selected provider is loaded):
+  massive:
+    command: "mcp_massive"
+    args: []
+    env_key: "MASSIVE_API_KEY"
+  alphavantage:
+    transport: "streamable_http"
+    url: "https://mcp.alphavantage.co/mcp?apikey=${ALPHAVANTAGE_API_KEY}"
+    env_key: "ALPHAVANTAGE_API_KEY"
+  yahoo:
+    command: "uvx"
+    args: ["mcp-yahoo-finance"]
+  tradingview:
+    command: "podman"                    # or "docker"
+    args: ["run", "-i", "--rm", "--init", "mcr.microsoft.com/playwright/mcp"]
+
+context:
+  max_decision_entries: 5               # Recent decisions injected per symbol
+  max_signal_entries: 1                 # Recent signals injected per symbol
+
+scheduler:
+  interval_minutes: 1                   # How often agents run (minutes)
+
+covered_call:
+  symbols_file: "data/covered_call_symbols.txt"
+  decision_log: "logs/covered_call_decisions.jsonl"
+  signal_log: "logs/covered_call_signals.jsonl"
+
+cash_secured_put:
+  symbols_file: "data/cash_secured_put_symbols.txt"
+  decision_log: "logs/cash_secured_put_decisions.jsonl"
+  signal_log: "logs/cash_secured_put_signals.jsonl"
+```
+
+Only the selected provider's section is loaded — environment variables for inactive providers are not required. Providers without `env_key` (Yahoo, TradingView) skip API key validation entirely.
 
 ## Running
 
@@ -177,39 +280,64 @@ Press `Ctrl+C` to stop gracefully.
 
 ## Output
 
-### Decision Logs
-- `logs/covered_call_decisions.log` - All covered call analysis results
-- `logs/cash_secured_put_decisions.log` - All cash secured put analysis results
+All logs use [JSONL format](#jsonl-output-format) — one JSON object per line.
 
-### Signal Logs
-- `logs/covered_call_signals.log` - Only clear SELL signals for covered calls
-- `logs/cash_secured_put_signals.log` - Only clear SELL signals for cash secured puts
+### Decision Logs (complete audit trail)
+- `logs/covered_call_decisions.jsonl` - All covered call analysis results
+- `logs/cash_secured_put_decisions.jsonl` - All cash secured put analysis results
+
+### Signal Logs (actionable alerts only)
+- `logs/covered_call_signals.jsonl` - Only SELL signals for covered calls
+- `logs/cash_secured_put_signals.jsonl` - Only SELL signals for cash secured puts
+
+### Example Decision Object
+
+Each line in a `.jsonl` log is a self-contained JSON object:
+
+```json
+{
+  "timestamp": "2026-03-27T00:00:00Z",
+  "symbol": "MO",
+  "exchange": "NYSE",
+  "agent": "covered_call",
+  "decision": "WAIT",
+  "strike": null,
+  "expiration": null,
+  "iv": 25.0,
+  "reason": "IV Rank below threshold; waiting for elevated volatility",
+  "confidence": "medium",
+  "risk_flags": ["low_iv", "unknown_earnings_date"]
+}
+```
+
+For `SELL` decisions, `strike`, `expiration`, and premium fields are populated. The same JSON object is written to both the decision log and the signal log.
 
 ## Project Structure
 
 ```
 options-agent/
-├── config.yaml                      # Configuration (provider selection here)
+├── config.yaml                           # All configuration (provider, symbols, scheduling, context limits)
 ├── src/
 │   ├── __init__.py
-│   ├── main.py                      # Entry point & scheduler
-│   ├── config.py                    # Config loader (multi-provider support)
-│   ├── agent_runner.py              # Azure AI agent execution
-│   ├── covered_call_agent.py        # Covered call runner (selects instructions by provider)
-│   ├── cash_secured_put_agent.py    # Cash secured put runner (selects instructions by provider)
-│   ├── covered_call_instructions.py       # Massive.com covered call instructions
-│   ├── cash_secured_put_instructions.py   # Massive.com cash secured put instructions
-│   ├── av_covered_call_instructions.py    # Alpha Vantage covered call instructions
+│   ├── main.py                           # Entry point — scheduler with immediate + periodic runs
+│   ├── config.py                         # YAML config loader with env var substitution and validation
+│   ├── agent_runner.py                   # Core execution engine — pre-fetch vs MCP-tool paths, per-symbol loop
+│   ├── tv_data_fetcher.py                # TradingView pre-fetch module — drives Playwright from Python
+│   ├── covered_call_agent.py             # Covered call wrapper — selects instructions by provider
+│   ├── cash_secured_put_agent.py         # Cash secured put wrapper — selects instructions by provider
+│   ├── covered_call_instructions.py      # Massive.com covered call instructions
+│   ├── cash_secured_put_instructions.py  # Massive.com cash secured put instructions
+│   ├── av_covered_call_instructions.py   # Alpha Vantage covered call instructions
 │   ├── av_cash_secured_put_instructions.py # Alpha Vantage cash secured put instructions
-│   ├── yf_covered_call_instructions.py    # Yahoo Finance covered call instructions
+│   ├── yf_covered_call_instructions.py   # Yahoo Finance covered call instructions
 │   ├── yf_cash_secured_put_instructions.py # Yahoo Finance cash secured put instructions
-│   ├── tv_covered_call_instructions.py    # TradingView covered call instructions
-│   ├── tv_cash_secured_put_instructions.py # TradingView cash secured put instructions
-│   └── logger.py                    # Log management
+│   ├── tv_covered_call_instructions.py   # TradingView covered call instructions (no-tools variant)
+│   ├── tv_cash_secured_put_instructions.py # TradingView cash secured put instructions (no-tools variant)
+│   └── logger.py                         # JSONL read/write with per-symbol filtering
 ├── data/
-│   ├── covered_call_symbols.txt     # CC symbols
-│   └── cash_secured_put_symbols.txt # CSP symbols
-├── logs/                            # Created at runtime
+│   ├── covered_call_symbols.txt          # Symbols for covered call analysis (EXCHANGE-SYMBOL format)
+│   └── cash_secured_put_symbols.txt      # Symbols for cash secured put analysis
+├── logs/                                 # Created at runtime — JSONL decision + signal logs
 ├── requirements.txt
 └── README.md
 ```
