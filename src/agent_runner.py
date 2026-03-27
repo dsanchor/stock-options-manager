@@ -1,14 +1,15 @@
 import asyncio
+import json
 import logging
 import os
 import re
 import traceback
-from typing import List
+from typing import Dict, List, Optional, Tuple
 from agent_framework import ChatAgent, MCPStdioTool, MCPStreamableHTTPTool
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
-from .logger import read_decision_log, append_decision, append_signal
+from .logger import read_decision_log, append_decision, append_decision_json, append_signal
 
 # ---------------------------------------------------------------------------
 # Debug logging setup – outputs to console AND logs/mcp_debug.log
@@ -84,21 +85,118 @@ class AgentRunner:
         
         return symbols
     
-    def _extract_decision_line(self, symbol: str, response_text: str) -> str:
-        """Extract a concise decision line from the agent response."""
-        # Parse ticker from exchange-symbol format for matching
+    # ── JSON / SUMMARY extraction ──────────────────────────────────────
+
+    @staticmethod
+    def _try_extract_json(response_text: str) -> Optional[Dict]:
+        """Try to parse a JSON decision block from the agent response.
+
+        Looks for fenced ```json blocks first, then falls back to finding a
+        raw JSON object that contains a ``"decision"`` key.
+        """
+        # 1. Fenced code block: ```json ... ```
+        fenced = re.findall(r'```json\s*\n(.*?)```', response_text, re.DOTALL)
+        for block in fenced:
+            block = block.strip()
+            try:
+                data = json.loads(block)
+                if isinstance(data, dict) and "decision" in data:
+                    return data
+            except json.JSONDecodeError:
+                continue
+
+        # 2. Raw JSON object containing "decision"
+        for match in re.finditer(r'\{[^{}]*"decision"\s*:', response_text):
+            start = match.start()
+            depth = 0
+            for i in range(start, len(response_text)):
+                if response_text[i] == '{':
+                    depth += 1
+                elif response_text[i] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        candidate = response_text[start:i + 1]
+                        try:
+                            data = json.loads(candidate)
+                            if isinstance(data, dict) and "decision" in data:
+                                return data
+                        except json.JSONDecodeError:
+                            break
+
+        return None
+
+    @staticmethod
+    def _extract_summary_line(response_text: str) -> Optional[str]:
+        """Extract the SUMMARY: line from the agent response."""
+        for line in response_text.split('\n'):
+            stripped = line.strip()
+            if stripped.startswith("SUMMARY:"):
+                return stripped
+        return None
+
+    def _extract_decision_line(self, symbol: str, response_text: str) -> Tuple[str, Optional[Dict]]:
+        """Extract a concise decision line and optional JSON from the response.
+
+        Returns:
+            (summary_line, json_data) — json_data is None when the agent used
+            the legacy pipe-delimited format.
+        """
         ticker = symbol.split('-', 1)[1] if '-' in symbol else symbol
+
+        # Try structured JSON format first
+        json_data = self._try_extract_json(response_text)
+        if json_data is not None:
+            summary = self._extract_summary_line(response_text)
+            if summary:
+                return summary, json_data
+            # Build a SUMMARY from the JSON fields
+            decision = json_data.get("decision", "WAIT")
+            agent_type = json_data.get("agent", "covered_call").replace("_", " ")
+            if decision == "SELL":
+                strike = json_data.get("strike", "?")
+                exp = json_data.get("expiration", "?")
+                iv = json_data.get("iv", "?")
+                iv_rank = json_data.get("iv_rank", "?")
+                premium = json_data.get("premium", "?")
+                premium_pct = json_data.get("premium_pct", "?")
+                summary = (
+                    f"SUMMARY: {ticker} | SELL {agent_type} | "
+                    f"Strike ${strike} exp {exp} | IV {iv}% (Rank {iv_rank}) | "
+                    f"Premium ${premium} ({premium_pct}%)"
+                )
+            else:
+                iv = json_data.get("iv", "?")
+                iv_rank = json_data.get("iv_rank", "?")
+                reason_short = (json_data.get("reason") or "")[:80]
+                waiting = json_data.get("waiting_for") or ""
+                summary = (
+                    f"SUMMARY: {ticker} | WAIT | IV {iv}% (Rank {iv_rank}) "
+                    f"{reason_short} | Waiting for: {waiting}"
+                )
+            return summary, json_data
+
+        # Fallback: legacy pipe-delimited line
         for line in response_text.split('\n'):
             if ticker in line and ('SELL' in line.upper() or 'WAIT' in line.upper()):
-                return line.strip()
-        
-        # Fallback: create a summary
+                return line.strip(), None
+
+        # Last resort: synthesise a summary
         decision = "SELL" if "SELL" in response_text.upper() and "CLEAR SELL SIGNAL" in response_text.upper() else "WAIT"
         reason = response_text[:100].replace('\n', ' ').strip()
-        return f"{ticker} | DECISION: {decision} | Reason: {reason}"
-    
-    def _is_sell_signal(self, response_text: str) -> bool:
-        """Check if response indicates a clear sell signal."""
+        return f"{ticker} | DECISION: {decision} | Reason: {reason}", None
+
+    def _is_sell_signal(self, response_text: str, json_data: Optional[Dict] = None) -> bool:
+        """Check if response indicates a clear sell signal.
+
+        Uses structured JSON ``decision`` field when available, with fallback
+        to text-based keyword matching for backward compatibility.
+        """
+        # Structured check
+        if json_data is not None:
+            if json_data.get("decision", "").upper() == "SELL":
+                return True
+
+        # Legacy text-based checks
         upper = response_text.upper()
         return "CLEAR SELL SIGNAL" in upper or "🚨" in response_text or "SIGNAL: SELL" in upper
     
@@ -237,13 +335,15 @@ Analyze {ticker} NOW. Use the available MCP tools to gather current data. The fu
 
                     print(f"Response: {response_text[:200]}...")
 
-                    # Log decision (extract the 1-liner from the response)
-                    decision_line = self._extract_decision_line(symbol, response_text)
+                    # Log decision (extract structured JSON + summary from response)
+                    decision_line, json_data = self._extract_decision_line(symbol, response_text)
                     append_decision(decision_log_path, decision_line)
+                    if json_data is not None:
+                        append_decision_json(decision_log_path, json_data)
                     print(f"Logged decision")
 
                     # Check for sell signal
-                    if self._is_sell_signal(response_text):
+                    if self._is_sell_signal(response_text, json_data):
                         append_signal(signal_log_path, decision_line)
                         print(f"⚠️ SELL SIGNAL logged for {symbol}")
 

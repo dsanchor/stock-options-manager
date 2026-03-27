@@ -1,6 +1,6 @@
 azure:
   project_endpoint: "${AZURE_AI_PROJECT_ENDPOINT}"
-  model_deployment: "gpt-5.4-mini"
+  model_deployment: "gpt-5.1" # options: "gpt-5.1", "gpt-5.4-mini"
 
 mcp:
   provider: "tradingview"  # Options: "massive", "alphavantage", "yahoo", or "tradingview"

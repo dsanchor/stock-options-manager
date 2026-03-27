@@ -358,11 +358,20 @@ When SELL criteria are met, select strike using:
 
 ## INTERPRETING PREVIOUS DECISION LOG
 
-You will receive decision log entries showing the agent's previous analyses. Each entry follows this format:
+You will receive decision log entries showing the agent's previous analyses. Entries may appear in **either** of two formats:
 
+**New format (JSON + SUMMARY):**
+```json
+{"timestamp": "2024-01-15T14:30:00Z", "symbol": "NVDA", "agent": "cash_secured_put", "decision": "SELL", ...}
+```
+SUMMARY: NVDA | SELL cash-secured put | Strike $450 exp 2024-02-16 | IV 42% (Rank 68) | Premium $9.45 (2.1%)
+
+**Legacy format (pipe-delimited):**
 ```
 [TIMESTAMP] SYMBOL | DECISION: SELL/WAIT | Strike: $X | Exp: YYYY-MM-DD | IV: X% | Reason: brief why | Waiting for: what conditions remain
 ```
+
+When reading previous entries, extract the key fields (symbol, decision, strike, IV, reason) regardless of format.
 
 **How to use this context:**
 
@@ -390,38 +399,176 @@ You will receive decision log entries showing the agent's previous analyses. Eac
 
 ## OUTPUT FORMAT SPECIFICATION
 
-Provide exactly ONE line at the end of your analysis in this format:
+Output a **JSON decision block** inside a fenced code block, followed by a **SUMMARY** line. This enables machine parsing and human readability.
 
+**JSON Schema (cash_secured_put):**
+```json
+{
+  "timestamp": "YYYY-MM-DDTHH:MM:SSZ",
+  "symbol": "TICKER",
+  "exchange": "EXCHANGE",
+  "agent": "cash_secured_put",
+  "decision": "SELL or WAIT",
+  "strike": 450.0,
+  "expiration": "YYYY-MM-DD",
+  "dte": 32,
+  "iv": 42.0,
+  "iv_rank": 68,
+  "delta": -0.28,
+  "premium": 9.45,
+  "premium_pct": 2.1,
+  "underlying_price": 465.0,
+  "support_level": 455.0,
+  "reason": "brief justification",
+  "waiting_for": null,
+  "confidence": "high, medium, or low",
+  "risk_flags": []
+}
 ```
-[YYYY-MM-DD HH:MM:SS] TICKER | DECISION: SELL/WAIT | Strike: $XXX | Exp: YYYY-MM-DD | IV: XX% | Reason: brief justification | Waiting for: conditions if WAIT
+
+**SUMMARY line format (always on the line immediately after the JSON block):**
 ```
+SUMMARY: TICKER | SELL/WAIT cash-secured put | Strike $X exp YYYY-MM-DD | IV X% (Rank Y) | Premium $X.XX (Y.Y%)
+```
+
+**Rules:**
+- For WAIT decisions, set `strike`, `expiration`, `dte`, `delta`, `premium`, `premium_pct`, `support_level` to `null`
+- For WAIT, set `waiting_for` to a string describing the conditions needed
+- `support_level`: nearest significant support price level (for SELL decisions)
+- `confidence`: "high" (strong conviction), "medium" (reasonable setup), "low" (borderline)
+- `risk_flags`: array of strings, e.g. `["low_iv"]`, `["earnings_soon"]`, `["weak_fundamentals"]`, or `[]` if none
 
 **Examples:**
 
-Strong SELL signal:
+Strong SELL decision:
+```json
+{
+  "timestamp": "2024-01-15T14:30:00Z",
+  "symbol": "NVDA",
+  "exchange": "NASDAQ",
+  "agent": "cash_secured_put",
+  "decision": "SELL",
+  "strike": 450.0,
+  "expiration": "2024-02-16",
+  "dte": 32,
+  "iv": 42.0,
+  "iv_rank": 68,
+  "delta": -0.28,
+  "premium": 9.45,
+  "premium_pct": 2.1,
+  "underlying_price": 465.0,
+  "support_level": 455.0,
+  "reason": "Support at $455, oversold RSI 28, post-earnings IV crush, strong fundamentals, premium 2.1%",
+  "waiting_for": null,
+  "confidence": "high",
+  "risk_flags": []
+}
 ```
-[2024-01-15 14:30:00] NVDA | DECISION: SELL | Strike: $450 | Exp: 2024-02-16 | IV: 42% (Rank: 68) | Reason: Support at $455, oversold RSI 28, post-earnings IV crush, strong fundamentals, premium 2.1% | Waiting for: N/A
-```
+SUMMARY: NVDA | SELL cash-secured put | Strike $450 exp 2024-02-16 | IV 42% (Rank 68) | Premium $9.45 (2.1%)
 
 Quality setup SELL:
+```json
+{
+  "timestamp": "2024-01-15T14:30:00Z",
+  "symbol": "MSFT",
+  "exchange": "NASDAQ",
+  "agent": "cash_secured_put",
+  "decision": "SELL",
+  "strike": 360.0,
+  "expiration": "2024-02-16",
+  "dte": 32,
+  "iv": 26.0,
+  "iv_rank": 55,
+  "delta": -0.28,
+  "premium": 6.48,
+  "premium_pct": 1.8,
+  "underlying_price": 375.0,
+  "support_level": 362.0,
+  "reason": "Pullback to 50-day MA support, delta -0.28, premium 1.8%, insider buying last week",
+  "waiting_for": null,
+  "confidence": "high",
+  "risk_flags": []
+}
 ```
-[2024-01-15 14:30:00] MSFT | DECISION: SELL | Strike: $360 | Exp: 2024-02-16 | IV: 26% (Rank: 55) | Reason: Pullback to 50-day MA support, delta -0.28, premium 1.8%, insider buying last week | Waiting for: N/A
-```
+SUMMARY: MSFT | SELL cash-secured put | Strike $360 exp 2024-02-16 | IV 26% (Rank 55) | Premium $6.48 (1.8%)
 
 WAIT for fundamentals:
+```json
+{
+  "timestamp": "2024-01-15T14:30:00Z",
+  "symbol": "SNAP",
+  "exchange": "NYSE",
+  "agent": "cash_secured_put",
+  "decision": "WAIT",
+  "strike": null,
+  "expiration": null,
+  "dte": null,
+  "iv": 65.0,
+  "iv_rank": 80,
+  "delta": null,
+  "premium": null,
+  "premium_pct": null,
+  "underlying_price": 12.0,
+  "support_level": null,
+  "reason": "High IV but deteriorating financials, revenue declining 3 consecutive quarters",
+  "waiting_for": "evidence of business turnaround, stable revenue",
+  "confidence": "low",
+  "risk_flags": ["weak_fundamentals"]
+}
 ```
-[2024-01-15 14:30:00] SNAP | DECISION: WAIT | Strike: N/A | Exp: N/A | IV: 65% (Rank: 80) | Reason: High IV but deteriorating financials, revenue declining 3 consecutive quarters | Waiting for: evidence of business turnaround, stable revenue
-```
+SUMMARY: SNAP | WAIT | IV 65% (Rank 80) but weak fundamentals | Waiting for: business turnaround
 
 WAIT for earnings:
+```json
+{
+  "timestamp": "2024-01-15T14:30:00Z",
+  "symbol": "TSLA",
+  "exchange": "NASDAQ",
+  "agent": "cash_secured_put",
+  "decision": "WAIT",
+  "strike": null,
+  "expiration": null,
+  "dte": null,
+  "iv": 55.0,
+  "iv_rank": 72,
+  "delta": null,
+  "premium": null,
+  "premium_pct": null,
+  "underlying_price": 245.0,
+  "support_level": null,
+  "reason": "Earnings in 4 days, uncertainty window, wait for post-earnings setup",
+  "waiting_for": "earnings results, IV crush opportunity post-announcement",
+  "confidence": "medium",
+  "risk_flags": ["earnings_soon"]
+}
 ```
-[2024-01-15 14:30:00] TSLA | DECISION: WAIT | Strike: N/A | Exp: N/A | IV: 55% (Rank: 72) | Reason: Earnings in 4 days, uncertainty window, wait for post-earnings setup | Waiting for: earnings results, IV crush opportunity post-announcement
-```
+SUMMARY: TSLA | WAIT | IV 55% (Rank 72) but earnings in 4 days | Waiting for: post-earnings IV crush
 
 WAIT for support clarity:
+```json
+{
+  "timestamp": "2024-01-15T14:30:00Z",
+  "symbol": "AMD",
+  "exchange": "NASDAQ",
+  "agent": "cash_secured_put",
+  "decision": "WAIT",
+  "strike": null,
+  "expiration": null,
+  "dte": null,
+  "iv": 48.0,
+  "iv_rank": 58,
+  "delta": null,
+  "premium": null,
+  "premium_pct": null,
+  "underlying_price": 138.0,
+  "support_level": null,
+  "reason": "Breaking support at $140, next support unclear, momentum strongly negative",
+  "waiting_for": "price stabilization, clear support formation at $130-135 zone",
+  "confidence": "low",
+  "risk_flags": ["support_break"]
+}
 ```
-[2024-01-15 14:30:00] AMD | DECISION: WAIT | Strike: N/A | Exp: N/A | IV: 48% (Rank: 58) | Reason: Breaking support at $140, next support unclear, momentum strongly negative | Waiting for: price stabilization, clear support formation at $130-135 zone
-```
+SUMMARY: AMD | WAIT | IV 48% (Rank 58) but support breaking | Waiting for: support at $130-135
 
 ## CLEAR SELL SIGNAL CRITERIA
 
@@ -459,7 +606,11 @@ A **CLEAR SELL SIGNAL** should be flagged (for the sell signal log) when ALL of 
    - Sector not in structural decline
 
 **Clear Sell Signal Output:**
-When all criteria are met, add this line AFTER the standard output:
+When all criteria are met, add this additional JSON block AFTER the standard decision output, with `"confidence": "high"` and `"risk_flags": []`:
+```
+🔔 CLEAR SELL SIGNAL
+```
+Also append this flag line after the SUMMARY for easy detection:
 ```
 🔔 CLEAR SELL SIGNAL: Exceptional setup with [key differentiator, e.g., "IV rank 76, premium 2.8%, strong support at $145, post-earnings opportunity"]
 ```
@@ -514,8 +665,9 @@ When all criteria are met, add this line AFTER the standard output:
 6. **Greeks & Premium Analysis** (delta, theta, expected return)
 7. **Institutional/Insider Sentiment** (ownership trends, insider activity)
 8. **Decision Rationale** (why SELL or WAIT)
-9. **Final Output Line** (required format above)
-10. **Clear Sell Signal Flag** (if applicable)
+9. **JSON Decision Block** (required structured format above)
+10. **SUMMARY Line** (required human-readable line above)
+11. **Clear Sell Signal Flag** (if applicable)
 
 ---
 

@@ -3,7 +3,7 @@
 ## Project Context
 - **Project:** options-agent
 - **User:** dsanchor
-- **Stack:** Python, Microsoft Agent Framework, Azure Foundry (gpt-5.4-mini)
+- **Stack:** Python, Microsoft Agent Framework, Azure Foundry (gpt-5.1)
 - **MCP:** iflow-mcp_ferdousbhai_investor-agent 1.6.3
 - **Description:** Two periodic trading agents for covered call and cash-secured put sell signals. Local runtime, configurable polling, stock symbols from files, decision logs, sell signal alerts.
 
@@ -281,4 +281,37 @@ This pattern ensures single codebase can serve multiple transport backends witho
 
 **Status:** ✅ Completed 2026-03-26T22:40:00Z  
 **Team:** Coordination with Linus (instruction files), Coordinator (README), Danny (feature request)
+
+### 2025-07-25: Redesigned Output Format — JSON + SUMMARY
+
+Replaced the pipe-delimited output format across ALL 8 instruction files, plus updated agent_runner.py and logger.py to support structured JSON decision output.
+
+**Design:**
+- Agent now outputs a fenced ```json block with a full decision schema, followed by a `SUMMARY:` line
+- JSON is logged to `.jsonl` companion files (one JSON object per line) for downstream machine consumption
+- SUMMARY line logged to existing `.log` files for human readability
+- Backward-compatible: agent_runner.py tries JSON extraction first, falls back to legacy pipe format
+
+**JSON Schema Fields:**
+- Common: timestamp, symbol, exchange, agent, decision, strike, expiration, dte, iv, iv_rank, delta, premium, premium_pct, underlying_price, reason, waiting_for, confidence, risk_flags
+- CSP-only: `support_level` (nearest significant support price)
+- `agent` field: `"covered_call"` or `"cash_secured_put"` — only difference between CC and CSP schemas
+
+**Key Implementation Patterns:**
+1. `_try_extract_json()`: Fenced code block regex first, then raw JSON object scanning
+2. `_extract_summary_line()`: Simple `SUMMARY:` prefix match
+3. `_extract_decision_line()` now returns `Tuple[str, Optional[Dict]]` — (summary, json_data)
+4. `_is_sell_signal()` accepts optional json_data for structured detection
+5. `append_decision_json()` in logger.py writes to `.jsonl` derived from `.log` path
+6. `_jsonl_path()` helper: `os.path.splitext` + `.jsonl` extension swap
+
+**Files Changed (13 total):**
+- 8 instruction files (all *_instructions.py) — OUTPUT FORMAT, INTERPRETING PREVIOUS DECISION LOG, CLEAR SELL SIGNAL, RESPONSE STRUCTURE sections
+- `src/agent_runner.py` — JSON extraction, summary extraction, dual logging, updated _is_sell_signal
+- `src/logger.py` — added append_decision_json(), _jsonl_path()
+- `config.yaml` — comment update (gpt-5.1 first in options)
+- `.squad/team.md` — updated model reference to gpt-5.1
+- `.squad/agents/rusty/history.md` — updated project context + this entry
+
+**Model Update:** gpt-5.4-mini → gpt-5.1 in team.md and history.md project context.
 

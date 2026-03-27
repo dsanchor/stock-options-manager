@@ -311,11 +311,20 @@ When SELL criteria are met, select strike using:
 
 ## INTERPRETING PREVIOUS DECISION LOG
 
-You will receive decision log entries showing the agent's previous analyses. Each entry follows this format:
+You will receive decision log entries showing the agent's previous analyses. Entries may appear in **either** of two formats:
 
+**New format (JSON + SUMMARY):**
+```json
+{"timestamp": "2024-01-15T10:30:00Z", "symbol": "AAPL", "agent": "covered_call", "decision": "SELL", ...}
+```
+SUMMARY: AAPL | SELL covered call | Strike $185 exp 2024-02-16 | IV 28% (Rank 65) | Premium $3.50 (1.9%)
+
+**Legacy format (pipe-delimited):**
 ```
 [TIMESTAMP] SYMBOL | DECISION: SELL/WAIT | Strike: $X | Exp: YYYY-MM-DD | IV: X% | Reason: brief why | Waiting for: what conditions remain
 ```
+
+When reading previous entries, extract the key fields (symbol, decision, strike, IV, reason) regardless of format.
 
 **How to use this context:**
 
@@ -338,28 +347,119 @@ You will receive decision log entries showing the agent's previous analyses. Eac
 
 ## OUTPUT FORMAT SPECIFICATION
 
-Provide exactly ONE line at the end of your analysis in this format:
+Output a **JSON decision block** inside a fenced code block, followed by a **SUMMARY** line. This enables machine parsing and human readability.
 
+**JSON Schema (covered_call):**
+```json
+{
+  "timestamp": "YYYY-MM-DDTHH:MM:SSZ",
+  "symbol": "TICKER",
+  "exchange": "EXCHANGE",
+  "agent": "covered_call",
+  "decision": "SELL or WAIT",
+  "strike": 185.0,
+  "expiration": "YYYY-MM-DD",
+  "dte": 32,
+  "iv": 28.0,
+  "iv_rank": 65,
+  "delta": 0.25,
+  "premium": 3.50,
+  "premium_pct": 1.9,
+  "underlying_price": 178.0,
+  "reason": "brief justification",
+  "waiting_for": null,
+  "confidence": "high, medium, or low",
+  "risk_flags": []
+}
 ```
-[YYYY-MM-DD HH:MM:SS] TICKER | DECISION: SELL/WAIT | Strike: $XXX | Exp: YYYY-MM-DD | IV: XX% | Reason: brief justification | Waiting for: conditions if WAIT
+
+**SUMMARY line format (always on the line immediately after the JSON block):**
 ```
+SUMMARY: TICKER | SELL/WAIT covered call | Strike $X exp YYYY-MM-DD | IV X% (Rank Y) | Premium $X.XX (Y.Y%)
+```
+
+**Rules:**
+- For WAIT decisions, set `strike`, `expiration`, `dte`, `delta`, `premium`, `premium_pct` to `null`
+- For WAIT, set `waiting_for` to a string describing the conditions needed
+- `confidence`: "high" (strong conviction), "medium" (reasonable setup), "low" (borderline)
+- `risk_flags`: array of strings, e.g. `["low_iv"]`, `["earnings_soon"]`, `["breakout_risk"]`, or `[]` if none
 
 **Examples:**
 
-Good SELL signal:
+SELL decision:
+```json
+{
+  "timestamp": "2024-01-15T10:30:00Z",
+  "symbol": "AAPL",
+  "exchange": "NASDAQ",
+  "agent": "covered_call",
+  "decision": "SELL",
+  "strike": 185.0,
+  "expiration": "2024-02-16",
+  "dte": 32,
+  "iv": 28.0,
+  "iv_rank": 65,
+  "delta": 0.25,
+  "premium": 3.50,
+  "premium_pct": 1.9,
+  "underlying_price": 178.0,
+  "reason": "IV elevated, range-bound at $178, resistance at $183, 32 DTE optimal",
+  "waiting_for": null,
+  "confidence": "high",
+  "risk_flags": []
+}
 ```
-[2024-01-15 10:30:00] AAPL | DECISION: SELL | Strike: $185 | Exp: 2024-02-16 | IV: 28% (Rank: 65) | Reason: IV elevated, range-bound at $178, resistance at $183, 32 DTE optimal | Waiting for: N/A
-```
+SUMMARY: AAPL | SELL covered call | Strike $185 exp 2024-02-16 | IV 28% (Rank 65) | Premium $3.50 (1.9%)
 
-Good WAIT signal:
+WAIT decision:
+```json
+{
+  "timestamp": "2024-01-15T10:30:00Z",
+  "symbol": "MSFT",
+  "exchange": "NASDAQ",
+  "agent": "covered_call",
+  "decision": "WAIT",
+  "strike": null,
+  "expiration": null,
+  "dte": null,
+  "iv": 22.0,
+  "iv_rank": 25,
+  "delta": null,
+  "premium": null,
+  "premium_pct": null,
+  "underlying_price": 380.0,
+  "reason": "IV too low for attractive premium, need IV Rank >50",
+  "waiting_for": "volatility expansion or market uncertainty increase",
+  "confidence": "medium",
+  "risk_flags": ["low_iv"]
+}
 ```
-[2024-01-15 10:30:00] MSFT | DECISION: WAIT | Strike: N/A | Exp: N/A | IV: 22% (Rank: 25) | Reason: IV too low for attractive premium, need IV Rank >50 | Waiting for: volatility expansion or market uncertainty increase
-```
+SUMMARY: MSFT | WAIT | IV 22% (Rank 25) too low | Waiting for: volatility expansion
 
 WAIT for earnings:
+```json
+{
+  "timestamp": "2024-01-15T10:30:00Z",
+  "symbol": "TSLA",
+  "exchange": "NASDAQ",
+  "agent": "covered_call",
+  "decision": "WAIT",
+  "strike": null,
+  "expiration": null,
+  "dte": null,
+  "iv": 45.0,
+  "iv_rank": 70,
+  "delta": null,
+  "premium": null,
+  "premium_pct": null,
+  "underlying_price": 245.0,
+  "reason": "Earnings on 2024-01-24, too risky despite high IV",
+  "waiting_for": "post-earnings IV crush and price stabilization",
+  "confidence": "medium",
+  "risk_flags": ["earnings_soon"]
+}
 ```
-[2024-01-15 10:30:00] TSLA | DECISION: WAIT | Strike: N/A | Exp: N/A | IV: 45% (Rank: 70) | Reason: Earnings on 2024-01-24, too risky despite high IV | Waiting for: post-earnings IV crush and price stabilization
-```
+SUMMARY: TSLA | WAIT | IV 45% (Rank 70) but earnings 2024-01-24 | Waiting for: post-earnings IV crush
 
 ## CLEAR SELL SIGNAL CRITERIA
 
@@ -389,7 +489,11 @@ A **CLEAR SELL SIGNAL** should be flagged (for the sell signal log) when ALL of 
    - No extreme Google Trends spike
 
 **Clear Sell Signal Output:**
-When all criteria are met, add this line AFTER the standard output:
+When all criteria are met, add this additional JSON block AFTER the standard decision output, with `"confidence": "high"` and `"risk_flags": []`:
+```
+🔔 CLEAR SELL SIGNAL
+```
+Also append this flag line after the SUMMARY for easy detection:
 ```
 🔔 CLEAR SELL SIGNAL: Exceptional setup with [key differentiator, e.g., "IV rank 78, premium 2.3%, perfect resistance confluence"]
 ```
@@ -429,8 +533,9 @@ When all criteria are met, add this line AFTER the standard output:
 4. **Calendar Check** (earnings, catalysts, dividends)
 5. **Greeks Analysis** (delta, theta, vega for target strikes)
 6. **Decision Rationale** (why SELL or WAIT)
-7. **Final Output Line** (required format above)
-8. **Clear Sell Signal Flag** (if applicable)
+7. **JSON Decision Block** (required structured format above)
+8. **SUMMARY Line** (required human-readable line above)
+9. **Clear Sell Signal Flag** (if applicable)
 
 ---
 
