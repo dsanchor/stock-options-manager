@@ -39,6 +39,7 @@ class Config:
         required_fields = [
             ('azure', 'project_endpoint'),
             ('azure', 'model_deployment'),
+            ('azure', 'api_key'),
             ('scheduler', 'cron'),
         ]
         
@@ -67,6 +68,10 @@ class Config:
     @property
     def model_deployment(self) -> str:
         return self.config['azure']['model_deployment']
+    
+    @property
+    def api_key(self) -> str:
+        return self.config['azure']['api_key']
     
     @property
     def mcp_command(self) -> str:

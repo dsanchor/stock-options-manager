@@ -37,6 +37,7 @@ class OptionsAgentScheduler:
         self.runner = AgentRunner(
             project_endpoint=self.config.azure_endpoint,
             model=self.config.model_deployment,
+            api_key=self.config.api_key,
             mcp_command=self.config.mcp_command,
             mcp_args=self.config.mcp_args,
             mcp_description=self.config.mcp_description,

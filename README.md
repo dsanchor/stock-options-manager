@@ -120,10 +120,7 @@ All output is [JSON Lines](https://jsonlines.org/) — one JSON object per line.
 
 1. **Python 3.12+**
 2. **Azure AI Foundry Project** with access to a model deployment (e.g. `gpt-5.1`, `gpt-5.4-mini`)
-3. **Azure Authentication** - Ensure you're logged in via Azure CLI:
-   ```bash
-   az login
-   ```
+3. **Azure OpenAI API Key** - Get your API key from Azure Portal
 4. **[Node.js](https://nodejs.org/)** - Required for the Playwright MCP server (runs via `npx`)
 
 ## Setup
@@ -138,7 +135,6 @@ pip install -r requirements.txt
 
 This installs:
 - `agent-framework[foundry]` - Microsoft Agent Framework with Foundry support
-- `azure-identity` - Azure authentication
 - `pyyaml`, `croniter`, `python-dotenv` - Configuration and scheduling
 
 ### 2. Install the Playwright MCP Server
@@ -154,13 +150,14 @@ npx @playwright/mcp@latest --help
 
 ### 3. Configure Environment Variables
 
-Set your Azure AI Project endpoint:
+Set your Azure AI Project endpoint and API key:
 
 ```bash
 export AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com"
 export MODEL_DEPLOYMENT="gpt-5.1"  # or "gpt-5.4-mini"
+export AZURE_OPENAI_API_KEY="your-api-key-here"
 
-# No API key needed — TradingView data is free via Playwright browser automation
+# No API key needed for TradingView — data is free via Playwright browser automation
 ```
 
 ### 4. MCP Server Configuration
@@ -295,9 +292,9 @@ docker run -d --name options-agent \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/config.yaml:/app/config.yaml:ro \
-  -v $HOME/.azure:/root/.azure:ro \
   -e AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com" \
   -e MODEL_DEPLOYMENT="gpt-5.1" \
+  -e AZURE_OPENAI_API_KEY="your-api-key-here" \
   options-agent
 ```
 
@@ -306,11 +303,9 @@ docker run -d --name options-agent \
 | `data/` | Watchlist and position files (user-editable) |
 | `logs/` | JSONL decision and signal logs (persisted across restarts) |
 | `config.yaml` | Configuration file (mounted read-only) |
-| `$HOME/.azure` | Azure CLI credentials for `AzureCliCredential` (read-only) |
 | `AZURE_AI_PROJECT_ENDPOINT` | Azure AI Foundry project endpoint |
 | `MODEL_DEPLOYMENT` | Model name (e.g. `gpt-5.1`, `gpt-5.4-mini`) |
-
-> **Azure auth:** The container uses `AzureCliCredential`. Mount your local `~/.azure` directory so the container can reuse your `az login` session.
+| `AZURE_OPENAI_API_KEY` | Azure OpenAI API key for authentication |
 
 View logs:
 
@@ -326,9 +321,9 @@ docker run -d --name options-agent-web \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/config.yaml:/app/config.yaml:ro \
-  -v $HOME/.azure:/root/.azure:ro \
   -e AZURE_AI_PROJECT_ENDPOINT="..." \
   -e MODEL_DEPLOYMENT="gpt-5.1" \
+  -e AZURE_OPENAI_API_KEY="your-api-key-here" \
   options-agent --web-only
 ```
 
@@ -433,7 +428,7 @@ Make sure you've exported the environment variable with your Azure AI Foundry pr
 - View detailed MCP logs in the agent output
 
 ### Authentication Errors
-Run `az login` and ensure you have access to the Azure AI Foundry project.
+Ensure your `AZURE_OPENAI_API_KEY` environment variable is set correctly. You can get your API key from the Azure Portal under your Azure OpenAI resource.
 
 ### Module Import Errors
 Make sure you installed the correct SDK: `pip install agent-framework[foundry]` (NOT `azure-ai-agents`)

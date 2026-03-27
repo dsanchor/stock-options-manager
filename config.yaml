@@ -1,6 +1,7 @@
 azure:
   project_endpoint: "${AZURE_AI_PROJECT_ENDPOINT}"
   model_deployment: "${MODEL_DEPLOYMENT}" # options: "gpt-5.1", "gpt-5.4-mini"
+  api_key: "${AZURE_OPENAI_API_KEY}"
 
 mcp:
   command: "npx"

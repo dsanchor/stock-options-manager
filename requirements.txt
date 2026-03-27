@@ -1,5 +1,4 @@
 agent-framework[foundry]==1.0.0b260107
-azure-identity>=1.15.0
 pyyaml>=6.0
 croniter>=1.3.0
 python-dotenv>=1.0.0

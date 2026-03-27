@@ -8,7 +8,6 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from agent_framework import ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient
-from azure.identity import AzureCliCredential
 
 from .logger import read_decision_log, read_signal_log, append_decision, append_signal
 
@@ -39,22 +38,22 @@ logger.addHandler(_console_handler)
 class AgentRunner:
     """Manages agent execution using Microsoft Agent Framework with TradingView pre-fetch."""
     
-    def __init__(self, project_endpoint: str, model: str, mcp_command: str, mcp_args: List[str], 
+    def __init__(self, project_endpoint: str, model: str, api_key: str, mcp_command: str, mcp_args: List[str], 
                  mcp_description: str):
         """Initialize the agent runner.
         
         Args:
             project_endpoint: Azure AI Foundry project endpoint URL
             model: Model deployment name
+            api_key: Azure OpenAI API key
             mcp_command: Command to launch Playwright MCP server (e.g., "npx")
             mcp_args: Arguments for MCP command
             mcp_description: Description of the MCP server capabilities
         """
-        credential = AzureCliCredential()
         self.client = AzureOpenAIChatClient(
             endpoint=project_endpoint,
             deployment_name=model,
-            credential=credential,
+            api_key=api_key,
         )
         self.mcp_command = mcp_command
         self.mcp_args = mcp_args
