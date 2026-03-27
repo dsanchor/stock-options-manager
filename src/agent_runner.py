@@ -186,6 +186,32 @@ class AgentRunner:
         reason = response_text[:100].replace('\n', ' ').strip()
         return f"{ticker} | DECISION: {decision} | Reason: {reason}", None
 
+    # Fields allowed in the signal log (lean, machine-parseable)
+    _SIGNAL_FIELDS = (
+        "timestamp", "symbol", "exchange", "decision",
+        "strike", "expiration", "underlying_price",
+        "confidence", "risk_flags",
+    )
+
+    def _build_signal_data(self, symbol: str, json_data: Optional[Dict]) -> Dict:
+        """Build a signal entry with only the allowed fields."""
+        exchange, ticker = (symbol.split('-', 1) if '-' in symbol
+                            else ("", symbol))
+        base: Dict = {
+            "timestamp": datetime.now().isoformat(),
+            "symbol": ticker,
+            "exchange": exchange,
+            "decision": "SELL",
+        }
+        if json_data is not None:
+            for key in self._SIGNAL_FIELDS:
+                if key in json_data and key not in base:
+                    base[key] = json_data[key]
+        # Ensure every allowed field is present (null if missing)
+        for key in self._SIGNAL_FIELDS:
+            base.setdefault(key, None)
+        return base
+
     def _is_sell_signal(self, response_text: str, json_data: Optional[Dict] = None) -> bool:
         """Check if response indicates a clear sell signal.
 
@@ -323,11 +349,7 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
 
                         # Check for sell signal
                         if self._is_sell_signal(response_text, json_data):
-                            signal_data = json_data if json_data is not None else {
-                                "symbol": symbol,
-                                "summary": decision_line,
-                                "timestamp": datetime.now().isoformat(),
-                            }
+                            signal_data = self._build_signal_data(symbol, json_data)
                             append_signal(signal_log_path, signal_data)
                             print(f"⚠️ SELL SIGNAL logged for {symbol}")
 
@@ -486,11 +508,7 @@ Analyze {ticker} NOW. Use the available MCP tools to gather current data. The fu
 
                         # Check for sell signal
                         if self._is_sell_signal(response_text, json_data):
-                            signal_data = json_data if json_data is not None else {
-                                "symbol": symbol,
-                                "summary": decision_line,
-                                "timestamp": datetime.now().isoformat(),
-                            }
+                            signal_data = self._build_signal_data(symbol, json_data)
                             append_signal(signal_log_path, signal_data)
                             print(f"⚠️ SELL SIGNAL logged for {symbol}")
 
