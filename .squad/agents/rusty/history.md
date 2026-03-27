@@ -467,3 +467,20 @@ Replaced the pipe-delimited output format across ALL 8 instruction files, plus u
 - Chat endpoint uses direct Azure OpenAI API with context from last 20 decisions per log.
 - Position files read from disk on every request — hot-reload confirmed, edits take effect on next scheduler tick.
 
+
+### Dashboard Quick Wins (2025-07)
+- Added `_latest_decisions_by_key()` helper in `web/app.py` — reads decision_log once and returns a dict keyed by symbol/position key with the most recent decision entry. Used by `_build_agent_table()` to attach health metrics without changing signal count logic.
+- Position monitor dashboard rows now show DTE, moneyness (colored badge), assignment risk (colored badge), and delta from the latest decision entry.
+- All dashboard rows (position monitors + covered call/CSP) now show `risk_flags` from the latest decision as `.flag` pill badges in a Flags column.
+- Signals list page (signals.html) for covered call/CSP now shows IV, Premium ($X.XX), and Delta columns. Position monitor signals unchanged.
+- CSS additions: `.badge-moneyness-{itm,otm,atm}`, `.badge-risk-critical` (separated from high with brighter red), `.metric-value` (mono font for numeric cells).
+- Key pattern: dashboard data enrichment reads decision_log separately from signal_log — signal counts come from signal_log (actionable only), health metrics from decision_log (latest analysis).
+- Jinja2 `format` filter used for numeric formatting: `"%.2f" | format(val)` with `is not none` guards.
+
+### Cron Settings, Trigger Buttons & No Auto-Run (2025-07)
+- Cron expression now editable from Settings page. Saved to `config.yaml` via `_write_config()` (yaml.dump). Live reschedule via `scheduler.reschedule(new_cron)` — sets a `_cron_changed` flag that the run loop checks before each sleep.
+- Scheduler instance exposed to web via `app.state.scheduler` (set in `run.py` lifespan). Web code uses `getattr(request.app.state, "scheduler", None)` for safe access in web-only mode.
+- Dashboard "Run Now" buttons added per agent card. POST `/api/trigger/{agent_type}` launches agent in a daemon thread via `threading.Thread(daemon=True)`. Reuses scheduler's config/runner — no duplicate init.
+- Removed auto-run on startup (`run_all_agents()` call in `run()` method). Scheduler now only fires on cron schedule.
+- JS trigger handler: fetch POST → visual feedback cycle (Running → Triggered/Error → reset after 3s). Button state managed via CSS classes `.running`, `.done`, `.error`.
+- Key pattern: for web↔scheduler communication, `app.state` is the simplest bridge — no module-level globals or import cycles needed.

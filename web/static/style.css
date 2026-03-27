@@ -356,3 +356,31 @@ textarea:focus { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
     .activity-item { font-size: 0.78rem; }
     .activity-time { min-width: unset; }
 }
+
+/* ── Trigger button ── */
+.btn-trigger {
+    padding: 0.25rem 0.65rem;
+    border: 1px solid var(--accent-green);
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--accent-green);
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+.btn-trigger:hover { background: rgba(34,197,94,0.15); }
+.btn-trigger.running {
+    color: var(--accent-orange);
+    border-color: var(--accent-orange);
+    cursor: default;
+}
+.btn-trigger.done {
+    color: var(--accent-blue);
+    border-color: var(--accent-blue);
+}
+.btn-trigger.error {
+    color: var(--accent-red);
+    border-color: var(--accent-red);
+}

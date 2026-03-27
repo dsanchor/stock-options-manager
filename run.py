@@ -63,6 +63,7 @@ def _stop_scheduler():
 @asynccontextmanager
 async def lifespan(app):
     _start_scheduler()
+    app.state.scheduler = _scheduler_instance
     yield
     _stop_scheduler()
 

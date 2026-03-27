@@ -21,6 +21,12 @@ class OptionsAgentScheduler:
         self.running = True
         self.config = None
         self.runner = None
+        self._cron_changed = False
+    
+    def reschedule(self, new_cron: str):
+        """Update cron expression. The run loop will pick it up on next iteration."""
+        self.config.cron_expression = new_cron
+        self._cron_changed = True
     
     def setup(self):
         """Initialize configuration and agent runner."""
@@ -86,16 +92,20 @@ class OptionsAgentScheduler:
         
         cron = croniter(self.config.cron_expression, datetime.now())
         
-        # Run immediately on start
-        print("Running agents immediately on startup...")
-        self.run_all_agents()
-        
         # Schedule via cron
         next_run = cron.get_next(datetime)
         print(f"Next scheduled run: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
         print("Press Ctrl+C to stop\n")
         
         while self.running:
+            # Check if cron was updated from the web UI
+            if self._cron_changed:
+                self._cron_changed = False
+                cron = croniter(self.config.cron_expression, datetime.now())
+                next_run = cron.get_next(datetime)
+                print(f"Cron rescheduled to: {self.config.cron_expression}")
+                print(f"Next scheduled run: {next_run.strftime('%Y-%m-%d %H:%M:%S')}\n")
+
             now = datetime.now()
             if now >= next_run:
                 self.run_all_agents()

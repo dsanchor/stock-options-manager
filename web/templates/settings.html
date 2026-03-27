@@ -14,6 +14,17 @@
 {% endif %}
 
 <form method="POST" action="/settings">
+    <div class="card settings-card">
+        <div class="card-header">
+            <h2>Scheduler</h2>
+        </div>
+        <p class="hint">Cron expression controlling when agents run. Format: <code>minute hour day-of-month month day-of-week</code> — e.g. <code>0 14-21/2 * * 1-5</code> = every 2h on weekdays 14:00–20:00.</p>
+        <div style="padding: 0.75rem 1.25rem;">
+            <input type="text" name="cron_expr" value="{{ cron_expr }}" spellcheck="false"
+                   style="width:100%; padding:0.6rem 0.8rem; background:var(--bg); border:1px solid var(--border); color:var(--text); font-family:var(--font-mono); font-size:0.9rem; border-radius:var(--radius);">
+        </div>
+    </div>
+
     {% for key, file in files.items() %}
     <div class="card settings-card">
         <div class="card-header">

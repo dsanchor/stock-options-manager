@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
@@ -111,6 +112,13 @@ def write_data_file(path: str, content: str):
     full_path = PROJECT_ROOT / path
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_text(content)
+
+
+def _write_config(config: Dict[str, Any]):
+    """Write config dict back to config.yaml."""
+    config_path = PROJECT_ROOT / "config.yaml"
+    with open(config_path, "w") as f:
+        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
 
 def parse_timestamp(ts: str) -> Optional[datetime]:
@@ -490,6 +498,9 @@ async def decision_detail(request: Request, agent_type: str, symbol: str, decisi
 
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
+    config = _load_config()
+    cron_expr = config.get("scheduler", {}).get("cron", "0 14-21/2 * * 1-5")
+
     files = {}
     for key, meta in DATA_FILES.items():
         files[key] = {
@@ -500,6 +511,7 @@ async def settings_page(request: Request):
     return templates.TemplateResponse("settings.html", {
         "request": request,
         "files": files,
+        "cron_expr": cron_expr,
     })
 
 
@@ -507,6 +519,24 @@ async def settings_page(request: Request):
 async def settings_save(request: Request):
     form = await request.form()
     saved = []
+
+    # Handle cron expression update
+    new_cron = str(form.get("cron_expr", "")).strip()
+    if new_cron:
+        try:
+            croniter(new_cron)  # validate
+            config = _load_config()
+            config.setdefault("scheduler", {})["cron"] = new_cron
+            _write_config(config)
+            saved.append("Cron schedule")
+
+            # Signal the scheduler to reschedule (if running)
+            scheduler = getattr(request.app.state, "scheduler", None)
+            if scheduler is not None:
+                scheduler.reschedule(new_cron)
+        except (ValueError, KeyError):
+            pass  # invalid cron — silently keep old value
+
     for key, meta in DATA_FILES.items():
         field_name = f"file_{key}"
         if field_name in form:
@@ -519,6 +549,8 @@ async def settings_save(request: Request):
             saved.append(meta["label"])
 
     # Re-read for display
+    config = _load_config()
+    cron_expr = config.get("scheduler", {}).get("cron", "0 14-21/2 * * 1-5")
     files = {}
     for key, meta in DATA_FILES.items():
         files[key] = {
@@ -530,7 +562,57 @@ async def settings_save(request: Request):
         "request": request,
         "files": files,
         "saved": saved,
+        "cron_expr": cron_expr,
     })
+
+
+# ── Trigger (Run Now) ──────────────────────────────────────────────────────
+
+AGENT_FUNCTIONS = {
+    "covered_call": "run_covered_call_analysis",
+    "cash_secured_put": "run_cash_secured_put_analysis",
+    "open_call_monitor": "run_open_call_monitor",
+    "open_put_monitor": "run_open_put_monitor",
+}
+
+
+def _run_agent_in_background(agent_type: str, scheduler):
+    """Run a single agent's analysis in a background thread."""
+    import asyncio
+    from src.covered_call_agent import run_covered_call_analysis
+    from src.cash_secured_put_agent import run_cash_secured_put_analysis
+    from src.open_call_monitor_agent import run_open_call_monitor
+    from src.open_put_monitor_agent import run_open_put_monitor
+
+    funcs = {
+        "covered_call": run_covered_call_analysis,
+        "cash_secured_put": run_cash_secured_put_analysis,
+        "open_call_monitor": run_open_call_monitor,
+        "open_put_monitor": run_open_put_monitor,
+    }
+    func = funcs[agent_type]
+    try:
+        asyncio.run(func(scheduler.config, scheduler.runner))
+    except Exception as e:
+        print(f"ERROR running {agent_type} trigger: {e}")
+
+
+@app.post("/api/trigger/{agent_type}")
+async def trigger_agent(request: Request, agent_type: str):
+    if agent_type not in AGENT_FUNCTIONS:
+        return JSONResponse({"error": f"Unknown agent type: {agent_type}"}, status_code=404)
+
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if scheduler is None or scheduler.config is None:
+        return JSONResponse({"error": "Scheduler not running — cannot trigger agents"}, status_code=503)
+
+    thread = threading.Thread(
+        target=_run_agent_in_background,
+        args=(agent_type, scheduler),
+        daemon=True,
+    )
+    thread.start()
+    return JSONResponse({"status": "triggered", "agent_type": agent_type})
 
 
 # ── Chat ───────────────────────────────────────────────────────────────────
