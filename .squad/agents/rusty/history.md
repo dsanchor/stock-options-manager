@@ -9,6 +9,14 @@
 
 ## Learnings
 
+### TradingView Pre-Fetch Architecture (2025-07)
+- LLMs fundamentally cannot reliably make 3+ sequential browser tool calls — they skip pages, fabricate navigation errors, and ignore tool-calling instructions. Instruction-based fixes (reordering, innerText, browser_run_code) all failed.
+- Solution: Pre-fetch ALL TradingView data deterministically in Python using `TradingViewFetcher` (src/tv_data_fetcher.py), then pass the data to the agent as text. Agent receives NO tools — only analyzes.
+- `agent_runner.py` now branches: `mcp_provider == "tradingview"` → pre-fetch path (no tools), all other providers → existing MCP-tool flow unchanged.
+- `TradingViewFetcher` uses the same Playwright MCP tools (browser_run_code for technicals/forecast, browser_navigate+click+snapshot for options chain) but driven from Python, not the LLM.
+- TV instruction files (covered call + CSP) had Phase 1 rewritten from "gather data via browser tools" to "review pre-fetched data in your message". All browser_* references removed. Phase 2 analysis, trading logic, output format unchanged.
+- Key pattern: when an LLM can't reliably drive a multi-step tool workflow, move the deterministic steps to the host language and let the LLM do what it's good at — analysis.
+
 ### TradingView Context Overflow Fix (2025-07)
 - The TradingView Playwright agent loads pages as accessibility snapshots that can be **huge**: main page ~103K chars, technicals ~48K, forecast ~29K, options chain ~65K. Total ~245K chars exceeds gpt-5.1 context limits.
 - Symptom: agent successfully loads main page + options chain, then "fails" on technicals/forecast — really context overflow, not navigation failure.
