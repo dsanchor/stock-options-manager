@@ -2,8 +2,9 @@ import sys
 import time
 import signal
 import asyncio
-import schedule
 from datetime import datetime
+
+from croniter import croniter
 
 from .config import Config
 from .agent_runner import AgentRunner
@@ -14,7 +15,7 @@ from .open_put_monitor_agent import run_open_put_monitor
 
 
 class OptionsAgentScheduler:
-    """Main scheduler for periodic options agent execution."""
+    """Main scheduler for cron-based options agent execution."""
     
     def __init__(self):
         self.running = True
@@ -39,10 +40,10 @@ class OptionsAgentScheduler:
             mcp_url=self.config.mcp_url,
         )
         
-        print(f"Scheduler configured: Running every {self.config.interval_minutes} minutes")
+        print(f"Scheduler configured with cron: {self.config.cron_expression}")
     
     def run_all_agents(self):
-        """Execute both agents (bridges async to sync for scheduler)."""
+        """Execute all agents (bridges async to sync for scheduler)."""
         asyncio.run(self._run_all_agents_async())
     
     async def _run_all_agents_async(self):
@@ -69,38 +70,35 @@ class OptionsAgentScheduler:
         print(f"# Completed scheduled agent run at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"{'#'*70}\n")
     
-    def schedule_agents(self):
-        """Set up periodic scheduling."""
-        # Schedule periodic execution
-        schedule.every(self.config.interval_minutes).minutes.do(self.run_all_agents)
-        
-        print(f"Agents scheduled to run every {self.config.interval_minutes} minutes")
-        print("Press Ctrl+C to stop\n")
-    
     def signal_handler(self, sig, frame):
         """Handle graceful shutdown on Ctrl+C."""
         print("\n\nShutdown signal received. Stopping scheduler...")
         self.running = False
     
     def run(self):
-        """Main execution loop."""
-        # Set up signal handler for graceful shutdown
+        """Main execution loop using cron expression."""
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
         
-        # Initialize
         self.setup()
+        
+        cron = croniter(self.config.cron_expression, datetime.now())
         
         # Run immediately on start
         print("Running agents immediately on startup...")
         self.run_all_agents()
         
-        # Set up periodic schedule
-        self.schedule_agents()
+        # Schedule via cron
+        next_run = cron.get_next(datetime)
+        print(f"Next scheduled run: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
+        print("Press Ctrl+C to stop\n")
         
-        # Main loop
         while self.running:
-            schedule.run_pending()
+            now = datetime.now()
+            if now >= next_run:
+                self.run_all_agents()
+                next_run = cron.get_next(datetime)
+                print(f"Next scheduled run: {next_run.strftime('%Y-%m-%d %H:%M:%S')}\n")
             time.sleep(1)
         
         print("Scheduler stopped. Goodbye!")

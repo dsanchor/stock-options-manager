@@ -59,7 +59,7 @@ class Config:
         required_fields = [
             ('azure', 'project_endpoint'),
             ('azure', 'model_deployment'),
-            ('scheduler', 'interval_minutes'),
+            ('scheduler', 'cron'),
         ]
         
         for *path, field in required_fields:
@@ -145,8 +145,8 @@ class Config:
         return self._mcp_provider_config.get('env_key', '')
     
     @property
-    def interval_minutes(self) -> int:
-        return self.config['scheduler']['interval_minutes']
+    def cron_expression(self) -> str:
+        return self.config['scheduler']['cron']
     
     @property
     def covered_call_config(self) -> Dict[str, str]:

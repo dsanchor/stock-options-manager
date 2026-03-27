@@ -157,7 +157,7 @@ pip install -r requirements.txt
 This installs:
 - `agent-framework[foundry]` - Microsoft Agent Framework with Foundry support
 - `azure-identity` - Azure authentication
-- `pyyaml`, `schedule`, `python-dotenv` - Configuration and scheduling
+- `pyyaml`, `croniter`, `python-dotenv` - Configuration and scheduling
 
 ### 2. Install the MCP Financial Data Server
 
@@ -307,7 +307,7 @@ context:
   max_signal_entries: 1                 # Recent signals injected per symbol
 
 scheduler:
-  interval_minutes: 1                   # How often agents run (minutes)
+  cron: "*/30 9-16 * * 1-5"              # Cron expression (e.g. every 30 min, Mon-Fri 9am-4pm)
 
 covered_call:
   symbols_file: "data/covered_call_symbols.txt"

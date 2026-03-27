@@ -28,7 +28,7 @@ context:
   max_signal_entries: 1    # How many recent signals to inject as agent context
 
 scheduler:
-  interval_minutes: 1  # How often to run the agents
+  cron: "*/30 9-16 * * 1-5"  # Cron expression: every 30 min, market hours (Mon-Fri 9-16)
 
 covered_call:
   symbols_file: "data/covered_call_symbols.txt"
