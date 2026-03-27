@@ -9,6 +9,14 @@
 
 ## Learnings
 
+### TradingView Context Overflow Fix (2025-07)
+- The TradingView Playwright agent loads pages as accessibility snapshots that can be **huge**: main page ~103K chars, technicals ~48K, forecast ~29K, options chain ~65K. Total ~245K chars exceeds gpt-5.1 context limits.
+- Symptom: agent successfully loads main page + options chain, then "fails" on technicals/forecast — really context overflow, not navigation failure.
+- Fix: Drop the main symbol page entirely (103K saved). Essential data (price, earnings, analyst targets) is available on forecast and options chain pages.
+- Order matters: load smallest/most valuable pages first (technicals → forecast → options chain) so if context runs tight, critical technical data is already captured.
+- CSP Investment Worthiness Gate was rewritten to use analyst consensus + earnings history from forecast page instead of P/E/EPS/revenue from the now-skipped main page.
+- Actual IV% from expanded options chain replaces the beta/volatility proxy that came from the main page.
+
 ## Core Context
 
 **2024-03 Foundation Work Summary:**
