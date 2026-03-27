@@ -420,3 +420,12 @@ Replaced the pipe-delimited output format across ALL 8 instruction files, plus u
 - Config is loaded via raw YAML read (not `src.config.Config`) to avoid requiring MCP env vars that the web app doesn't need.
 - Added auto-refresh toggle (60s interval, persisted in localStorage), clickable table rows, responsive CSS for mobile.
 - Dependencies: fastapi, uvicorn[standard], jinja2, python-multipart, openai.
+
+### Consolidated Entry Point (2025-07)
+- Created `run.py` as single entry point: `python run.py` starts both web dashboard (uvicorn) and scheduler (daemon thread).
+- Uses FastAPI lifespan context manager to start/stop the scheduler thread alongside the web server.
+- `OptionsAgentScheduler.run()` now accepts `install_signals=True` param — set to `False` when running in a thread since signal handlers can only be installed from the main thread.
+- CLI flags via argparse: `--web-only`, `--scheduler-only`, `--port PORT`. `--web-only` and `--scheduler-only` are mutually exclusive.
+- `run_web.py` kept for backwards compat but delegates to `run.py --web-only` via `runpy.run_path`.
+- Web host/port read from `config.yaml` `web:` section, overridable with `--port`.
+- Lifespan is attached via `app.router.lifespan_context = lifespan` to avoid modifying `web/app.py`'s app creation.

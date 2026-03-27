@@ -334,29 +334,33 @@ Only the selected provider's section is loaded — environment variables for ina
 
 ## Running
 
-### Scheduler (agent analysis)
-
-Start the scheduler:
+### Full app (web dashboard + scheduler)
 
 ```bash
-python -m src.main
+python run.py
 ```
 
-The agents will:
-1. Run immediately on startup
-2. Continue running every N minutes (configured in `config.yaml`)
-3. Log decisions to `logs/` directory
-4. Log clear sell signals separately for easy review
+Opens the dashboard at http://localhost:8000 and starts the agent scheduler in a background thread. Press `Ctrl+C` to stop both.
 
-Press `Ctrl+C` to stop gracefully.
-
-### Web Dashboard
-
-Start the web dashboard:
+### Web dashboard only
 
 ```bash
-python run_web.py
+python run.py --web-only
 ```
+
+### Scheduler only (no web UI)
+
+```bash
+python run.py --scheduler-only
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--web-only` | Start only the web dashboard (no scheduler) |
+| `--scheduler-only` | Start only the scheduler (no web) |
+| `--port PORT` | Override the web server port (default: from `config.yaml` or 8000) |
 
 The dashboard runs on `http://localhost:8000` by default (configurable in `config.yaml` under `web:`).
 
@@ -366,8 +370,6 @@ The dashboard runs on `http://localhost:8000` by default (configurable in `confi
 - **Signal + Decisions** (`/signals/{agent}/{symbol}/{index}`) — Full signal JSON and backing decisions from the same time window.
 - **Settings** (`/settings`) — Edit watchlist and position files directly. Changes take effect on the next scheduler tick (data files are re-read on every cron run).
 - **Chat** (`/chat`) — Ask questions about your portfolio. Uses the same Azure OpenAI model with recent decisions as context.
-
-> **Note:** The web dashboard and scheduler run independently — start one or both as needed.
 
 ## Output
 

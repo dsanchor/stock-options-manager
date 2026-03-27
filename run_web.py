@@ -1,5 +1,6 @@
-import uvicorn
-from web.app import app
+"""Backwards-compatible entry point — delegates to run.py --web-only."""
+import sys
+import runpy
 
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+sys.argv = [sys.argv[0], "--web-only"]
+runpy.run_path("run.py", run_name="__main__")

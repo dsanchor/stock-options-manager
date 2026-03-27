@@ -34,10 +34,6 @@ class OptionsAgentScheduler:
             mcp_command=self.config.mcp_command,
             mcp_args=self.config.mcp_args,
             mcp_description=self.config.mcp_description,
-            mcp_provider=self.config.mcp_provider,
-            mcp_env_key=self.config.mcp_env_key,
-            mcp_transport=self.config.mcp_transport,
-            mcp_url=self.config.mcp_url,
         )
         
         print(f"Scheduler configured with cron: {self.config.cron_expression}")
@@ -75,10 +71,16 @@ class OptionsAgentScheduler:
         print("\n\nShutdown signal received. Stopping scheduler...")
         self.running = False
     
-    def run(self):
-        """Main execution loop using cron expression."""
-        signal.signal(signal.SIGINT, self.signal_handler)
-        signal.signal(signal.SIGTERM, self.signal_handler)
+    def run(self, install_signals=True):
+        """Main execution loop using cron expression.
+        
+        Args:
+            install_signals: Install SIGINT/SIGTERM handlers. Set to False when
+                running inside a thread (signals can only be set in the main thread).
+        """
+        if install_signals:
+            signal.signal(signal.SIGINT, self.signal_handler)
+            signal.signal(signal.SIGTERM, self.signal_handler)
         
         self.setup()
         
@@ -121,4 +123,7 @@ def main():
 
 
 if __name__ == "__main__":
+    print("TIP: Use 'python run.py' to start both web dashboard and scheduler.")
+    print("     Use 'python run.py --scheduler-only' for scheduler only.")
+    print()
     main()
