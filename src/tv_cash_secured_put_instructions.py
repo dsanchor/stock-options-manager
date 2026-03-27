@@ -28,9 +28,12 @@ All market data has been **pre-fetched from TradingView** and is included direct
 
 ### Phase 1: Data Review & Investment Quality Validation
 
-Market data has been pre-fetched and included in your message. You will find three sections:
+Market data has been pre-fetched and included in your message. You will find four sections:
 
-1. **TECHNICALS PAGE** — Contains oscillator summaries, moving average data, and pivot points.
+1. **OVERVIEW PAGE** — Contains general stock information: current price, market cap, P/E ratio, dividend yield, 52-week high/low, volume, sector, industry, earnings date.
+   - Use for: fundamental context, current price confirmation, dividend info relevant to cash-secured put assignment risk
+
+2. **TECHNICALS PAGE** — Contains oscillator summaries, moving average data, and pivot points.
    Tab-separated table data: Name\tValue\tAction for each indicator.
    Sections: Oscillators (RSI, Stochastic, CCI, ADX, MACD, etc.), Moving Averages (EMA/SMA 10-200), Pivot Points (Classic, Fibonacci, Camarilla, Woodie, DM).
    - **Summary Gauges**: Overall / Oscillators / Moving Averages — each rated from Strong Sell to Strong Buy
@@ -47,7 +50,7 @@ Market data has been pre-fetched and included in your message. You will find thr
      - Stochastic %K < 20 → additional oversold confirmation
      - Williams %R < -80 → oversold confirmation
 
-2. **FORECAST PAGE** — Contains price targets, analyst ratings, EPS history, and revenue data.
+3. **FORECAST PAGE** — Contains price targets, analyst ratings, EPS history, and revenue data.
    Includes: analyst consensus (Strong Buy/Buy/Hold/Sell counts), EPS reported vs estimate with surprise %, revenue data.
    - EPS actual vs estimate for most recent quarter (beat/miss/meet)
    - EPS estimate for next quarter
@@ -65,7 +68,7 @@ Market data has been pre-fetched and included in your message. You will find thr
      - Number of analysts: more coverage = more institutional interest = more stable
      - If analyst consensus is overwhelmingly negative (majority Sell) → WAIT regardless of premium
 
-3. **OPTIONS CHAIN** — Contains the expanded options chain accessibility snapshot.
+4. **OPTIONS CHAIN** — Contains the expanded options chain accessibility snapshot.
    Rows contain: Delta, Gamma, Theta, Vega, IV%, Strike, Bid, Ask, Volume for calls and puts.
    The expiration closest to 30-45 DTE has been pre-expanded.
    - **Put-Specific Data Extraction**: Puts are in the right half of each data row
@@ -85,17 +88,17 @@ Parse these sections to extract the data you need for analysis. If any section s
 The agent synthesizes all gathered data into a comprehensive analysis:
 
 4. **Investment Worthiness Assessment (MUST PASS)**
-   - **Note**: The main symbol page is NOT loaded (context budget optimization), so detailed fundamentals (P/E, EPS, revenue, market cap) are not directly available. Use the following signals instead:
-   - From analyst consensus (forecast page, Step 2):
+   - From overview page (Step 1): P/E ratio, market cap, dividend yield, sector/industry — use for fundamental quality assessment
+   - From analyst consensus (forecast page, Step 3):
      - Majority Buy/Hold → institutional support → favorable for put selling
      - Majority Sell → fundamental concern → require extra margin of safety or WAIT
      - Number of analysts: More coverage = larger, more stable company
      - Analyst price targets: Low target vs proposed strike → if strike below analyst low target, strong margin of safety
-   - From earnings data (forecast page, Step 2):
+   - From earnings data (forecast page, Step 3):
      - Recent EPS beats → company is executing well → favorable
      - Recent EPS misses → earnings quality concern → caution
      - EPS estimates trending up → positive trajectory → favorable
-   - From technical context (technicals page, Step 1):
+   - From technical context (technicals page, Step 2):
      - Price holding above SMA 200 → stock in long-term uptrend → favorable
      - Strong support levels identified → institutional buying at these levels → favorable
    - **Investment Worthiness Decision**:

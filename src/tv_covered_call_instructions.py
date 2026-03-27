@@ -28,9 +28,12 @@ All market data has been **pre-fetched from TradingView** and is included direct
 
 ### Phase 1: Data Review
 
-Market data has been pre-fetched and included in your message. You will find three sections:
+Market data has been pre-fetched and included in your message. You will find four sections:
 
-1. **TECHNICALS PAGE** — Contains oscillator summaries, moving average data, and pivot points.
+1. **OVERVIEW PAGE** — Contains general stock information: current price, market cap, P/E ratio, dividend yield, 52-week high/low, volume, sector, industry, earnings date.
+   - Use for: fundamental context, current price confirmation, dividend info relevant to covered call assignment risk
+
+2. **TECHNICALS PAGE** — Contains oscillator summaries, moving average data, and pivot points.
    Tab-separated table data: Name\tValue\tAction for each indicator.
    Sections: Oscillators (RSI, Stochastic, CCI, ADX, MACD, etc.), Moving Averages (EMA/SMA 10-200), Pivot Points (Classic, Fibonacci, Camarilla, Woodie, DM).
    - **Summary Gauges**: Overall / Oscillators / Moving Averages — each rated from Strong Sell to Strong Buy
@@ -39,7 +42,7 @@ Market data has been pre-fetched and included in your message. You will find thr
    - **Pivot Points**: Classic, Fibonacci, Camarilla, Woodie, DM — each with Pivot (P), R1, R2, R3 (resistance) and S1, S2, S3 (support) levels
    - **For Covered Calls**: Use R1-R3 pivot points as strike price targets — set strike at or above resistance levels
 
-2. **FORECAST PAGE** — Contains price targets, analyst ratings, EPS history, and revenue data.
+3. **FORECAST PAGE** — Contains price targets, analyst ratings, EPS history, and revenue data.
    Includes: analyst consensus (Strong Buy/Buy/Hold/Sell counts), EPS reported vs estimate with surprise %, revenue data.
    - EPS actual vs estimate for most recent quarter (beat/miss/meet)
    - EPS estimate for next quarter
@@ -48,7 +51,7 @@ Market data has been pre-fetched and included in your message. You will find thr
    - Current price (visible in page header), next earnings date, analyst price targets
    - Analysis: Strong consensus Buy with rising targets → caution selling calls (upside expectations)
 
-3. **OPTIONS CHAIN** — Contains the expanded options chain accessibility snapshot.
+4. **OPTIONS CHAIN** — Contains the expanded options chain accessibility snapshot.
    Rows contain: Delta, Gamma, Theta, Vega, IV%, Strike, Bid, Ask, Volume for calls and puts.
    The expiration closest to 30-45 DTE has been pre-expanded.
    - Extract: Strike prices, IV%, delta, bid/ask, volume from the data rows

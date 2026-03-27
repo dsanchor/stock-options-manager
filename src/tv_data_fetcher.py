@@ -1,8 +1,8 @@
 """TradingView data fetcher using Playwright MCP.
 
-Pre-fetches technicals, forecast, and options chain data from TradingView
-before the agent runs. Returns clean text data the agent can analyze
-without needing any browser tools.
+Pre-fetches overview, technicals, forecast, and options chain data from
+TradingView before the agent runs. Returns clean text data the agent can
+analyze without needing any browser tools.
 """
 
 import logging
@@ -59,6 +59,32 @@ class TradingViewFetcher:
     # ------------------------------------------------------------------
     # Page fetchers
     # ------------------------------------------------------------------
+
+    async def fetch_overview(self, full_symbol: str) -> str:
+        """Fetch symbol overview page innerText (price, market cap, P/E, etc.)."""
+        run_code = self._funcs.get("browser_run_code")
+        if not run_code:
+            return "[ERROR: browser_run_code tool not available]"
+
+        url = f"https://www.tradingview.com/symbols/{full_symbol}/"
+        js = (
+            'async (page) => {'
+            f'  await page.goto("{url}", {{ waitUntil: "networkidle" }});'
+            '  await page.waitForTimeout(2000);'
+            '  return await page.evaluate(() => {'
+            '    const main = document.querySelector("main") || document.body;'
+            '    return main.innerText;'
+            '  });'
+            '}'
+        )
+
+        try:
+            result = await run_code(code=js)
+            text = self._extract_text(result)
+            return text or "[ERROR: No text content in overview response]"
+        except Exception as e:
+            logger.error("Failed to fetch overview for %s: %s", full_symbol, e)
+            return f"[ERROR: {e}]"
 
     async def fetch_technicals(self, full_symbol: str) -> str:
         """Fetch technicals page innerText (~3 K chars)."""
@@ -188,12 +214,15 @@ class TradingViewFetcher:
     async def fetch_all(self, symbol: str) -> dict:
         """Fetch all data for a symbol.
 
-        Returns dict with keys: technicals, forecast, options_chain.
+        Returns dict with keys: overview, technicals, forecast, options_chain.
         """
         # Convert NYSE-MO → NYSE:MO for TradingView URLs
         full_symbol = symbol.replace("-", ":")
 
         logger.info("Pre-fetching TradingView data for %s", symbol)
+
+        overview = await self.fetch_overview(full_symbol)
+        logger.info("Overview fetched: %d chars", len(overview))
 
         technicals = await self.fetch_technicals(full_symbol)
         logger.info("Technicals fetched: %d chars", len(technicals))
@@ -205,6 +234,7 @@ class TradingViewFetcher:
         logger.info("Options chain fetched: %d chars", len(options_chain))
 
         return {
+            "overview": overview,
             "technicals": technicals,
             "forecast": forecast,
             "options_chain": options_chain,

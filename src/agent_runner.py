@@ -249,7 +249,7 @@ class AgentRunner:
                     # NO tools — agent only analyzes pre-fetched data
                 )
                 logger.debug(
-                    "ChatAgent '%s' created WITHOUT tools (TradingView pre-fetch mode).",
+                    "ChatAgent '%s' (TradingView pre-fetch mode).",
                     name,
                 )
 
@@ -272,6 +272,9 @@ class AgentRunner:
                         message = f"""Analyze {ticker} (exchange: {exchange}, full symbol: {symbol}).
 
 === PRE-FETCHED TRADINGVIEW DATA ===
+
+--- OVERVIEW PAGE ({exchange}:{ticker}) ---
+{data['overview']}
 
 --- TECHNICALS PAGE ({exchange}:{ticker}) ---
 {data['technicals']}
