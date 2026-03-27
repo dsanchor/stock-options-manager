@@ -307,7 +307,7 @@ context:
   max_signal_entries: 1                 # Recent signals injected per symbol
 
 scheduler:
-  cron: "*/30 9-16 * * 1-5"              # Cron expression (e.g. every 30 min, Mon-Fri 9am-4pm)
+  cron: "0 9-16/2 * * 1-5"               # Cron expression (e.g. every 2h, Mon-Fri 9am-4pm)
 
 covered_call:
   symbols_file: "data/covered_call_symbols.txt"
