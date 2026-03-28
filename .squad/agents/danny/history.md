@@ -23,3 +23,40 @@
 
 **Status:** ✅ Updated in config/team.md
 **Team:** User directive (dsanchor), Rusty (config implementation)
+
+### 2026-03-28: CosmosDB-Centric Architecture Design
+
+**User Directive (dsanchor):** Full architectural refactor from file-based to CosmosDB-backed symbol-centric data model.
+
+**Key Architecture Decisions:**
+
+1. **Hybrid document model (NOT single-document-per-symbol):** A single document would exceed CosmosDB's 2MB limit within months for active symbols (~7MB/year in decisions alone). Instead: partition key = symbol ticker, with 3 document types in one container: `symbol_config`, `decision`, `signal`.
+
+2. **Partition key = symbol ticker:** All queries for a symbol (config + decisions + signals) are single-partition and fast. Cross-partition queries only for dashboard aggregation (low QPS, acceptable).
+
+3. **Positions embedded in symbol_config:** Positions per symbol are few (<20), so embedding avoids extra document lookups. Position lifecycle: `active` → `closed`.
+
+4. **Serverless CosmosDB default:** Low traffic (50 operations/day). Pennies per month. Autoscale provisioned is the upgrade path.
+
+5. **TTL on decision documents (90 days):** Prevents unbounded growth. Signals kept indefinitely for audit trail.
+
+6. **Context injection adapter pattern:** `src/context.py` wraps CosmosDB reads and returns formatted strings identical to the old `logger.py` output. Agent instructions remain unchanged.
+
+7. **Agent runner no longer owns discovery:** Scheduler queries CosmosDB for enabled symbols/positions and passes them individually to the runner. Runner only handles single-symbol execution.
+
+**Key File Paths:**
+- Architecture doc: `.squad/decisions/inbox/danny-cosmosdb-refactor-architecture.md`
+- New modules planned: `src/cosmos_db.py`, `src/context.py`, `scripts/migrate_to_cosmosdb.py`, `scripts/provision_cosmosdb.sh`
+- Modified: `config.yaml`, `src/config.py`, `src/agent_runner.py`, `src/main.py`, `web/app.py`, all 4 agent modules
+- Deprecated: `src/logger.py`, `data/*.txt`, `logs/*.jsonl`
+- New web templates: `web/templates/symbols.html`, `web/templates/symbol_detail.html`
+- New dependency: `azure-cosmos>=4.7.0`
+
+**User Preferences (dsanchor):**
+- Prefers comprehensive design docs with actual schemas, code, and CLI commands
+- Wants everything symbol-centric (per-symbol settings, not global config files)
+- Only global setting = cron expression
+- Full CRUD through web dashboard
+
+**Status:** ✅ Architecture document delivered
+**Team:** Danny (architecture), delegates to Rusty (implementation phases 1-3), Basher (phase 4)
