@@ -566,3 +566,24 @@ This 3-phase CosmosDB refactor directly impacts:
 - Replaced mixed `export VAR="value"` / `${VAR:-default}` patterns with consistent `${VAR:-default}` throughout.
 - Collapsed three CosmosDB setup options (script, inline CLI, portal) into inline CLI commands as the primary path, with a one-line note pointing to the script and portal as alternatives.
 - Verified `scripts/provision_cosmosdb.sh` variable names already match the README exactly — no script changes needed.
+
+### Phase 6 — CosmosDB Startup Diagnostics (2025-07)
+- The startup handler in `web/app.py` silently set `cosmos = None` when env vars were missing, giving users zero debugging info ("CosmosDB not available" with no reason).
+- Added `logging` module usage throughout: `_resolve_env` warns on unset env vars, startup logs endpoint/key-presence/database, success/failure with full tracebacks via `logger.exception()`.
+- Stored `app.state.cosmos_error` with specific error reason (missing env var names, or exception string) so the frontend can display it.
+- Updated settings page template to show ✅/❌ status badge and error detail when CosmosDB is not connected.
+- Added `cosmos.database.read()` call in startup to eagerly validate the connection — `CosmosClient()` is lazy and won't fail until the first real query.
+- Updated `_get_cosmos`, dashboard route, and symbol detail page to include the error reason in all error messages.
+
+## Learnings
+
+### UI Template Patterns (2025-07)
+- Signal counts/totals live as Jinja2 expressions in subtitles (`signals.html` line 8) and card-badges (`symbols.html` line 31 `card-badge` span).
+- The Add Symbol form is in `web/templates/symbols.html` with inline JS in `{% block scripts %}`. Form fields are plain HTML inputs, no framework.
+- The JS `fetch('/api/symbols', ...)` POST is what drives symbol creation; the backend is `web/app.py:api_create_symbol()`.
+- `display_name` default logic existed only on the frontend (`displayName || ticker`); added server-side fallback in `api_create_symbol` for robustness.
+- CC/CSP toggle checkboxes for existing symbols live in the symbols table (toggle-cc / toggle-csp classes); the create form had separate `#newCC` / `#newCSP` inputs.
+- Symbol detail page (`web/templates/symbol_detail.html`) now has CC/CSP toggle switches in the page header, replacing the old static badge approach.
+- Toggles use the same `PUT /api/symbols/{symbol}` endpoint with `{covered_call: bool}` / `{cash_secured_put: bool}` payloads — same pattern as the list page.
+- The `.switch` / `.slider` CSS classes from `web/static/style.css` are available globally via the base template — no extra imports needed.
+- Toggle JS uses element IDs (`toggle-cc`, `toggle-csp`) rather than class-based selectors since there's only one instance on the detail page.

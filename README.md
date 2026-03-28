@@ -409,7 +409,7 @@ az cosmosdb create \
   --name "$COSMOSDB_ACCOUNT" \
   --resource-group "$RESOURCE_GROUP" \
   --kind GlobalDocumentDB \
-  --capabilities EnableServerless \
+  --capacity-mode Serverless \
   --default-consistency-level Session \
   --locations regionName="$LOCATION" failoverPriority=0 isZoneRedundant=false \
   -o none
