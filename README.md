@@ -120,168 +120,6 @@ All data is stored in Azure CosmosDB using three document types within a single 
 
 Decisions older than 90 days can be configured for TTL-based cleanup. Signals are kept indefinitely for audit.
 
-## Prerequisites
-
-1. **Python 3.12+**
-2. **Azure AI Foundry Project** with access to a model deployment (e.g. `gpt-5.1`, `gpt-5.4-mini`)
-3. **Azure OpenAI API Key** - Get your API key from Azure Portal
-4. **Azure CosmosDB Account** - See [Azure CosmosDB Setup](#azure-cosmosdb-setup) below
-
-## Setup
-
-### 1. Create Virtual Environment and Install Dependencies
-
-```bash
-python -m venv venv
-source venv/bin/activate 
-pip install -r requirements.txt
-playwright install chromium
-```
-
-This installs:
-- `agent-framework[foundry]` - Microsoft Agent Framework with Foundry support
-- `playwright` - Headless Chromium for TradingView data fetching
-- `pyyaml`, `croniter`, `python-dotenv` - Configuration and scheduling
-
-### 2. Configure Environment Variables
-
-Set your Azure AI Project and CosmosDB credentials:
-
-```bash
-# Azure AI / OpenAI
-export AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com"
-export MODEL_DEPLOYMENT="gpt-5.1"  # or "gpt-5.4-mini"
-export AZURE_OPENAI_API_KEY="your-api-key-here"
-
-# CosmosDB (from provisioning script output or Azure Portal)
-export COSMOSDB_ENDPOINT="https://your-account.documents.azure.com:443/"
-export COSMOSDB_KEY="your-primary-key"
-
-# No API key needed for TradingView — data is free via Playwright browser automation
-```
-
-### 3. Set Up Azure CosmosDB
-
-See the [Azure CosmosDB Setup](#azure-cosmosdb-setup) section below for provisioning instructions.
-
-### 4. Configure Symbols
-
-Symbols and positions are managed via the **web dashboard** or the CosmosDB API. Each symbol has:
-- **Watchlist flags**: `covered_call` and `cash_secured_put` (true/false)
-- **Positions**: Open call/put positions with strike, expiration, and status
-
-The exchange prefix is used to construct TradingView URLs (e.g., `NYSE` + `MO` → `https://www.tradingview.com/symbols/NYSE-MO/`).
-
-### 5. Adjust Configuration (Optional)
-
-Edit `config.yaml` to customize:
-
-```yaml
-azure:
-  project_endpoint: "${AZURE_AI_PROJECT_ENDPOINT}"
-  model_deployment: "${MODEL_DEPLOYMENT}"  # From env variable (e.g. gpt-5.1, gpt-5.4-mini)
-  api_key: "${AZURE_OPENAI_API_KEY}"
-
-cosmosdb:
-  endpoint: "${COSMOSDB_ENDPOINT}"
-  key: "${COSMOSDB_KEY}"
-  database: "stock-options-manager"
-
-context:
-  max_decision_entries: 2               # Recent decisions injected per symbol (0=none, max 5). Each includes signal status.
-  decision_ttl_days: 90                 # Auto-cleanup old decisions
-
-scheduler:
-  cron: "0 9-16/2 * * 1-5"               # Cron expression (e.g. every 2h, Mon-Fri 9am-4pm)
-```
-
-## Running
-
-### Full app (web dashboard + scheduler)
-
-```bash
-python run.py
-```
-
-Opens the dashboard at http://localhost:8000 and starts the agent scheduler in a background thread. Press `Ctrl+C` to stop both.
-
-### Web dashboard only
-
-```bash
-python run.py --web-only
-```
-
-### Scheduler only (no web UI)
-
-```bash
-python run.py --scheduler-only
-```
-
-### Options
-
-| Flag | Description |
-|------|-------------|
-| `--web-only` | Start only the web dashboard (no scheduler) |
-| `--scheduler-only` | Start only the scheduler (no web) |
-| `--port PORT` | Override the web server port (default: from `config.yaml` or 8000) |
-
-The dashboard runs on `http://localhost:8000` by default (configurable in `config.yaml` under `web:`).
-
-### Running with Docker
-
-Build the image (pre-installs Playwright + Chromium — no Node.js needed):
-
-```bash
-docker build -t stock-options-manager .
-```
-
-Run with CosmosDB credentials:
-
-```bash
-docker run -d --name stock-options-manager \
-  -p 8000:8000 \
-  -e AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com" \
-  -e MODEL_DEPLOYMENT="gpt-5.1" \
-  -e AZURE_OPENAI_API_KEY="your-api-key-here" \
-  -e COSMOSDB_ENDPOINT="https://your-account.documents.azure.com:443/" \
-  -e COSMOSDB_KEY="your-primary-key" \
-  stock-options-manager
-```
-
-| Variable | Purpose |
-|---|---|
-| `AZURE_AI_PROJECT_ENDPOINT` | Azure AI Foundry project endpoint |
-| `MODEL_DEPLOYMENT` | Model name (e.g. `gpt-5.1`, `gpt-5.4-mini`) |
-| `AZURE_OPENAI_API_KEY` | Azure OpenAI API key for authentication |
-| `COSMOSDB_ENDPOINT` | CosmosDB account endpoint |
-| `COSMOSDB_KEY` | CosmosDB primary key |
-
-View logs:
-
-```bash
-docker logs -f stock-options-manager
-```
-
-Pass flags (e.g. web-only mode):
-
-```bash
-docker run -d --name stock-options-manager-web \
-  -p 8000:8000 \
-  -e AZURE_AI_PROJECT_ENDPOINT="..." \
-  -e MODEL_DEPLOYMENT="gpt-5.1" \
-  -e AZURE_OPENAI_API_KEY="your-api-key-here" \
-  -e COSMOSDB_ENDPOINT="..." \
-  -e COSMOSDB_KEY="..." \
-  stock-options-manager --web-only
-```
-
-**Pages:**
-- **Dashboard** (`/`) — Signals overview by agent type with time-range counts, scheduler status, recent activity feed, and position summary. Auto-refresh toggle (60s).
-- **Signal Details** (`/signals/{agent}/{symbol}`) — All signals for a specific symbol, newest first, with decision badges and risk flags.
-- **Signal + Decisions** (`/signals/{agent}/{symbol}/{index}`) — Full signal JSON and backing decisions from the same time window.
-- **Settings** (`/settings`) — Edit watchlist and position files directly. Changes take effect on the next scheduler tick (data files are re-read on every cron run).
-- **Chat** (`/chat`) — Ask questions about your portfolio. Uses the same Azure OpenAI model with recent decisions as context.
-
 ## Output
 
 All decisions and signals are stored in Azure CosmosDB. The web dashboard provides a UI for browsing them, or query directly via the CosmosDB Data Explorer.
@@ -297,7 +135,6 @@ Actionable decisions (SELL, ROLL, CLOSE) also create a `signal` document linked 
 ### Example Decision Object
 
 Each decision document in CosmosDB:
-
 ```json
 {
   "timestamp": "2026-03-27T00:00:00Z",
@@ -357,9 +194,175 @@ stock-options-manager/
 └── README.md
 ```
 
-## Azure Setup
+## Web Dashboard
 
-This section provisions all Azure resources needed to run the Stock Options Manager: CosmosDB for data storage and Container Apps for hosting.
+- **Dashboard** (`/`) — Signals overview by agent type with time-range counts, scheduler status, recent activity feed, and position summary. Auto-refresh toggle (60s).
+- **Signal Details** (`/signals/{agent}/{symbol}`) — All signals for a specific symbol, newest first, with decision badges and risk flags.
+- **Signal + Decisions** (`/signals/{agent}/{symbol}/{index}`) — Full signal JSON and backing decisions from the same time window.
+- **Chat** (`/chat`) — Ask questions about your portfolio. Uses the same Azure OpenAI model with recent decisions as context.
+
+---
+
+## Running Locally
+
+### Prerequisites
+
+1. **Python 3.12+**
+2. **Azure AI Foundry Project** with access to a model deployment (e.g. `gpt-5.1`, `gpt-5.4-mini`)
+3. **Azure OpenAI API Key** - Get your API key from Azure Portal
+4. **Azure CosmosDB Account** - See [Azure CosmosDB Setup](#azure-cosmosdb-setup) below
+
+### Setup
+
+#### 1. Create Virtual Environment and Install Dependencies
+
+```bash
+python -m venv venv
+source venv/bin/activate 
+pip install -r requirements.txt
+playwright install chromium
+```
+
+This installs:
+- `agent-framework[foundry]` - Microsoft Agent Framework with Foundry support
+- `playwright` - Headless Chromium for TradingView data fetching
+- `pyyaml`, `croniter`, `python-dotenv` - Configuration and scheduling
+
+#### 2. Configure Environment Variables
+
+Set your Azure AI Project and CosmosDB credentials:
+
+```bash
+# Azure AI / OpenAI
+export AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com"
+export MODEL_DEPLOYMENT="gpt-5.1"  # or "gpt-5.4-mini"
+export AZURE_OPENAI_API_KEY="your-api-key-here"
+
+# CosmosDB (from provisioning script output or Azure Portal)
+export COSMOSDB_ENDPOINT="https://your-account.documents.azure.com:443/"
+export COSMOSDB_KEY="your-primary-key"
+
+# No API key needed for TradingView — data is free via Playwright browser automation
+```
+
+#### 3. Set Up Azure CosmosDB
+
+See the [Azure CosmosDB Setup](#azure-cosmosdb-setup) section below for provisioning instructions.
+
+#### 4. Configure Symbols
+
+Symbols and positions are managed via the **web dashboard** or the CosmosDB API. Each symbol has:
+- **Watchlist flags**: `covered_call` and `cash_secured_put` (true/false)
+- **Positions**: Open call/put positions with strike, expiration, and status
+
+The exchange prefix is used to construct TradingView URLs (e.g., `NYSE` + `MO` → `https://www.tradingview.com/symbols/NYSE-MO/`).
+
+#### 5. Adjust Configuration (Optional)
+
+Edit `config.yaml` to customize:
+
+```yaml
+azure:
+  project_endpoint: "${AZURE_AI_PROJECT_ENDPOINT}"
+  model_deployment: "${MODEL_DEPLOYMENT}"  # From env variable (e.g. gpt-5.1, gpt-5.4-mini)
+  api_key: "${AZURE_OPENAI_API_KEY}"
+
+cosmosdb:
+  endpoint: "${COSMOSDB_ENDPOINT}"
+  key: "${COSMOSDB_KEY}"
+  database: "stock-options-manager"
+
+context:
+  max_decision_entries: 2               # Recent decisions injected per symbol (0=none, max 5). Each includes signal status.
+  decision_ttl_days: 90                 # Auto-cleanup old decisions
+
+scheduler:
+  cron: "0 9-16/2 * * 1-5"               # Cron expression (e.g. every 2h, Mon-Fri 9am-4pm)
+```
+
+### Running
+
+#### Full app (web dashboard + scheduler)
+
+```bash
+python run.py
+```
+
+Opens the dashboard at http://localhost:8000 and starts the agent scheduler in a background thread. Press `Ctrl+C` to stop both.
+
+#### Web dashboard only
+
+```bash
+python run.py --web-only
+```
+
+#### Scheduler only (no web UI)
+
+```bash
+python run.py --scheduler-only
+```
+
+#### Options
+
+| Flag | Description |
+|------|-------------|
+| `--web-only` | Start only the web dashboard (no scheduler) |
+| `--scheduler-only` | Start only the scheduler (no web) |
+| `--port PORT` | Override the web server port (default: from `config.yaml` or 8000) |
+
+The dashboard runs on `http://localhost:8000` by default (configurable in `config.yaml` under `web:`).
+
+### Running with Docker
+
+Build the image (pre-installs Playwright + Chromium — no Node.js needed):
+
+```bash
+docker build -t stock-options-manager .
+```
+
+Run with CosmosDB credentials:
+
+```bash
+docker run -d --name stock-options-manager \
+  -p 8000:8000 \
+  -e AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com" \
+  -e MODEL_DEPLOYMENT="gpt-5.1" \
+  -e AZURE_OPENAI_API_KEY="your-api-key-here" \
+  -e COSMOSDB_ENDPOINT="https://your-account.documents.azure.com:443/" \
+  -e COSMOSDB_KEY="your-primary-key" \
+  stock-options-manager
+```
+
+| Variable | Purpose |
+|---|---|
+| `AZURE_AI_PROJECT_ENDPOINT` | Azure AI Foundry project endpoint |
+| `MODEL_DEPLOYMENT` | Model name (e.g. `gpt-5.1`, `gpt-5.4-mini`) |
+| `AZURE_OPENAI_API_KEY` | Azure OpenAI API key for authentication |
+| `COSMOSDB_ENDPOINT` | CosmosDB account endpoint |
+| `COSMOSDB_KEY` | CosmosDB primary key |
+
+View logs:
+
+```bash
+docker logs -f stock-options-manager
+```
+
+Pass flags (e.g. web-only mode):
+
+```bash
+docker run -d --name stock-options-manager-web \
+  -p 8000:8000 \
+  -e AZURE_AI_PROJECT_ENDPOINT="..." \
+  -e MODEL_DEPLOYMENT="gpt-5.1" \
+  -e AZURE_OPENAI_API_KEY="your-api-key-here" \
+  -e COSMOSDB_ENDPOINT="..." \
+  -e COSMOSDB_KEY="..." \
+  stock-options-manager --web-only
+```
+
+---
+
+## Azure Deployment
 
 ### Prerequisites
 
@@ -537,6 +540,8 @@ az containerapp update \
   --image "$IMAGE"
 ```
 
+---
+
 ## Environment Variables
 
 | Variable | Required | Description |
@@ -578,9 +583,8 @@ The agent instructions are defined in separate files:
 
 All instructions assume pre-fetched TradingView data — the LLM receives market data as text and performs analysis only (no browser tools).
 
-## Technical Details
+### SDK Information
 
-### SDK Migration
 This project uses the **Microsoft Agent Framework** (`agent-framework` package from https://github.com/microsoft/agent-framework).
 
 Key components:
