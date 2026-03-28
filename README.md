@@ -1,6 +1,6 @@
 # Stock Options Manager
 
-Periodic options trading analysis using Microsoft Agent Framework with Playwright-based data fetching.
+Periodic options trading analysis using Microsoft Agent Framework with Playwright-based data fetching. All data — watchlists, positions, decisions, and signals — is stored in **Azure CosmosDB** (NoSQL) with a symbol-centric partition model.
 
 ## Architecture
 
@@ -14,6 +14,8 @@ The first two agents (sell-side) decide whether to **open** new positions. The l
 
 Both sell-side agents use the Microsoft Agent Framework (`agent-framework`) with TradingView as the data source. Market data is pre-fetched deterministically via [Playwright](https://playwright.dev/python/) (headless Chromium) and passed to the LLM for analysis — the LLM never touches the browser directly.
 
+**Storage backend:** Azure CosmosDB with a single `symbols` container. Each symbol is a partition key containing three document types: `symbol_config` (watchlist flags + positions), `decision` (full audit trail), and `signal` (actionable alerts). See the [Azure CosmosDB Setup](#azure-cosmosdb-setup) section for provisioning.
+
 ## How It Works
 
 End-to-end flow for each scheduled run:
@@ -21,42 +23,42 @@ End-to-end flow for each scheduled run:
 ```
 Scheduler (main.py)
   │
-  ├─ Covered Call Agent
-  │    for each symbol in data/covered_call_symbols.txt:
-  │      1. Load per-symbol context (past decisions + signals)
+  ├─ Query CosmosDB for symbols with watchlist.covered_call = true
+  │    for each symbol:
+  │      1. Load per-symbol context (recent decisions + signals from CosmosDB)
   │      2. Pre-fetch TradingView data (overview, technicals, forecast, options chain)
   │      3. LLM analyzes pre-fetched data → structured JSON decision
-  │      4. Log decision to JSONL; if SELL → also log to signal file
+  │      4. Write decision to CosmosDB; if SELL → also write signal document
   │
-  ├─ Cash Secured Put Agent
-  │    (same loop, different symbols file + instructions)
+  ├─ Query CosmosDB for symbols with watchlist.cash_secured_put = true
+  │    (same loop, different agent instructions)
   │
-  ├─ Open Call Monitor
-  │    for each position in data/opened_calls.txt:
-  │      1. Parse position (symbol, strike, expiration)
+  ├─ Query CosmosDB for symbols with active call positions
+  │    for each position:
+  │      1. Load position details from symbol_config
   │      2. Pre-fetch TradingView data
   │      3. LLM assesses assignment risk → WAIT or ROLL decision
-  │      4. Log decision; if ROLL/CLOSE → also log to signal file
+  │      4. Write decision to CosmosDB; if ROLL/CLOSE → also write signal
   │
-  └─ Open Put Monitor
-       (same loop, different positions file + instructions)
+  └─ Query CosmosDB for symbols with active put positions
+       (same loop, different agent instructions)
 ```
 
 **Data gathering:** Python pre-fetches ALL TradingView data deterministically — overview, technicals, forecast, and options chain — using the Playwright Python package driven from `tv_data_fetcher.py`. The LLM never touches the browser. It receives the data as text and only performs analysis. See [Pre-fetch Architecture](#pre-fetch-architecture-tradingview) below.
 
-**Per-symbol context injection:** Before each symbol is analyzed, the runner reads that symbol's recent decisions and signals from the JSONL logs and injects them into the prompt. The LLM sees only context for the symbol it's currently analyzing — not a mix of all symbols. Context limits are configurable in `config.yaml` (`context.max_decision_entries`, `context.max_signal_entries`).
+**Per-symbol context injection:** Before each symbol is analyzed, the runner reads that symbol's recent decisions and signals from CosmosDB and injects them into the prompt. The LLM sees only context for the symbol it's currently analyzing — not a mix of all symbols. Context limits are configurable in `config.yaml` (`context.max_decision_entries`, `context.max_signal_entries`).
 
-**Output:** Every symbol produces a decision (SELL, WAIT, or HOLD) written to the decision log. Only SELL decisions are additionally written to the signal log — the actionable alerts that downstream systems watch. Position monitors produce WAIT or ROLL decisions, with ROLL/CLOSE written to their signal logs.
+**Output:** Every symbol produces a decision (SELL, WAIT, or HOLD) written to CosmosDB as a `decision` document. Only SELL decisions also produce a `signal` document — the actionable alerts that the dashboard and downstream systems watch. Position monitors produce WAIT or ROLL decisions, with ROLL/CLOSE decisions creating signal documents.
 
 ## Key Concepts
 
 ### Decision vs Signal
 
 **Sell-side agents (Covered Call, Cash Secured Put):**
-A **decision** is recorded for EVERY symbol on EVERY run. Possible values: `SELL`, `WAIT`, or `HOLD`. The decision log is the complete audit trail. A **signal** is the subset of decisions where the action is `SELL` — the actionable alerts.
+A **decision** is recorded for EVERY symbol on EVERY run as a `decision` document in CosmosDB. Possible values: `SELL`, `WAIT`, or `HOLD`. The decision collection is the complete audit trail. A **signal** is the subset of decisions where the action is `SELL` — stored as a separate `signal` document for efficient querying.
 
 **Position monitors (Open Call Monitor, Open Put Monitor):**
-A **decision** is recorded for EVERY position on EVERY run. Possible values: `WAIT`, `ROLL_UP`, `ROLL_DOWN`, `ROLL_OUT`, `ROLL_UP_AND_OUT`, `ROLL_DOWN_AND_OUT`, or `CLOSE`. A **signal** is any decision that is NOT `WAIT` — any roll or close action that requires attention.
+A **decision** is recorded for EVERY position on EVERY run. Possible values: `WAIT`, `ROLL_UP`, `ROLL_DOWN`, `ROLL_OUT`, `ROLL_UP_AND_OUT`, `ROLL_DOWN_AND_OUT`, or `CLOSE`. A **signal** is any decision that is NOT `WAIT` — any roll or close action that requires attention. Positions are stored within the symbol's `symbol_config` document in CosmosDB.
 
 ### Open Position Monitors
 
@@ -64,18 +66,12 @@ The Open Call Monitor and Open Put Monitor watch **existing** short options posi
 
 | | Sell-Side Agents | Position Monitors |
 |---|---|---|
-| **Input** | Symbol list (`EXCHANGE-SYMBOL`) | Position file (`EXCHANGE-SYMBOL,strike,expiration`) |
+| **Input** | Symbols with watchlist flag enabled in CosmosDB | Symbols with active positions in CosmosDB |
 | **Decisions** | SELL / WAIT | WAIT / ROLL_UP / ROLL_DOWN / ROLL_OUT / ROLL_UP_AND_OUT / ROLL_DOWN_AND_OUT / CLOSE |
 | **Signals** | SELL only | Any ROLL or CLOSE |
 | **Focus** | "Should I open a new position?" | "Is my existing position safe?" |
 
-**Position file format** (`data/opened_calls.txt` or `data/opened_puts.txt`):
-```
-# Open covered call positions (EXCHANGE-SYMBOL,strike,expiration)
-NYSE-MO,72,2026-04-24
-NASDAQ-AAPL,200,2026-05-16
-```
-Lines starting with `#` are comments. Empty lines are skipped. If the file has no uncommented lines, the monitor skips gracefully.
+Positions are managed via the web dashboard or API. Each position is stored within the symbol's `symbol_config` document in CosmosDB with type (call/put), strike, expiration, status, and notes. Position monitors only run for symbols with `status: "active"` positions.
 
 **Profit optimization:** When ALL market indicators unanimously show the position is deeply OTM with no risk catalysts, the monitor may recommend tightening the strike to collect additional premium (ROLL_DOWN for calls, ROLL_UP for puts). This requires unanimous indicator agreement across 9 conditions — conservative by design. Profit-optimization rolls are tagged with a `"profit_optimization"` risk flag to distinguish them from defensive rolls.
 
@@ -103,24 +99,33 @@ The agent is created with **no tools** — it only analyzes the pre-fetched data
 
 ### Per-symbol Context Filtering
 
-Each symbol's analysis only sees its OWN prior decisions and signals. The logger reads the JSONL file, filters entries by the `symbol` field, and returns only matching entries up to the configured limit. This prevents cross-contamination between symbols and keeps context focused.
+Each symbol's analysis sees its last N decisions (default 2, configurable 0–5). Each decision includes whether it triggered a signal via the `is_signal` field — there is no separate signal configuration. The context provider queries CosmosDB within the symbol's partition, returning only matching entries up to the configured limit. This prevents cross-contamination between symbols and keeps context focused.
 
 Configurable in `config.yaml`:
 ```yaml
 context:
-  max_decision_entries: 5   # Recent decisions injected per symbol
-  max_signal_entries: 1     # Recent signals injected per symbol
+  max_decision_entries: 2   # Recent decisions to inject as agent context (0=none, max 5). Each decision includes its signal status.
+  decision_ttl_days: 90
 ```
 
-### JSONL Output Format
+### CosmosDB Document Model
 
-All output is [JSON Lines](https://jsonlines.org/) — one JSON object per line. Machine-parseable for downstream automation. Files use the `.jsonl` extension.
+All data is stored in Azure CosmosDB using three document types within a single `symbols` container, partitioned by `/symbol`:
+
+| Document Type | Purpose | Growth |
+|---|---|---|
+| `symbol_config` | One per symbol — watchlist flags, positions, metadata | Static (updated, not appended) |
+| `decision` | One per symbol per agent run — full analysis output | ~20/day per symbol |
+| `signal` | One per actionable decision (SELL, ROLL, CLOSE) | ~1-5/week per symbol |
+
+Decisions older than 90 days can be configured for TTL-based cleanup. Signals are kept indefinitely for audit.
 
 ## Prerequisites
 
 1. **Python 3.12+**
 2. **Azure AI Foundry Project** with access to a model deployment (e.g. `gpt-5.1`, `gpt-5.4-mini`)
 3. **Azure OpenAI API Key** - Get your API key from Azure Portal
+4. **Azure CosmosDB Account** - See [Azure CosmosDB Setup](#azure-cosmosdb-setup) below
 
 ## Setup
 
@@ -140,48 +145,34 @@ This installs:
 
 ### 2. Configure Environment Variables
 
-Set your Azure AI Project endpoint and API key:
+Set your Azure AI Project and CosmosDB credentials:
 
 ```bash
+# Azure AI / OpenAI
 export AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com"
 export MODEL_DEPLOYMENT="gpt-5.1"  # or "gpt-5.4-mini"
 export AZURE_OPENAI_API_KEY="your-api-key-here"
 
+# CosmosDB (from provisioning script output or Azure Portal)
+export COSMOSDB_ENDPOINT="https://your-account.documents.azure.com:443/"
+export COSMOSDB_KEY="your-primary-key"
+
 # No API key needed for TradingView — data is free via Playwright browser automation
 ```
 
-### 3. Configure Symbols
+### 3. Set Up Azure CosmosDB
 
-Edit the symbol files to analyze your desired stocks:
+See the [Azure CosmosDB Setup](#azure-cosmosdb-setup) section below for provisioning instructions.
 
-- `data/covered_call_symbols.txt` - Stocks for covered call analysis
-- `data/cash_secured_put_symbols.txt` - Stocks for cash secured put analysis
+### 4. Configure Symbols
 
-One symbol per line, in `EXCHANGE-SYMBOL` format:
-```
-# Format: EXCHANGE-SYMBOL
-NASDAQ-AAPL
-NYSE-AA
-NASDAQ-MSFT
-```
+Symbols and positions are managed via the **web dashboard** or the CosmosDB API. Each symbol has:
+- **Watchlist flags**: `covered_call` and `cash_secured_put` (true/false)
+- **Positions**: Open call/put positions with strike, expiration, and status
 
-The exchange prefix is used to construct TradingView URLs (e.g., `NASDAQ-AAPL` → `https://www.tradingview.com/symbols/NASDAQ-AAPL/`).
+The exchange prefix is used to construct TradingView URLs (e.g., `NYSE` + `MO` → `https://www.tradingview.com/symbols/NYSE-MO/`).
 
-**Position files** (for Open Position Monitors):
-
-- `data/opened_calls.txt` - Open covered call positions to monitor
-- `data/opened_puts.txt` - Open cash-secured put positions to monitor
-
-One position per line, in `EXCHANGE-SYMBOL,strike,expiration` format:
-```
-# Open covered call positions (EXCHANGE-SYMBOL,strike,expiration)
-NYSE-MO,72,2026-04-24
-NASDAQ-AAPL,200,2026-05-16
-```
-
-Position monitors only run when there are uncommented lines in the file. Start with all lines commented out and uncomment when you have open positions to track.
-
-### 4. Adjust Configuration (Optional)
+### 5. Adjust Configuration (Optional)
 
 Edit `config.yaml` to customize:
 
@@ -189,33 +180,20 @@ Edit `config.yaml` to customize:
 azure:
   project_endpoint: "${AZURE_AI_PROJECT_ENDPOINT}"
   model_deployment: "${MODEL_DEPLOYMENT}"  # From env variable (e.g. gpt-5.1, gpt-5.4-mini)
+  api_key: "${AZURE_OPENAI_API_KEY}"
+
+cosmosdb:
+  endpoint: "${COSMOSDB_ENDPOINT}"
+  key: "${COSMOSDB_KEY}"
+  database: "stock-options-manager"
 
 context:
   max_decision_entries: 5               # Recent decisions injected per symbol
   max_signal_entries: 1                 # Recent signals injected per symbol
+  decision_ttl_days: 90                 # Auto-cleanup old decisions
 
 scheduler:
   cron: "0 9-16/2 * * 1-5"               # Cron expression (e.g. every 2h, Mon-Fri 9am-4pm)
-
-covered_call:
-  symbols_file: "data/covered_call_symbols.txt"
-  decision_log: "logs/covered_call_decisions.jsonl"
-  signal_log: "logs/covered_call_signals.jsonl"
-
-cash_secured_put:
-  symbols_file: "data/cash_secured_put_symbols.txt"
-  decision_log: "logs/cash_secured_put_decisions.jsonl"
-  signal_log: "logs/cash_secured_put_signals.jsonl"
-
-open_call_monitor:
-  positions_file: "data/opened_calls.txt"
-  decision_log: "logs/open_call_monitor_decisions.jsonl"
-  signal_log: "logs/open_call_monitor_signals.jsonl"
-
-open_put_monitor:
-  positions_file: "data/opened_puts.txt"
-  decision_log: "logs/open_put_monitor_decisions.jsonl"
-  signal_log: "logs/open_put_monitor_signals.jsonl"
 ```
 
 ## Running
@@ -255,47 +233,47 @@ The dashboard runs on `http://localhost:8000` by default (configurable in `confi
 Build the image (pre-installs Playwright + Chromium — no Node.js needed):
 
 ```bash
-docker build -t options-agent .
+docker build -t stock-options-manager .
 ```
 
-Run with volume mounts for data persistence:
+Run with CosmosDB credentials:
 
 ```bash
-docker run -d --name options-agent \
+docker run -d --name stock-options-manager \
   -p 8000:8000 \
-  -v $(pwd)/data:/app/data \
-  -v $(pwd)/logs:/app/logs \
   -e AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com" \
   -e MODEL_DEPLOYMENT="gpt-5.1" \
   -e AZURE_OPENAI_API_KEY="your-api-key-here" \
-  options-agent
+  -e COSMOSDB_ENDPOINT="https://your-account.documents.azure.com:443/" \
+  -e COSMOSDB_KEY="your-primary-key" \
+  stock-options-manager
 ```
 
-| Mount / Variable | Purpose |
+| Variable | Purpose |
 |---|---|
-| `data/` | Watchlist and position files (user-editable) |
-| `logs/` | JSONL decision and signal logs (persisted across restarts) |
 | `AZURE_AI_PROJECT_ENDPOINT` | Azure AI Foundry project endpoint |
 | `MODEL_DEPLOYMENT` | Model name (e.g. `gpt-5.1`, `gpt-5.4-mini`) |
 | `AZURE_OPENAI_API_KEY` | Azure OpenAI API key for authentication |
+| `COSMOSDB_ENDPOINT` | CosmosDB account endpoint |
+| `COSMOSDB_KEY` | CosmosDB primary key |
 
 View logs:
 
 ```bash
-docker logs -f options-agent
+docker logs -f stock-options-manager
 ```
 
 Pass flags (e.g. web-only mode):
 
 ```bash
-docker run -d --name options-agent-web \
+docker run -d --name stock-options-manager-web \
   -p 8000:8000 \
-  -v $(pwd)/data:/app/data \
-  -v $(pwd)/logs:/app/logs \
   -e AZURE_AI_PROJECT_ENDPOINT="..." \
   -e MODEL_DEPLOYMENT="gpt-5.1" \
   -e AZURE_OPENAI_API_KEY="your-api-key-here" \
-  options-agent --web-only
+  -e COSMOSDB_ENDPOINT="..." \
+  -e COSMOSDB_KEY="..." \
+  stock-options-manager --web-only
 ```
 
 **Pages:**
@@ -307,23 +285,19 @@ docker run -d --name options-agent-web \
 
 ## Output
 
-All logs use [JSONL format](#jsonl-output-format) — one JSON object per line.
+All decisions and signals are stored in Azure CosmosDB. The web dashboard provides a UI for browsing them, or query directly via the CosmosDB Data Explorer.
 
-### Decision Logs (complete audit trail)
-- `logs/covered_call_decisions.jsonl` - All covered call analysis results
-- `logs/cash_secured_put_decisions.jsonl` - All cash secured put analysis results
-- `logs/open_call_monitor_decisions.jsonl` - All open call position monitor results
-- `logs/open_put_monitor_decisions.jsonl` - All open put position monitor results
+### Decision Documents (complete audit trail)
 
-### Signal Logs (actionable alerts only)
-- `logs/covered_call_signals.jsonl` - Only SELL signals for covered calls
-- `logs/cash_secured_put_signals.jsonl` - Only SELL signals for cash secured puts
-- `logs/open_call_monitor_signals.jsonl` - Only ROLL/CLOSE signals for open calls
-- `logs/open_put_monitor_signals.jsonl` - Only ROLL/CLOSE signals for open puts
+Every agent run creates a `decision` document per symbol in CosmosDB. Query by `doc_type = "decision"` and filter by `agent_type` or `symbol`.
+
+### Signal Documents (actionable alerts only)
+
+Actionable decisions (SELL, ROLL, CLOSE) also create a `signal` document linked to the decision. Query by `doc_type = "signal"` for the dashboard's primary read path.
 
 ### Example Decision Object
 
-Each line in a `.jsonl` log is a self-contained JSON object:
+Each decision document in CosmosDB:
 
 ```json
 {
@@ -341,19 +315,22 @@ Each line in a `.jsonl` log is a self-contained JSON object:
 }
 ```
 
-For `SELL` decisions, `strike`, `expiration`, and premium fields are populated. The same JSON object is written to both the decision log and the signal log.
+For `SELL` decisions, `strike`, `expiration`, and premium fields are populated. A corresponding `signal` document is also created with the actionable subset of the decision data.
 
 ## Project Structure
 
 ```
-options-agent/
-├── config.yaml                           # All configuration (symbols, scheduling, context limits)
+stock-options-manager/
+├── config.yaml                           # All configuration (CosmosDB, scheduling, context limits)
 ├── src/
 │   ├── __init__.py
 │   ├── main.py                           # Entry point — scheduler with immediate + periodic runs
 │   ├── config.py                         # YAML config loader with env var substitution and validation
+│   ├── cosmos_db.py                      # CosmosDB service layer — all database operations
+│   ├── context.py                        # Context injection adapter — formats CosmosDB data for prompts
 │   ├── agent_runner.py                   # Core execution engine — TradingView pre-fetch + per-symbol loop
-│   ├── tv_data_fetcher.py                # TradingView pre-fetch module — drives Playwright from Python│   ├── covered_call_agent.py             # Covered call wrapper
+│   ├── tv_data_fetcher.py                # TradingView pre-fetch module — drives Playwright from Python
+│   ├── covered_call_agent.py             # Covered call wrapper
 │   ├── cash_secured_put_agent.py         # Cash secured put wrapper
 │   ├── open_call_monitor_agent.py        # Open call position monitor wrapper
 │   ├── open_put_monitor_agent.py         # Open put position monitor wrapper
@@ -361,22 +338,17 @@ options-agent/
 │   ├── tv_cash_secured_put_instructions.py # TradingView cash secured put instructions (no-tools variant)
 │   ├── tv_open_call_instructions.py      # TradingView open call monitor instructions
 │   ├── tv_open_put_instructions.py       # TradingView open put monitor instructions
-│   └── logger.py                         # JSONL read/write with per-symbol filtering
-├── data/
-│   ├── covered_call_symbols.txt          # Symbols for covered call analysis (EXCHANGE-SYMBOL format)
-│   ├── cash_secured_put_symbols.txt      # Symbols for cash secured put analysis
-│   ├── opened_calls.txt                  # Open call positions to monitor (EXCHANGE-SYMBOL,strike,expiration)
-│   └── opened_puts.txt                   # Open put positions to monitor
-├── logs/                                 # Created at runtime — JSONL decision + signal logs
+├── scripts/
+│   └── provision_cosmosdb.sh             # Azure CosmosDB provisioning via az CLI
 ├── web/
 │   ├── __init__.py
-│   ├── app.py                            # FastAPI web dashboard — all routes + JSONL utilities
+│   ├── app.py                            # FastAPI web dashboard — all routes + CosmosDB queries
 │   ├── templates/                        # Jinja2 HTML templates (dark trading theme)
 │   │   ├── base.html                     # Base layout with nav
 │   │   ├── dashboard.html                # Main dashboard — signal overview + activity feed
 │   │   ├── signals.html                  # Signal list for agent+symbol
 │   │   ├── signal_detail.html            # Single signal + backing decisions
-│   │   ├── settings.html                 # Data file editor
+│   │   ├── settings.html                 # Settings (cron expression)
 │   │   └── chat.html                     # Chat interface
 │   └── static/
 │       ├── style.css                     # Dark trading theme CSS
@@ -388,7 +360,7 @@ options-agent/
 
 ## Deploy to Azure Container Apps
 
-This section deploys the Stock Options Manager to Azure Container Apps with persistent storage via Azure Files. It assumes your Microsoft Foundry project and model deployment already exist.
+This section deploys the Stock Options Manager to Azure Container Apps. It assumes your Microsoft Foundry project, model deployment, and CosmosDB account already exist.
 
 ### 1. Set Environment Variables
 
@@ -396,7 +368,6 @@ This section deploys the Stock Options Manager to Azure Container Apps with pers
 # Azure resource configuration
 export RESOURCE_GROUP="rg-stock-options-manager"
 export LOCATION="swedencentral"
-export STORAGE_ACCOUNT="stoptionsmanagerdsr"        # must be globally unique, lowercase, no dashes
 export CONTAINER_ENV="cae-stock-options-manager"
 export CONTAINER_APP="ca-stock-options-manager"
 
@@ -404,6 +375,10 @@ export CONTAINER_APP="ca-stock-options-manager"
 export AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com"
 export MODEL_DEPLOYMENT="gpt-5.1"
 export AZURE_OPENAI_API_KEY="your-api-key-here"
+
+# CosmosDB (from provisioning script output)
+export COSMOSDB_ENDPOINT="https://your-account.documents.azure.com:443/"
+export COSMOSDB_KEY="your-primary-key"
 
 # Container image (built by GitHub Actions)
 export IMAGE="ghcr.io/dsanchor/stock-options-manager:latest"
@@ -417,29 +392,7 @@ az group create \
   --location $LOCATION
 ```
 
-### 3. Create Azure Files Storage Account and File Shares
-
-```bash
-# Create storage account
-az storage account create \
-  --name $STORAGE_ACCOUNT \
-  --resource-group $RESOURCE_GROUP \
-  --location $LOCATION \
-  --sku Standard_LRS \
-  --kind StorageV2
-
-# Get storage account key
-export STORAGE_KEY=$(az storage account keys list \
-  --account-name $STORAGE_ACCOUNT \
-  --resource-group $RESOURCE_GROUP \
-  --query "[0].value" -o tsv)
-
-# Create file shares for data and logs
-az storage share create --name data --account-name $STORAGE_ACCOUNT --account-key $STORAGE_KEY
-az storage share create --name logs --account-name $STORAGE_ACCOUNT --account-key $STORAGE_KEY
-```
-
-### 4. Create Container Apps Environment with Storage Mounts
+### 3. Create Container Apps Environment
 
 ```bash
 # Create the Container Apps environment
@@ -447,28 +400,9 @@ az containerapp env create \
   --name $CONTAINER_ENV \
   --resource-group $RESOURCE_GROUP \
   --location $LOCATION
-
-# Add Azure Files storage to the environment
-az containerapp env storage set \
-  --name $CONTAINER_ENV \
-  --resource-group $RESOURCE_GROUP \
-  --storage-name optionsdata \
-  --azure-file-account-name $STORAGE_ACCOUNT \
-  --azure-file-account-key $STORAGE_KEY \
-  --azure-file-share-name data \
-  --access-mode ReadWrite
-
-az containerapp env storage set \
-  --name $CONTAINER_ENV \
-  --resource-group $RESOURCE_GROUP \
-  --storage-name optionslogs \
-  --azure-file-account-name $STORAGE_ACCOUNT \
-  --azure-file-account-key $STORAGE_KEY \
-  --azure-file-share-name logs \
-  --access-mode ReadWrite
 ```
 
-### 5. Deploy the Container App
+### 4. Deploy the Container App
 
 ```bash
 az containerapp create \
@@ -485,52 +419,14 @@ az containerapp create \
   --env-vars \
     AZURE_AI_PROJECT_ENDPOINT="$AZURE_AI_PROJECT_ENDPOINT" \
     MODEL_DEPLOYMENT="$MODEL_DEPLOYMENT" \
-    AZURE_OPENAI_API_KEY="$AZURE_OPENAI_API_KEY"
+    AZURE_OPENAI_API_KEY="$AZURE_OPENAI_API_KEY" \
+    COSMOSDB_ENDPOINT="$COSMOSDB_ENDPOINT" \
+    COSMOSDB_KEY="$COSMOSDB_KEY"
 ```
 
 > **Note:** If your GHCR package is private, add `--registry-username <github-username> --registry-password <github-pat>` with a PAT that has `read:packages` scope.
 
-Now add the volume mounts (requires a YAML update since `az containerapp create` doesn't support volume mounts inline):
-
-```bash
-# Export current app config
-az containerapp show \
-  --name $CONTAINER_APP \
-  --resource-group $RESOURCE_GROUP \
-  -o yaml > app.yaml
-```
-
-Edit `app.yaml` to add volumes and volume mounts under the template section:
-
-```yaml
-template:
-  volumes:
-    - name: data-volume
-      storageName: optionsdata
-      storageType: AzureFile
-    - name: logs-volume
-      storageName: optionslogs
-      storageType: AzureFile
-  containers:
-    - name: ca-stock-options-manager
-      # ... existing properties ...
-      volumeMounts:
-        - volumeName: data-volume
-          mountPath: /app/data
-        - volumeName: logs-volume
-          mountPath: /app/logs
-```
-
-Apply the updated config:
-
-```bash
-az containerapp update \
-  --name $CONTAINER_APP \
-  --resource-group $RESOURCE_GROUP \
-  --yaml app.yaml
-```
-
-### 6. Verify Deployment
+### 5. Verify Deployment
 
 ```bash
 # Get the app URL
@@ -559,10 +455,164 @@ az containerapp update \
   --image $IMAGE
 ```
 
+## Azure CosmosDB Setup
+
+The application requires an Azure CosmosDB account with a `symbols` container. You can provision it automatically or set it up manually.
+
+### Option A: Automated Provisioning (Recommended)
+
+**Prerequisites:**
+- [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/install-azure-cli) installed
+- Logged in: `az login`
+- Sufficient permissions to create resources
+
+**Run the provisioning script:**
+
+```bash
+bash scripts/provision_cosmosdb.sh
+```
+
+This creates:
+1. Resource group `rg-stock-options-manager`
+2. CosmosDB account (serverless) `cosmos-stock-options`
+3. Database `stock-options-manager`
+4. Container `symbols` with partition key `/symbol`
+5. Custom indexing policy optimized for query patterns
+
+The script outputs the `COSMOSDB_ENDPOINT` and `COSMOSDB_KEY` values. Set them as environment variables:
+
+```bash
+export COSMOSDB_ENDPOINT="https://cosmos-stock-options.documents.azure.com:443/"
+export COSMOSDB_KEY="<primary-key-from-script-output>"
+```
+
+**Customizing resource names:** Override defaults with environment variables before running:
+
+```bash
+export RESOURCE_GROUP="my-rg"
+export LOCATION="westus2"
+export COSMOSDB_ACCOUNT="my-cosmos-account"
+bash scripts/provision_cosmosdb.sh
+```
+
+### Inline az CLI Commands
+
+If you prefer to run each step individually (or want to see exactly what the script does), here are the commands:
+
+> **Note:** Serverless mode is recommended for development and low-traffic workloads — you pay only per request with no minimum cost. It's the cheapest option for this use case.
+
+```bash
+# ── Variables ────────────────────────────────────────────────────────────────
+RESOURCE_GROUP="${RESOURCE_GROUP:-rg-stock-options-manager}"
+LOCATION="${LOCATION:-eastus}"
+COSMOSDB_ACCOUNT="${COSMOSDB_ACCOUNT:-cosmos-stock-options}"
+DATABASE_NAME="${DATABASE_NAME:-stock-options-manager}"
+CONTAINER_NAME="${CONTAINER_NAME:-symbols}"
+
+# ── 1. Create resource group ────────────────────────────────────────────────
+az group create \
+  --name "$RESOURCE_GROUP" \
+  --location "$LOCATION" \
+  -o none
+
+# ── 2. Create CosmosDB account (serverless — pay-per-request) ───────────────
+az cosmosdb create \
+  --name "$COSMOSDB_ACCOUNT" \
+  --resource-group "$RESOURCE_GROUP" \
+  --kind GlobalDocumentDB \
+  --capabilities EnableServerless \
+  --default-consistency-level Session \
+  --locations regionName="$LOCATION" failoverPriority=0 isZoneRedundant=false \
+  -o none
+
+# ── 3. Create database ──────────────────────────────────────────────────────
+az cosmosdb sql database create \
+  --account-name "$COSMOSDB_ACCOUNT" \
+  --resource-group "$RESOURCE_GROUP" \
+  --name "$DATABASE_NAME" \
+  -o none
+
+# ── 4. Create container with partition key /symbol ──────────────────────────
+az cosmosdb sql container create \
+  --account-name "$COSMOSDB_ACCOUNT" \
+  --resource-group "$RESOURCE_GROUP" \
+  --database-name "$DATABASE_NAME" \
+  --name "$CONTAINER_NAME" \
+  --partition-key-path "/symbol" \
+  --partition-key-version 2 \
+  -o none
+
+# ── 5. Apply custom indexing policy ─────────────────────────────────────────
+#   Index query fields: symbol, doc_type, timestamp, watchlist flags, agent_type, decision
+#   Exclude large blobs: reason, raw_response, analysis_context
+az cosmosdb sql container update \
+  --account-name "$COSMOSDB_ACCOUNT" \
+  --resource-group "$RESOURCE_GROUP" \
+  --database-name "$DATABASE_NAME" \
+  --name "$CONTAINER_NAME" \
+  --idx '{
+    "indexingMode": "consistent",
+    "automatic": true,
+    "includedPaths": [
+      {"path": "/symbol/?"},
+      {"path": "/doc_type/?"},
+      {"path": "/timestamp/?"},
+      {"path": "/watchlist/covered_call/?"},
+      {"path": "/watchlist/cash_secured_put/?"},
+      {"path": "/agent_type/?"},
+      {"path": "/decision/?"}
+    ],
+    "excludedPaths": [
+      {"path": "/reason/*"},
+      {"path": "/raw_response/*"},
+      {"path": "/analysis_context/*"},
+      {"path": "/*"}
+    ]
+  }' \
+  -o none
+
+# ── 6. Retrieve endpoint and key ────────────────────────────────────────────
+az cosmosdb show \
+  --name "$COSMOSDB_ACCOUNT" \
+  --resource-group "$RESOURCE_GROUP" \
+  --query documentEndpoint \
+  --output tsv
+
+az cosmosdb keys list \
+  --name "$COSMOSDB_ACCOUNT" \
+  --resource-group "$RESOURCE_GROUP" \
+  --query primaryMasterKey \
+  --output tsv
+```
+
+### Option B: Manual Setup via Azure Portal
+
+1. Go to **Azure Portal** → **Create a resource** → **Azure Cosmos DB** → **NoSQL**
+2. Create account with **serverless** capacity mode
+3. Create database: `stock-options-manager`
+4. Create container: `symbols` with partition key `/symbol`
+5. Go to **Keys** → copy the **URI** (endpoint) and **PRIMARY KEY**
+6. Set environment variables as shown above
+
+## Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `AZURE_AI_PROJECT_ENDPOINT` | Yes | Azure AI Foundry project endpoint |
+| `MODEL_DEPLOYMENT` | Yes | Model deployment name (e.g., `gpt-5.1`, `gpt-5.4-mini`) |
+| `AZURE_OPENAI_API_KEY` | Yes | Azure OpenAI API key |
+| `COSMOSDB_ENDPOINT` | Yes | CosmosDB account endpoint (e.g., `https://account.documents.azure.com:443/`) |
+| `COSMOSDB_KEY` | Yes | CosmosDB primary key |
+
 ## Troubleshooting
 
 ### "Environment variable AZURE_AI_PROJECT_ENDPOINT not set"
 Make sure you've exported the environment variable with your Azure AI Foundry project endpoint.
+
+### CosmosDB Connection Errors
+- Verify `COSMOSDB_ENDPOINT` and `COSMOSDB_KEY` are set correctly
+- Ensure the CosmosDB account, database (`stock-options-manager`), and container (`symbols`) exist
+- Run `bash scripts/provision_cosmosdb.sh` to create missing resources
 
 ### Playwright / Chromium Issues
 - Ensure Chromium is installed: `playwright install chromium`

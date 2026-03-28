@@ -11,6 +11,10 @@
     </div>
 </div>
 
+{% if error %}
+<div class="alert alert-error">⚠️ {{ error }}</div>
+{% endif %}
+
 <!-- Summary cards -->
 <div class="summary-row">
     <div class="summary-card">
@@ -53,7 +57,6 @@
         <h2>{{ agent.label }}</h2>
         <div style="display:flex; align-items:center; gap:0.5rem;">
             <button class="btn-trigger" data-agent="{{ agent.key }}" title="Run this agent now">▶ Run Now</button>
-    
         </div>
     </div>
     {% if agent.rows %}
@@ -77,7 +80,7 @@
             </thead>
             <tbody>
                 {% for row in agent.rows %}
-                <tr class="clickable-row" data-href="/signals/{{ agent.key }}/{{ row.key }}">
+                <tr class="clickable-row" data-href="/symbols/{{ row.symbol }}">
                     <td><strong>{{ row.display }}</strong></td>
                     <td class="num">{{ row.today }}</td>
                     <td class="num">{{ row.week }}</td>

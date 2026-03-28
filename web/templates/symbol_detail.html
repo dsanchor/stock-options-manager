@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+{% block title %}{{ symbol_doc.symbol }} — Stock Options Manager{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <a href="/symbols" class="back-link">← Symbols</a>
+    <h1>{{ symbol_doc.symbol }} — {{ symbol_doc.display_name }}</h1>
+    <p class="subtitle">
+        {{ symbol_doc.exchange }}
+        {% if symbol_doc.watchlist.covered_call %}<span class="badge badge-wait">CC</span>{% endif %}
+        {% if symbol_doc.watchlist.cash_secured_put %}<span class="badge badge-wait">CSP</span>{% endif %}
+    </p>
+</div>
+
+<!-- Positions -->
+<div class="card">
+    <div class="card-header">
+        <h2>Positions</h2>
+        <span class="card-badge">{{ symbol_doc.positions | length }} total</span>
+    </div>
+
+    {% if symbol_doc.positions %}
+    <div class="table-wrap">
+        <table id="positionsTable">
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Strike</th>
+                    <th>Expiration</th>
+                    <th>Status</th>
+                    <th>Opened</th>
+                    <th>Notes</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for pos in symbol_doc.positions %}
+                <tr class="{% if pos.status == 'closed' %}row-muted{% endif %}">
+                    <td><span class="badge badge-{{ 'sell' if pos.type == 'call' else 'info' }}">{{ pos.type | upper }}</span></td>
+                    <td class="mono">${{ pos.strike }}</td>
+                    <td class="mono">{{ pos.expiration }}</td>
+                    <td><span class="badge badge-{{ 'wait' if pos.status == 'active' else 'info' }}">{{ pos.status }}</span></td>
+                    <td class="mono">{{ pos.opened_at[:10] if pos.opened_at else "—" }}</td>
+                    <td>{{ pos.notes or "—" }}</td>
+                    <td>
+                        {% if pos.status == 'active' %}
+                        <button class="btn-sm" data-close-pos="{{ pos.position_id }}">Close</button>
+                        {% endif %}
+                        <button class="btn-sm btn-danger" data-delete-pos="{{ pos.position_id }}">Delete</button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No positions recorded.</p>
+    {% endif %}
+
+    <!-- Add Position form -->
+    <div class="form-section">
+        <h3>Add Position</h3>
+        <div class="form-inline-row">
+            <select id="posType" class="input-field" style="width:100px">
+                <option value="call">Call</option>
+                <option value="put">Put</option>
+            </select>
+            <input type="number" id="posStrike" placeholder="Strike" class="input-field" style="width:120px" step="0.5">
+            <input type="date" id="posExpiration" class="input-field" style="width:160px">
+            <input type="text" id="posNotes" placeholder="Notes (optional)" class="input-field" style="flex:1">
+            <button class="btn btn-primary" id="btnAddPosition">+ Add</button>
+        </div>
+        <div id="posError" class="alert alert-error" style="display:none; margin:0.75rem 0 0;"></div>
+        <div id="posSuccess" class="alert alert-success" style="display:none; margin:0.75rem 0 0;"></div>
+    </div>
+</div>
+
+<!-- Recent Decisions -->
+<div class="card">
+    <div class="card-header">
+        <h2>Recent Decisions</h2>
+        <span class="card-badge">{{ decisions | length }}</span>
+    </div>
+    {% if decisions %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Agent</th>
+                    <th>Decision</th>
+                    <th>Underlying</th>
+                    <th>Confidence</th>
+                    <th>Reason</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for d in decisions %}
+                <tr>
+                    <td class="mono">{{ d.timestamp[:19] }}</td>
+                    <td>{{ d._agent_label }}</td>
+                    <td><span class="badge badge-{{ d.decision | lower }}">{{ d.decision }}</span></td>
+                    <td class="mono">${{ d.underlying_price if d.underlying_price else "—" }}</td>
+                    <td><span class="confidence confidence-{{ d.confidence or 'medium' }}">{{ d.confidence or "—" }}</span></td>
+                    <td>{{ d.reason[:120] ~ ("…" if d.reason | length > 120 else "") if d.reason else "—" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No decisions yet for this symbol.</p>
+    {% endif %}
+</div>
+
+<!-- Recent Signals -->
+<div class="card">
+    <div class="card-header">
+        <h2>Recent Signals</h2>
+        <span class="card-badge">{{ signals | length }}</span>
+    </div>
+    {% if signals %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Agent</th>
+                    <th>Decision</th>
+                    <th>Strike</th>
+                    <th>Expiration</th>
+                    <th>Confidence</th>
+                    <th>Flags</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for sig in signals %}
+                <tr>
+                    <td class="mono">{{ sig.timestamp[:19] }}</td>
+                    <td>{{ sig._agent_label }}</td>
+                    <td><span class="badge badge-{{ (sig.decision | default('UNKNOWN', true)) | lower }}">{{ sig.decision | default("—", true) }}</span></td>
+                    <td class="mono">{% if sig.strike %}${{ sig.strike }}{% else %}—{% endif %}</td>
+                    <td class="mono">{{ sig.expiration or "—" }}</td>
+                    <td><span class="confidence confidence-{{ sig.confidence or 'medium' }}">{{ sig.confidence or "—" }}</span></td>
+                    <td>
+                        {% for flag in (sig.risk_flags or []) %}
+                        <span class="flag">{{ flag }}</span>
+                        {% endfor %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No signals yet for this symbol.</p>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    var SYMBOL = '{{ symbol_doc.symbol }}';
+
+    // Add position
+    document.getElementById('btnAddPosition').addEventListener('click', async function() {
+        var type = document.getElementById('posType').value;
+        var strike = document.getElementById('posStrike').value;
+        var expiration = document.getElementById('posExpiration').value;
+        var notes = document.getElementById('posNotes').value.trim();
+        var errEl = document.getElementById('posError');
+        var okEl = document.getElementById('posSuccess');
+        errEl.style.display = 'none';
+        okEl.style.display = 'none';
+
+        if (!strike || !expiration) {
+            errEl.textContent = 'Strike and expiration are required.';
+            errEl.style.display = 'block';
+            return;
+        }
+
+        try {
+            var res = await fetch('/api/symbols/' + SYMBOL + '/positions', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ type: type, strike: parseFloat(strike), expiration: expiration, notes: notes })
+            });
+            var data = await res.json();
+            if (!res.ok) {
+                errEl.textContent = data.error || 'Failed to add position.';
+                errEl.style.display = 'block';
+            } else {
+                okEl.textContent = 'Position added!';
+                okEl.style.display = 'block';
+                setTimeout(function() { window.location.reload(); }, 800);
+            }
+        } catch(e) {
+            errEl.textContent = 'Network error: ' + e.message;
+            errEl.style.display = 'block';
+        }
+    });
+
+    // Close position
+    document.querySelectorAll('[data-close-pos]').forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+            var posId = this.dataset.closePos;
+            if (!confirm('Close this position?')) return;
+            try {
+                var res = await fetch('/api/symbols/' + SYMBOL + '/positions/' + posId + '/close', { method: 'PUT' });
+                if (res.ok) {
+                    window.location.reload();
+                } else {
+                    var data = await res.json();
+                    alert('Error: ' + (data.error || 'Failed to close'));
+                }
+            } catch(e) {
+                alert('Network error: ' + e.message);
+            }
+        });
+    });
+
+    // Delete position
+    document.querySelectorAll('[data-delete-pos]').forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+            var posId = this.dataset.deletePos;
+            if (!confirm('Delete this position permanently?')) return;
+            try {
+                var res = await fetch('/api/symbols/' + SYMBOL + '/positions/' + posId, { method: 'DELETE' });
+                if (res.ok) {
+                    window.location.reload();
+                } else {
+                    var data = await res.json();
+                    alert('Error: ' + (data.error || 'Failed to delete'));
+                }
+            } catch(e) {
+                alert('Network error: ' + e.message);
+            }
+        });
+    });
+})();
+</script>
+{% endblock %}

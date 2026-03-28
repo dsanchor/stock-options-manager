@@ -3,32 +3,17 @@ azure:
   model_deployment: "${MODEL_DEPLOYMENT}" # options: "gpt-5.1", "gpt-5.4-mini"
   api_key: "${AZURE_OPENAI_API_KEY}"
 
+cosmosdb:
+  endpoint: "${COSMOSDB_ENDPOINT}"
+  key: "${COSMOSDB_KEY}"
+  database: "stock-options-manager"
+
 context:
-  max_decision_entries: 5   # How many recent decisions to inject as agent context
-  max_signal_entries: 1    # How many recent signals to inject as agent context
+  max_decision_entries: 2   # Recent decisions to inject as agent context (0=none, max 5). Each includes its signal if actionable.
+  decision_ttl_days: 90     # Decisions older than this are auto-expired via CosmosDB TTL
 
 scheduler:
-  cron: "0 14-21/2 * * 1-5"  # Cron expression: every 2 hours, market hours (Mon-Fri 14-21 Spain / 9-16 US) 
-
-covered_call:
-  symbols_file: "data/covered_call_symbols.txt"
-  decision_log: "logs/covered_call_decisions.jsonl"
-  signal_log: "logs/covered_call_signals.jsonl"
-
-cash_secured_put:
-  symbols_file: "data/cash_secured_put_symbols.txt"
-  decision_log: "logs/cash_secured_put_decisions.jsonl"
-  signal_log: "logs/cash_secured_put_signals.jsonl"
-
-open_call_monitor:
-  positions_file: "data/opened_calls.txt"
-  decision_log: "logs/open_call_monitor_decisions.jsonl"
-  signal_log: "logs/open_call_monitor_signals.jsonl"
-
-open_put_monitor:
-  positions_file: "data/opened_puts.txt"
-  decision_log: "logs/open_put_monitor_decisions.jsonl"
-  signal_log: "logs/open_put_monitor_signals.jsonl"
+  cron: "0 14-21/2 * * 1-5"  # Cron expression: every 2 hours, market hours (Mon-Fri 14-21 Spain / 9-16 US)
 
 web:
   host: "0.0.0.0"

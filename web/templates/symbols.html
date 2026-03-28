@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}Symbols — Stock Options Manager{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Symbols</h1>
+    <p class="subtitle">Manage your watchlist symbols and positions.</p>
+</div>
+
+<!-- Add Symbol form -->
+<div class="card">
+    <div class="card-header">
+        <h2>Add Symbol</h2>
+    </div>
+    <div id="addSymbolForm" class="form-inline-row">
+        <input type="text" id="newTicker" placeholder="Ticker (e.g. MO)" class="input-field" style="width:120px">
+        <input type="text" id="newExchange" placeholder="Exchange (e.g. NYSE)" class="input-field" style="width:140px">
+        <input type="text" id="newDisplayName" placeholder="Display name (optional)" class="input-field" style="flex:1">
+        <label class="toggle-label"><input type="checkbox" id="newCC"> CC</label>
+        <label class="toggle-label"><input type="checkbox" id="newCSP"> CSP</label>
+        <button class="btn btn-primary" id="btnAddSymbol">+ Add</button>
+    </div>
+    <div id="addSymbolError" class="alert alert-error" style="display:none; margin:0.75rem 1.25rem;"></div>
+    <div id="addSymbolSuccess" class="alert alert-success" style="display:none; margin:0.75rem 1.25rem;"></div>
+</div>
+
+<!-- Symbols table -->
+<div class="card">
+    <div class="card-header">
+        <h2>All Symbols</h2>
+        <span class="card-badge">{{ symbols | length }} total</span>
+    </div>
+    {% if symbols %}
+    <div class="table-wrap">
+        <table id="symbolsTable">
+            <thead>
+                <tr>
+                    <th>Ticker</th>
+                    <th>Exchange</th>
+                    <th>Display Name</th>
+                    <th>Covered Call</th>
+                    <th>Cash-Secured Put</th>
+                    <th class="num">Active Positions</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for sym in symbols %}
+                <tr data-symbol="{{ sym.symbol }}">
+                    <td><strong><a href="/symbols/{{ sym.symbol }}">{{ sym.symbol }}</a></strong></td>
+                    <td>{{ sym.exchange }}</td>
+                    <td>{{ sym.display_name }}</td>
+                    <td>
+                        <label class="switch">
+                            <input type="checkbox" class="toggle-cc" data-symbol="{{ sym.symbol }}"
+                                   {% if sym.watchlist.covered_call %}checked{% endif %}>
+                            <span class="slider"></span>
+                        </label>
+                    </td>
+                    <td>
+                        <label class="switch">
+                            <input type="checkbox" class="toggle-csp" data-symbol="{{ sym.symbol }}"
+                                   {% if sym.watchlist.cash_secured_put %}checked{% endif %}>
+                            <span class="slider"></span>
+                        </label>
+                    </td>
+                    <td class="num">{{ sym._active_count }}</td>
+                    <td>
+                        <a href="/symbols/{{ sym.symbol }}" class="btn-sm">View</a>
+                        <button class="btn-sm btn-danger" data-delete-symbol="{{ sym.symbol }}">Delete</button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No symbols configured. Add your first symbol above.</p>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    // Add symbol
+    document.getElementById('btnAddSymbol').addEventListener('click', async function() {
+        var ticker = document.getElementById('newTicker').value.trim().toUpperCase();
+        var exchange = document.getElementById('newExchange').value.trim().toUpperCase();
+        var displayName = document.getElementById('newDisplayName').value.trim();
+        var cc = document.getElementById('newCC').checked;
+        var csp = document.getElementById('newCSP').checked;
+        var errEl = document.getElementById('addSymbolError');
+        var okEl = document.getElementById('addSymbolSuccess');
+        errEl.style.display = 'none';
+        okEl.style.display = 'none';
+
+        if (!ticker || !exchange) {
+            errEl.textContent = 'Ticker and exchange are required.';
+            errEl.style.display = 'block';
+            return;
+        }
+
+        try {
+            var res = await fetch('/api/symbols', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    symbol: ticker, exchange: exchange,
+                    display_name: displayName || ticker,
+                    covered_call: cc, cash_secured_put: csp
+                })
+            });
+            var data = await res.json();
+            if (!res.ok) {
+                errEl.textContent = data.error || 'Failed to add symbol.';
+                errEl.style.display = 'block';
+            } else {
+                okEl.textContent = 'Added ' + ticker + ' successfully!';
+                okEl.style.display = 'block';
+                setTimeout(function() { window.location.reload(); }, 800);
+            }
+        } catch(e) {
+            errEl.textContent = 'Network error: ' + e.message;
+            errEl.style.display = 'block';
+        }
+    });
+
+    // Toggle watchlist flags
+    document.querySelectorAll('.toggle-cc, .toggle-csp').forEach(function(toggle) {
+        toggle.addEventListener('change', async function() {
+            var sym = this.dataset.symbol;
+            var field = this.classList.contains('toggle-cc') ? 'covered_call' : 'cash_secured_put';
+            var payload = {};
+            payload[field] = this.checked;
+
+            try {
+                var res = await fetch('/api/symbols/' + sym, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                if (!res.ok) {
+                    this.checked = !this.checked; // revert on failure
+                }
+            } catch(e) {
+                this.checked = !this.checked;
+            }
+        });
+    });
+
+    // Delete symbol
+    document.querySelectorAll('[data-delete-symbol]').forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+            var sym = this.dataset.deleteSymbol;
+            if (!confirm('Delete ' + sym + ' and ALL its data (decisions, signals, positions)? This cannot be undone.')) return;
+
+            try {
+                var res = await fetch('/api/symbols/' + sym, { method: 'DELETE' });
+                if (res.ok) {
+                    window.location.reload();
+                } else {
+                    var data = await res.json();
+                    alert('Error: ' + (data.error || 'Failed to delete'));
+                }
+            } catch(e) {
+                alert('Network error: ' + e.message);
+            }
+        });
+    });
+})();
+</script>
+{% endblock %}

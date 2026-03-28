@@ -12,13 +12,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Install Chromium + OS-level deps via Playwright (--with-deps handles apt packages)
 RUN playwright install chromium --with-deps
 
-# Application source + config
+# Application source + config + scripts
 COPY config.yaml run.py run_web.py ./
 COPY src/ src/
 COPY web/ web/
-
-# Mount-point directories (volumes override these at runtime)
-RUN mkdir -p data logs
+COPY scripts/ scripts/
 
 EXPOSE 8000
 

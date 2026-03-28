@@ -4,7 +4,7 @@
 {% block content %}
 <div class="page-header">
     <h1>Settings</h1>
-    <p class="subtitle">Edit watchlists and position files. Changes take effect on the next scheduler tick.</p>
+    <p class="subtitle">Scheduler configuration and system diagnostics.</p>
 </div>
 
 {% if saved %}
@@ -25,18 +25,26 @@
         </div>
     </div>
 
-    {% for key, file in files.items() %}
-    <div class="card settings-card">
-        <div class="card-header">
-            <h2>{{ file.label }}</h2>
-        </div>
-        <p class="hint">{{ file.hint }}</p>
-        <textarea name="file_{{ key }}" rows="8" spellcheck="false">{{ file.content }}</textarea>
-    </div>
-    {% endfor %}
-
     <div class="form-actions">
-        <button type="submit" class="btn btn-primary">💾 Save All</button>
+        <button type="submit" class="btn btn-primary">💾 Save</button>
     </div>
 </form>
+
+<!-- CosmosDB Diagnostics (read-only) -->
+<div class="card settings-card">
+    <div class="card-header">
+        <h2>CosmosDB Connection</h2>
+        <span class="badge badge-{{ 'wait' if cosmos_status == 'Connected' else 'sell' }}">{{ cosmos_status }}</span>
+    </div>
+    <div class="detail-grid" style="padding:0.5rem 1rem;">
+        <div class="detail-field">
+            <div class="detail-label">Endpoint</div>
+            <div class="detail-value mono">{{ cosmos_endpoint or "Not configured" }}</div>
+        </div>
+        <div class="detail-field">
+            <div class="detail-label">Database</div>
+            <div class="detail-value mono">{{ cosmos_database }}</div>
+        </div>
+    </div>
+</div>
 {% endblock %}
