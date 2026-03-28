@@ -160,10 +160,15 @@ The agent synthesizes all gathered data into a comprehensive analysis:
 
 9. **Earnings & Calendar Risk**
     - Extract next earnings date from the forecast data — look for upcoming earnings date, EPS estimates, and reporting schedule
-    - **Timing Strategy for Put Selling:**
-      - IDEAL: Sell puts 1-3 days AFTER earnings to capture IV crush (uncertainty resolved, premiums still elevated)
-      - ACCEPTABLE: Sell >7 days before earnings if strike well below support (>10% OTM)
-      - AVOID: Selling 3-7 days before earnings (maximum uncertainty window)
+    - **Timing Strategy for Put Selling — Earnings Tiers**:
+
+| Days to Earnings | CSP Guidance | Rationale |
+|---|---|---|
+| 0-2 (just passed) | **IDEAL** | Post-earnings IV crush still elevated, uncertainty resolved |
+| 3-7 before | **AVOID** | Maximum uncertainty window, unpredictable price action |
+| 8-14 before | **ACCEPTABLE** | If strike well below support (>10% OTM), uncertainty manageable |
+| 15+ before | **OK** | Standard approach, far from uncertainty window |
+
     - Review recent earnings from forecast data:
       - Recent beat → positive momentum → support for current levels
       - Recent miss → may have caused the selloff → assess if one-time or structural
@@ -210,21 +215,20 @@ The agent synthesizes all gathered data into a comprehensive analysis:
   - **Investment worthiness gate uses analyst consensus**: Forecast analyst ratings, earnings history, and price targets provide the quality assessment signal
   - Actual IV% from expanded options chain replaces proxy-based IV estimation
 
-- **When Data is Missing:**
-  - Proceed with available data; prioritize investment worthiness assessment, technical signals, and pivot support levels for trading decisions
-  - If options chain is empty or shows an error, base strike selection on pivot S1-S3 levels
-  - If some indicator values show "—" during non-market hours, note this and rely on available indicators
-  - Document in analysis what data was unavailable
-  - Apply more conservative criteria if key data points are missing (e.g., without IV data, require stronger technical and fundamental signals)
-  - Without detailed fundamentals, rely more heavily on analyst consensus and technical support levels for the investment worthiness gate
+- **When Data is Missing — Fallback Decision Tree:**
+  - Proceed with available data; prioritize investment worthiness assessment, technical signals, and pivot support levels
+  - **If no analyst consensus available**: Use technical signals more heavily + require stronger momentum alignment. `risk_flags: ["incomplete_analyst_data"]`. Confidence: downgrade to "medium".
+  - **If no earnings date available**: Assume earnings are ~30 days away (conservative estimate). `risk_flags: ["unknown_earnings"]`. Apply DTE < 30 days guideline. Confidence: downgrade to "medium".
+  - **If options chain empty/error**: Base strike selection entirely on pivot S1-S3 levels. Use IV% from nearby expirations as volatility proxy. `risk_flags: ["no_options_data"]`. Confidence: "low" to "medium" depending on other data.
+  - **If RSI/oscillator showing "—"**: Rely on other oscillators (CCI, MACD, Stochastic). If ALL oscillators show "—", use MA summary + pivot points only. Confidence: downgrade to "low".
+  - **If <3 critical data points available**: Default to WAIT unless setup is exceptional (very high conviction fundamentals + exceptional technical setup).
   - Never compromise on investment worthiness assessment regardless of available data
 
 - **Earnings Calendar:**
   - Extract from forecast data — look for upcoming earnings date and EPS estimates
-  - IDEAL: Sell puts 1-3 days AFTER earnings to capture IV crush
-  - AVOID: Selling 3-7 days before earnings (maximum uncertainty)
+  - Refer to **Earnings Tiers** table in section 9 above for DTE guidance
   - Post-earnings timing is ESPECIALLY important for CSP — resolved uncertainty + elevated IV = optimal entry
-  - If earnings date is not available from forecast page, note this as a risk factor and apply conservative DTE
+  - If earnings date is not available from forecast page, note this as a risk factor (`risk_flags: ["unknown_earnings"]`), apply conservative DTE (<30 days), and downgrade confidence to "medium"
 
 ## ANALYSIS FRAMEWORK
 
@@ -369,7 +373,7 @@ The agent synthesizes all gathered data into a comprehensive analysis:
    - No clear support level nearby
 
 4. **Catalyst Risk**:
-   - Earnings in 3-7 days (uncertainty window)
+   - Earnings in 3-7 days (uncertainty window per Earnings Tiers table)
    - FDA decision, litigation outcome, regulatory ruling within DTE
    - Merger deal pending that could break
 
@@ -405,6 +409,22 @@ When SELL criteria are met, select strike using:
    - Strike at current price or slightly below
    - Use when: WANT to own stock, pullback in strong uptrend, high conviction
    - Premium: Highest, assignment probability elevated but acceptable
+
+### Strike Selection Walkthrough
+
+**Example scenario**: Stock trading at $100, current price is $98 (approaching support), analyst consensus is positive.
+
+1. **Identify support from pivot points**: Classic S1 = $95, S2 = $92, S3 = $88
+2. **Extract delta values from options chain**:
+   - $95 strike: delta -0.25 (moderate)
+   - $92 strike: delta -0.20 (conservative)
+   - $90 strike: delta -0.18 (very conservative, low premium)
+3. **Select based on conviction**:
+   - **High conviction** (enthusiastically want stock): Sell $95 put (delta -0.25, 3% margin below S1)
+   - **Moderate conviction**: Sell $92 put (delta -0.20, at S2 support level)
+   - **Low conviction/uncertainty**: Sell $90 put (delta -0.18, clearly OTM, safer)
+4. **Verify premium**: Ensure selected strike offers premium ≥ 1.5% of strike price
+5. **Confirm support**: Ensure strike is AT or BELOW support level (never above)
 
 ## INTERPRETING PREVIOUS DECISION LOG
 
@@ -451,6 +471,51 @@ When reading previous entries, extract the key fields (symbol, decision, strike,
 
 Output a **JSON decision block** inside a fenced code block, followed by a **SUMMARY** line. This enables machine parsing and human readability.
 
+### Unified Risk Flag Taxonomy
+
+Use consistent risk flag names across all agents. Categories:
+
+```json
+{
+  "timing_risks": [
+    "earnings_within_dte",      // Earnings inside DTE window (use Earnings Tiers to specify)
+    "catalyst_pending",          // FDA, merger, regulatory decision, litigation ruling
+    "earnings_uncertainty"       // 3-7 days before earnings (maximum uncertainty)
+  ],
+  "technical_risks": [
+    "breakout_momentum",         // Price accelerating upward with volume
+    "breakdown_momentum",        // Price accelerating downward with volume
+    "support_breaking",          // Breaking major support level
+    "resistance_level",          // Price at/near resistance (calls)
+    "approaching_strike"         // Price approaching strike (delta rising)
+  ],
+  "volatility_risks": [
+    "low_iv",                    // IV Rank < 40 or IV Percentile < 40
+    "iv_too_low",                // Premium insufficient for acceptable return
+    "iv_crush_pending"           // Post-earnings IV crush expected
+  ],
+  "fundamental_risks": [
+    "weak_fundamentals",         // Revenue declining, margins compressing
+    "analyst_downgrade",         // Recent analyst rating downgrades
+    "earnings_miss",             // Recent earnings below estimates
+    "fundamental_deterioration"  // Business quality declining
+  ],
+  "position_risks": [
+    "high_delta",                // Delta |value| > 0.35-0.40, elevated assignment risk
+    "low_extrinsic",             // Extrinsic value < $0.10 with DTE > 7
+    "profit_optimization"        // Roll recommendation for premium optimization
+  ],
+  "data_risks": [
+    "incomplete_data",           // Missing key data points
+    "unknown_earnings",          // Earnings date not available
+    "no_options_data",           // Options chain unavailable
+    "incomplete_analyst_data"    // No analyst consensus
+  ]
+}
+```
+
+**Rules**: Export only the flags that apply as a flat array, e.g. `["earnings_uncertainty", "low_iv", "unknown_earnings"]`
+
 **JSON Schema (cash_secured_put):**
 ```json
 {
@@ -482,15 +547,16 @@ SUMMARY: TICKER | SELL/WAIT cash-secured put | Strike $X exp YYYY-MM-DD | IV X% 
 ```
 
 **Rules:**
+- `timestamp`: Use the timestamp provided in prompt. If missing/malformed, use current time and add `"incomplete_data"` to `risk_flags`
 - For WAIT decisions, set `strike`, `expiration`, `dte`, `delta`, `premium`, `premium_pct`, `support_level` to `null`
 - For WAIT, set `waiting_for` to a string describing the conditions needed
-- `support_level`: nearest significant support price level (for SELL decisions)
-- `confidence`: "high" (strong conviction), "medium" (reasonable setup), "low" (borderline)
-- `risk_flags`: array of strings, e.g. `["low_iv"]`, `["earnings_soon"]`, `["weak_fundamentals"]`, or `[]` if none
+- `support_level`: nearest significant support price level (for SELL decisions); `null` for WAIT
+- `confidence`: "high" (strong conviction, all criteria met), "medium" (reasonable setup, minor concerns), "low" (borderline, significant concerns)
+- `risk_flags`: array of flag names from Unified Risk Flag Taxonomy, or `[]` if none
 
 **Examples:**
 
-Strong SELL decision:
+Strong SELL decision (all criteria met, no risk flags):
 ```json
 {
   "timestamp": "2024-01-15T14:30:00Z",
@@ -508,7 +574,7 @@ Strong SELL decision:
   "premium_pct": 2.1,
   "underlying_price": 465.0,
   "support_level": 455.0,
-  "reason": "Support at $455, oversold RSI 28, post-earnings IV crush, strong fundamentals, premium 2.1%",
+  "reason": "Support at $455, oversold RSI 28, post-earnings IV crush (0-2 days after per Earnings Tiers), strong fundamentals, premium 2.1%",
   "waiting_for": null,
   "confidence": "high",
   "risk_flags": []

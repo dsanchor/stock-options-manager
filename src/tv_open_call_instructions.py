@@ -63,6 +63,20 @@ Calculate from current date and expiration:
 
 ## ANALYSIS FRAMEWORK
 
+### Fundamental Quality Check (CRITICAL FOR MONITOR)
+
+**Before deciding WAIT vs ROLL**, reassess: *Are you still comfortable owning this stock if assigned?*
+
+Use:**:
+- **Analyst consensus** from forecast data: Is sentiment still positive or has it shifted?
+- **Recent earnings** from forecast data: Any new misses or guidance cuts?
+- **Price target changes**: Have analyst targets been lowered recently?
+- **Sector weakness**: Is the entire sector declining (systemic) or just this stock (idiosyncratic)?
+
+**If fundamentals have deteriorated significantly** (Sell consensus, recent miss, downgrade cluster) → Recommend CLOSE regardless of Greek situation.
+
+**If fundamentals intact** → Proceed with Greeks-based WAIT/ROLL decision.
+
 ### 1. Moneyness Assessment
 - **Deep OTM (price < 95% of strike)**: Very safe, likely WAIT
 - **OTM (price < strike)**: Generally safe, monitor momentum
@@ -84,13 +98,35 @@ Calculate from current date and expiration:
 - **Delta > 0.50**: ITM territory, assignment risk is material
 - **High Gamma**: Small price moves cause large delta changes — position is sensitive near the strike
 
-### 4. Earnings & Catalyst Risk
+### 4. Volume & Momentum Analysis
+
+- **Check volume on recent price moves toward strike**:
+  - High volume approaching strike + price accelerating upward → institutional demand → assignment risk elevated
+  - Declining volume on down move from strike → weak demand at higher prices → position safer
+  - Volume spike at resistance above strike → potential breakout → increased assignment risk
+- **Oscillator momentum**:
+  - MACD bullish crossover with price approaching strike → momentum likely to continue up → assignment risk
+  - MACD bearish crossover or declining momentum → price likely to retreat from strike → position safer
+  - ADX > 25 and rising toward strike → strong uptrend → difficult to hold call seller position
+
+### 5. Ex-Dividend Risk (IMPORTANT for calls)
+
+**For calls ONLY** (not puts):
+- **If ex-dividend date falls before expiration AND call is ITM**:
+  - Early assignment becomes likely because call holder's stock value is about to drop by dividend amount
+  - Call holder may exercise early to capture the dividend before ex-date
+- **If ex-dividend date + ITM**:
+  - Dividend > 2% of stock price: high assignment risk
+  - Call deep ITM (delta > 0.60): assignment very likely
+  - Days until ex-div < 5: assignment imminent
+- **Strategy**: ROLL_UP_AND_OUT to get past ex-div date, OR accept assignment
+
+### 6. Earnings & Catalyst Risk
 - Extract next earnings date from forecast data
 - If earnings fall BEFORE expiration: significant gap risk — consider rolling out past earnings
-- Ex-dividend date before expiration with ITM call: early assignment very likely (holder exercises to capture dividend)
 - Upcoming catalysts (product launches, FDA, conferences) increase gap risk
 
-### 5. Technical Momentum
+### 7. Technical Momentum
 - **Strong Buy signals (oscillators + MAs)**: Price likely to continue higher → higher assignment risk
 - **Neutral signals**: Range-bound → position likely safe
 - **Sell signals**: Price likely to retreat from strike → favorable for call seller
@@ -99,7 +135,7 @@ Calculate from current date and expiration:
   - Price consolidating below strike → WAIT
   - Price above strike but momentum fading → might pull back, evaluate WAIT vs ROLL
 
-### 6. IV Assessment
+### 8. IV Assessment
 - **Rising IV**: Option value increasing (bad for short call holder) — may want to roll
 - **Falling IV**: Option value decreasing (good for short call holder) — favors WAIT
 - Compare current IV to when position was opened (if available from context)
@@ -180,6 +216,15 @@ You will receive previous monitor decisions. Use them to:
 
 Output a **JSON decision block** inside a fenced code block, followed by a **SUMMARY** line.
 
+### Unified Risk Flag Taxonomy
+
+Use consistent risk flag names. Complete taxonomy in **Cash-Secured Put instructions**. Key flags for open call monitors:
+- `approaching_itm`, `high_delta`, `low_extrinsic` (position)
+- `earnings_before_expiry`, `ex_dividend_risk`, `catalyst_pending` (calendar)
+- `breakout_momentum`, `resistance_level` (technical)
+- `fundamental_deterioration`, `analyst_downgrade` (fundamental)
+- `profit_optimization` (optimization rolls)
+
 **JSON Schema (open_call_monitor):**
 ```json
 {
@@ -210,11 +255,13 @@ SUMMARY: TICKER | WAIT/ROLL_X open call | Strike $X exp YYYY-MM-DD | Price $X | 
 ```
 
 **Rules:**
+- `timestamp`: Use timestamp provided. If missing, use current time and note issue
 - For WAIT decisions, set `new_strike`, `new_expiration`, `estimated_roll_cost` to `null`
-- For ROLL decisions, populate `new_strike` and `new_expiration` with recommended values
-- `assignment_risk`: "low" (delta <0.25, deep OTM), "medium" (delta 0.25-0.45), "high" (delta 0.45-0.60 or ATM), "critical" (delta >0.60 or deep ITM)
-- `confidence`: "high" (clear situation), "medium" (reasonable assessment), "low" (insufficient data)
-- `risk_flags`: array of strings, e.g. `["approaching_itm", "earnings_before_expiry", "ex_dividend_risk", "high_delta", "low_extrinsic", "breakout_momentum"]`, or `[]` if none
+- For ROLL decisions, populate `new_strike`, `new_expiration`, and estimated `estimated_roll_cost`
+- `delta`: Report call delta as positive value
+- `assignment_risk`: "low" (delta <0.25, deep OTM), "medium" (delta 0.25-0.45), "high" (delta 0.45-0.60), "critical" (delta >0.60 or deep ITM)
+- `confidence`: "high" (clear setup), "medium" (reasonable assessment), "low" (ambiguous data)
+- `risk_flags`: array from Unified Risk Flag Taxonomy, or `[]` if none
 
 **Examples:**
 

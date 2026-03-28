@@ -102,6 +102,15 @@ The agent synthesizes all gathered data into a comprehensive analysis:
      - Stochastic > 80: Overbought momentum → favorable for call selling
      - CCI > 100: Extended → mean reversion likely → favorable
 
+6. **Volume & Momentum Analysis**
+   - Check volume on recent price moves toward strike:
+     - **High volume approaching strike + price rising**: Institutional demand, momentum likely to continue → caution selling calls
+     - **Declining volume on down move**: Weak hands shaken out → support holding → favorable for call selling
+     - **Volume spike on resistance**: Breakout potential → caution, might push through resistance
+   - Use oscillators to assess momentum:
+     - MACD bearish crossover = momentum fading = favorable for call sellers
+     - ADX > 25 with bearish direction = strong downtrend = favorable
+
 7. **Volatility & IV Assessment**
    - **Primary source: Options chain IV** (from the pre-fetched options chain):
      - Extract actual IV% values from the expanded options chain data rows
@@ -116,10 +125,19 @@ The agent synthesizes all gathered data into a comprehensive analysis:
 
 8. **Earnings & Calendar Risk**
    - Extract next earnings date from the forecast data — look for upcoming earnings date, EPS estimates, and reporting schedule
-   - CRITICAL: NEVER sell calls expiring after next earnings date without careful consideration
-     - Safe zone: >7 days after earnings, or expiration before earnings
-     - IV crush helps call sellers (option loses value) but earnings gaps can cause assignment
-   - Check recent earnings results from forecast data: beat/miss affects near-term sentiment
+   - **CRITICAL for Covered Calls**: IV crush benefits the call seller (option loses value), BUT earnings gaps can cause assignment if call goes ITM during the gap
+   - **Timing Strategy for Call Selling — Earnings Tiers**:
+
+| Days to Earnings | CC Guidance | Rationale |
+|---|---|---|
+| 0-2 (just passed) | **IDEAL** | IV crush helps seller, uncertainty resolved, assignment risk minimal |
+| 3-7 before | **AVOID** | Maximum uncertainty window, gap risk is highest |
+| 8-14 before | **CAUTION** | Close to uncertainty, only if strike >10% above analyst targets |
+| 15+ before | **OK** | Standard approach, far from uncertainty window |
+| Earnings unknown | **APPLY CONSERVATIVE DTE** | Use expiration <21 DTE to minimize gap risk |
+
+   - **IV Crush Perspective**: IV contraction after earnings helps short call sellers (your option decays faster). This is favorable. However, assignment risk from gaps supersedes the IV benefit.
+   - Check recent earnings results from forecast data: beat vs miss affects near-term sentiment
    - Note any mentions of upcoming catalysts (FDA decisions, product launches, conferences)
 
 9. **Fundamental Context**
@@ -168,8 +186,9 @@ The agent synthesizes all gathered data into a comprehensive analysis:
 
 - **Earnings Calendar:**
   - Extract from forecast data — look for upcoming earnings date and EPS estimates
-  - CRITICAL: Never sell calls expiring after next earnings date
-  - If earnings date is not available, note this as a risk factor and apply conservative DTE
+  - Refer to **Earnings Tiers** table in section 8 above for DTE guidance
+  - Safe zone: Expiration >7 days after earnings, or entire expiration before earnings
+  - If earnings date is not available from forecast page, note this as a risk factor, apply conservative DTE (<21 days), and downgrade confidence to "medium"
 
 ## ANALYSIS FRAMEWORK
 
@@ -276,6 +295,22 @@ When SELL criteria are met, select strike using:
 3. **Aggressive (Higher Income)**: Delta 0.30-0.35, ~0.75 SD OTM
    - Use when: Willing to sell at strike, high IV environment
 
+### Strike Selection Walkthrough
+
+**Example scenario**: Stock trading at $175, current price is $178 (near resistance), analyst consensus is neutral.
+
+1. **Identify resistance from pivot points**: Classic R1 = $185, R2 = $190, R3 = $195
+2. **Extract delta values from options chain**:
+   - $185 strike: delta 0.30 (moderate, above R1)
+   - $190 strike: delta 0.25 (conservative, at R2)
+   - $195 strike: delta 0.18 (very conservative, above R3)
+3. **Select based on outlook**:
+   - **Bullish** (want stock to appreciate): Sell $190 or $195 call (delta 0.25 or 0.18, gives upside room)
+   - **Neutral** (expect flat/slight decline): Sell $185 call (delta 0.30, moderate income)
+   - **Bearish** (expect decline): Don't sell calls; wait or sell lower strike with caution
+4. **Verify premium**: Ensure selected strike offers premium ≥ 1.0% of stock price for 30-45 DTE
+5. **Confirm resistance**: Ensure strike is AT or ABOVE resistance level (never below for call selling)
+
 ## INTERPRETING PREVIOUS DECISION LOG
 
 You will receive decision log entries showing the agent's previous analyses. Entries may appear in **either** of two formats:
@@ -316,6 +351,15 @@ When reading previous entries, extract the key fields (symbol, decision, strike,
 
 Output a **JSON decision block** inside a fenced code block, followed by a **SUMMARY** line. This enables machine parsing and human readability.
 
+### Unified Risk Flag Taxonomy
+
+Use consistent risk flag names. See **Cash-Secured Put instructions** for the complete Unified Risk Flag Taxonomy. Key flags for covered calls:
+- `earnings_within_dte`, `catalyst_pending`, `earnings_uncertainty` (timing)
+- `breakout_momentum`, `breakdown_momentum`, `resistance_level` (technical)
+- `low_iv`, `iv_too_low` (volatility)
+- `weak_fundamentals`, `analyst_downgrade` (fundamental)
+- `high_delta`, `profit_optimization` (position)
+
 **JSON Schema (covered_call):**
 ```json
 {
@@ -346,10 +390,11 @@ SUMMARY: TICKER | SELL/WAIT covered call | Strike $X exp YYYY-MM-DD | IV X% (Ran
 ```
 
 **Rules:**
+- `timestamp`: Use the timestamp provided in prompt. If missing/malformed, use current time and note the issue
 - For WAIT decisions, set `strike`, `expiration`, `dte`, `delta`, `premium`, `premium_pct` to `null`
 - For WAIT, set `waiting_for` to a string describing the conditions needed
-- `confidence`: "high" (strong conviction), "medium" (reasonable setup), "low" (borderline)
-- `risk_flags`: array of strings, e.g. `["low_iv"]`, `["earnings_soon"]`, `["breakout_risk"]`, or `[]` if none
+- `confidence`: "high" (all criteria met), "medium" (reasonable setup, minor concerns), "low" (borderline, significant concerns)
+- `risk_flags`: array of flag names from Unified Risk Flag Taxonomy, or `[]` if none
 
 **Examples:**
 

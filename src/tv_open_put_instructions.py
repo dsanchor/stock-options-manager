@@ -64,6 +64,21 @@ Calculate from current date and expiration:
 
 ## ANALYSIS FRAMEWORK
 
+### Fundamental Quality Check (CRITICAL FOR MONITOR)
+
+**Before deciding WAIT vs ROLL**, reassess: *Are you still comfortable owning this stock if assigned at the strike price?*
+
+Use:
+- **Analyst consensus** from forecast data: Is sentiment still positive or has it shifted negative?
+- **Recent earnings** from forecast data: Any new misses or guidance cuts since position was opened?
+- **Price target changes**: Have analyst targets been lowered recently?
+- **Sector weakness**: Is the entire sector declining (systemic) or just this stock (idiosyncratic)?
+- **Business news**: Any product failures, competitive threats, regulatory issues?
+
+**If fundamentals have deteriorated significantly** (shift to Sell consensus, recent miss, downgrade cluster) → Recommend CLOSE regardless of Greek situation. Bad assignment is worse than a small loss.
+
+**If fundamentals intact** → Proceed with Greeks-based WAIT/ROLL decision.
+
 ### 1. Moneyness Assessment (Puts — inverted from calls)
 - **Deep OTM (price > 105% of strike)**: Very safe, likely WAIT
 - **OTM (price > strike)**: Generally safe, monitor momentum
@@ -86,13 +101,30 @@ Calculate from current date and expiration:
 - **|Delta| > 0.50**: ITM territory, assignment risk is material
 - **High Gamma**: Small price moves cause large delta changes — position is sensitive near the strike
 
-### 4. Earnings & Catalyst Risk
+### 4. Volume & Momentum Analysis
+
+- **Check volume on recent price moves toward strike**:
+  - High volume approaching strike + price accelerating downward → institutional selling → assignment risk elevated
+  - Declining volume on down move from strike → weak selling pressure → position safer
+  - Volume climax on breakdown below strike → panic lows potential → might recover, reconsider ROLL
+- **Oscillator momentum**:
+  - MACD bearish crossover with price approaching strike → momentum likely to continue down → assignment risk
+  - MACD bullish crossover or improving momentum → price likely to recover away from strike → position safer
+  - ADX > 25 and declining toward strike → downtrend → difficult to hold put seller position
+
+### 5. Ex-Dividend Risk (NOT APPLICABLE FOR PUTS)
+
+**Important clarification**: Ex-dividend dates are **IRRELEVANT** for short puts. You do not own the stock, so dividend dates do not affect your put obligation. The put holder (not owner) captures dividend value through stock price adjustment.
+
+**Focus instead on**: Earnings dates, analyst downgrades, and other catalyst risk that could drive price below strike.
+
+### 6. Earnings & Catalyst Risk
 - Extract next earnings date from forecast data
 - If earnings fall BEFORE expiration: significant gap risk — stock could drop sharply on miss
 - Recent earnings miss or lowered guidance: bearish pressure → higher put assignment risk
 - Analyst downgrades, sector weakness, macro deterioration increase risk
 
-### 5. Technical Momentum (inverted from calls)
+### 7. Technical Momentum (inverted from calls)
 - **Strong Sell signals (oscillators + MAs)**: Price likely to continue lower → higher put assignment risk
 - **Neutral signals**: Range-bound → position likely safe
 - **Buy signals**: Price likely to rise away from strike → favorable for put seller
