@@ -950,21 +950,15 @@ async def symbol_chat_page(request: Request, symbol: str):
     })
 
 
-@app.post("/api/symbols/{symbol}/chat")
-async def symbol_chat_api(request: Request, symbol: str):
-    body = await request.json()
-    messages = body.get("messages", [])
-    if not messages:
-        return JSONResponse({"error": "No messages provided"},
-                            status_code=400)
+async def _build_symbol_context(symbol: str, cosmos) -> dict:
+    """Build context data for a symbol (CosmosDB + TradingView).
 
-    symbol = symbol.upper()
-    cosmos = getattr(request.app.state, "cosmos", None)
+    Returns dict with keys: context, exchange, display_name.
+    """
     context_parts: List[str] = []
-
-    # --- Symbol config (watchlist, positions) ---
     symbol_doc = None
-    exchange = "NYSE"  # fallback
+    exchange = "NYSE"
+
     if cosmos:
         try:
             symbol_doc = cosmos.get_symbol(symbol)
@@ -979,7 +973,6 @@ async def symbol_chat_api(request: Request, symbol: str):
         except Exception as exc:
             logger.warning("symbol_chat: failed to load symbol doc: %s", exc)
 
-    # --- Recent decisions (last 5 across all agent types) ---
     if cosmos:
         try:
             decisions: List[Dict] = []
@@ -1002,8 +995,6 @@ async def symbol_chat_api(request: Request, symbol: str):
             logger.warning("symbol_chat: failed to load decisions: %s", exc)
             context_parts.append("(Error loading decisions from CosmosDB)")
 
-    # --- Live TradingView data ---
-    tv_context = ""
     try:
         from src.tv_data_fetcher import TradingViewFetcher
 
@@ -1024,18 +1015,27 @@ async def symbol_chat_api(request: Request, symbol: str):
                     f"\n--- TradingView {section_label} ---\n{content}")
 
         if tv_sections:
-            tv_context = "\n".join(tv_sections)
-            context_parts.append(tv_context)
+            context_parts.append("\n".join(tv_sections))
     except Exception as exc:
         logger.warning("symbol_chat: TradingView fetch failed: %s", exc)
         context_parts.append("(Live TradingView data unavailable)")
 
     context_text = ("\n".join(context_parts) if context_parts
                     else "No context data available.")
-
     display_name = (symbol_doc.get("display_name", symbol)
                     if symbol_doc else symbol)
-    system_prompt = (
+
+    return {
+        "context": context_text,
+        "exchange": exchange,
+        "display_name": display_name,
+    }
+
+
+def _build_symbol_system_prompt(symbol: str, exchange: str,
+                                context_text: str) -> str:
+    """Build the system prompt for per-symbol chat."""
+    return (
         f"You are a stock options advisor focused exclusively on "
         f"{symbol} ({exchange}:{symbol}).\n"
         f"You have access to:\n"
@@ -1049,6 +1049,52 @@ async def symbol_chat_api(request: Request, symbol: str):
         f"other symbols.\n\n"
         f"Context data:\n{context_text}"
     )
+
+
+@app.post("/api/symbols/{symbol}/chat/context")
+async def symbol_chat_context(request: Request, symbol: str):
+    """Pre-fetch all heavy context (CosmosDB + TradingView) for a symbol."""
+    symbol = symbol.upper()
+    cosmos = getattr(request.app.state, "cosmos", None)
+
+    try:
+        result = await _build_symbol_context(symbol, cosmos)
+        return JSONResponse(result)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/symbols/{symbol}/chat")
+async def symbol_chat_api(request: Request, symbol: str):
+    body = await request.json()
+    messages = body.get("messages", [])
+    if not messages:
+        return JSONResponse({"error": "No messages provided"},
+                            status_code=400)
+
+    symbol = symbol.upper()
+
+    # Use pre-fetched context if provided, otherwise fetch fresh
+    pre_context = body.get("context")
+    if pre_context:
+        context_text = pre_context
+        # Infer exchange from context or fall back
+        cosmos = getattr(request.app.state, "cosmos", None)
+        exchange = "NYSE"
+        if cosmos:
+            try:
+                symbol_doc = cosmos.get_symbol(symbol)
+                if symbol_doc:
+                    exchange = symbol_doc.get("exchange", "NYSE")
+            except Exception:
+                pass
+    else:
+        cosmos = getattr(request.app.state, "cosmos", None)
+        result = await _build_symbol_context(symbol, cosmos)
+        context_text = result["context"]
+        exchange = result["exchange"]
+
+    system_prompt = _build_symbol_system_prompt(symbol, exchange, context_text)
 
     # --- Call Azure OpenAI ---
     config = _load_config()

@@ -11,16 +11,14 @@
 <div class="card chat-card">
     <div id="chatMessages" class="chat-messages">
         <div class="chat-msg assistant">
-            <div class="chat-bubble">
-                Hello! I'm focused on {{ symbol_doc.symbol }}. I have access to live TradingView data
-                (overview, technicals, forecast, options chain) and your recent analysis history.
-                What would you like to know?
+            <div class="chat-bubble" id="welcomeBubble">
+                ⏳ Loading market data for {{ symbol_doc.symbol }}...
             </div>
         </div>
     </div>
     <div class="chat-input-row">
-        <input type="text" id="chatInput" placeholder="Ask about {{ symbol_doc.symbol }}..." autocomplete="off">
-        <button id="chatSend" class="btn btn-primary">Send</button>
+        <input type="text" id="chatInput" placeholder="Loading market data..." autocomplete="off" disabled>
+        <button id="chatSend" class="btn btn-primary" disabled>Send</button>
     </div>
     <div id="chatError" class="alert alert-error" style="display:none;"></div>
 </div>
@@ -34,8 +32,10 @@
     const inputEl = document.getElementById('chatInput');
     const sendBtn = document.getElementById('chatSend');
     const errorEl = document.getElementById('chatError');
+    const welcomeBubble = document.getElementById('welcomeBubble');
 
     let history = [];
+    let cachedContext = null;
 
     function addMessage(role, content) {
         const div = document.createElement('div');
@@ -48,6 +48,38 @@
         messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
+    async function loadContext() {
+        try {
+            const res = await fetch('/api/symbols/' + SYMBOL + '/chat/context', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: '{}',
+            });
+            const data = await res.json();
+
+            if (data.error) {
+                welcomeBubble.textContent =
+                    'Hello! I\'m focused on ' + SYMBOL + '. Context pre-load failed, but I can still help — ' +
+                    'responses may be slower as I fetch data per message. What would you like to know?';
+            } else {
+                cachedContext = data.context;
+                welcomeBubble.textContent =
+                    'Hello! I\'m focused on ' + SYMBOL + '. I have access to live TradingView data ' +
+                    '(overview, technicals, forecast, options chain) and your recent analysis history. ' +
+                    'What would you like to know?';
+            }
+        } catch (e) {
+            welcomeBubble.textContent =
+                'Hello! I\'m focused on ' + SYMBOL + '. Context pre-load failed, but I can still help — ' +
+                'responses may be slower as I fetch data per message. What would you like to know?';
+        } finally {
+            inputEl.disabled = false;
+            sendBtn.disabled = false;
+            inputEl.placeholder = 'Ask about ' + SYMBOL + '...';
+            inputEl.focus();
+        }
+    }
+
     async function sendMessage() {
         const text = inputEl.value.trim();
         if (!text) return;
@@ -58,13 +90,18 @@
         history.push({role: 'user', content: text});
 
         sendBtn.disabled = true;
+        inputEl.disabled = true;
         sendBtn.textContent = '...';
 
         try {
+            const payload = {messages: history};
+            if (cachedContext) {
+                payload.context = cachedContext;
+            }
             const res = await fetch('/api/symbols/' + SYMBOL + '/chat', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({messages: history}),
+                body: JSON.stringify(payload),
             });
             const data = await res.json();
 
@@ -80,7 +117,9 @@
             errorEl.style.display = 'block';
         } finally {
             sendBtn.disabled = false;
+            inputEl.disabled = false;
             sendBtn.textContent = 'Send';
+            inputEl.focus();
         }
     }
 
@@ -92,7 +131,7 @@
         }
     });
 
-    inputEl.focus();
+    loadContext();
 })();
 </script>
 {% endblock %}
