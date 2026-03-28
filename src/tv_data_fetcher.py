@@ -132,11 +132,7 @@ class TradingViewFetcher:
             await page.goto(url, wait_until="networkidle", timeout=30000)
             await page.wait_for_timeout(2000)
 
-            # Get the accessibility snapshot to find DTE rows
-            snapshot = await page.accessibility.snapshot() or {}
-            snap_text = str(snapshot)
-
-            # Also get visible text for fallback
+            # Get visible text to find DTE rows
             page_text = await page.evaluate(
                 '(() => { const m = document.querySelector("main") || document.body; return m.innerText; })()'
             ) or ""
