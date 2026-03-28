@@ -5,11 +5,23 @@
 <div class="page-header">
     <a href="/symbols" class="back-link">← Symbols</a>
     <h1>{{ symbol_doc.symbol }} — {{ symbol_doc.display_name }}</h1>
-    <p class="subtitle">
-        {{ symbol_doc.exchange }}
-        {% if symbol_doc.watchlist.covered_call %}<span class="badge badge-wait">CC</span>{% endif %}
-        {% if symbol_doc.watchlist.cash_secured_put %}<span class="badge badge-wait">CSP</span>{% endif %}
-    </p>
+    <p class="subtitle">{{ symbol_doc.exchange }}</p>
+    <div class="watchlist-toggles" style="display:flex; gap:1.5rem; align-items:center; margin-top:0.5rem;">
+        <span style="display:flex; align-items:center; gap:0.4rem;">
+            <label class="switch">
+                <input type="checkbox" id="toggle-cc" {% if symbol_doc.watchlist.covered_call %}checked{% endif %}>
+                <span class="slider"></span>
+            </label>
+            <span>Covered Call</span>
+        </span>
+        <span style="display:flex; align-items:center; gap:0.4rem;">
+            <label class="switch">
+                <input type="checkbox" id="toggle-csp" {% if symbol_doc.watchlist.cash_secured_put %}checked{% endif %}>
+                <span class="slider"></span>
+            </label>
+            <span>Cash-Secured Put</span>
+        </span>
+    </div>
 </div>
 
 <!-- Positions -->
@@ -216,6 +228,29 @@
                 }
             } catch(e) {
                 alert('Network error: ' + e.message);
+            }
+        });
+    });
+
+    // Toggle CC / CSP watchlist flags
+    ['toggle-cc', 'toggle-csp'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('change', async function() {
+            var field = id === 'toggle-cc' ? 'covered_call' : 'cash_secured_put';
+            var payload = {};
+            payload[field] = this.checked;
+            try {
+                var res = await fetch('/api/symbols/' + SYMBOL, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                if (!res.ok) {
+                    this.checked = !this.checked;
+                }
+            } catch(e) {
+                this.checked = !this.checked;
             }
         });
     });
