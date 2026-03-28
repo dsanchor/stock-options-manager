@@ -9,6 +9,19 @@
 
 ## Learnings
 
+### Phase 3 — Web Dashboard CosmosDB Refactor (2025-07)
+- Rewrote `web/app.py` to eliminate all file-based data access (JSONL reads, txt symbol lists). All data now flows through `CosmosDBService` initialized at startup via `@app.on_event("startup")`.
+- Added full REST API: symbol CRUD (`/api/symbols`), position management (`/api/symbols/{symbol}/positions`), data views (`/api/signals`, `/api/decisions`). All `/api/*` endpoints return JSON with proper HTTP status codes.
+- Dashboard data still server-side rendered but sourced from CosmosDB: `list_symbols()`, `get_all_signals()`, `get_all_decisions()`. Agent tables built from the same AGENT_TYPES metadata dict (simplified to labels only — no file paths).
+- New Symbols page (`/symbols`) with inline toggle switches for watchlist flags (CC/CSP) — vanilla JS calling PUT `/api/symbols/{symbol}`. Add/delete symbols with confirmation.
+- New Symbol Detail page (`/symbols/{symbol}`) — positions table with add/close/delete actions, recent decisions and signals across all agent types.
+- Settings page simplified: cron expression only + read-only CosmosDB diagnostics (endpoint, database, connection status). Data file editors removed.
+- `_clean_doc()` strips CosmosDB system properties (`_rid`, `_self`, `_etag`, `_attachments`, `_ts`) from API responses.
+- Dashboard clickable rows now link to `/symbols/{symbol}` instead of old `/signals/{agent_type}/{symbol}` routes.
+- Chat endpoint updated to pull context from CosmosDB instead of JSONL files.
+- Kept old signal/decision detail templates in place (harmless) but removed routes that served them.
+- Key pattern: for symbol updates beyond watchlist flags (e.g., display_name), used `cosmos.container.replace_item()` directly since the service layer method was watchlist-only. This keeps the change minimal without modifying `cosmos_db.py`.
+
 ### Open Position Monitor Architecture (2025-07)
 - Added two new agents (OpenCallMonitor, OpenPutMonitor) that reuse the TradingView pre-fetch architecture but operate on open positions instead of symbol watchlists.
 - Key difference: input is `EXCHANGE-SYMBOL,strike,expiration` (not just `EXCHANGE-SYMBOL`), and decisions are WAIT/ROLL (not SELL/WAIT).
@@ -515,6 +528,17 @@ Replaced the pipe-delimited output format across ALL 8 instruction files, plus u
 - **Config validation:** `cosmosdb.endpoint` and `cosmosdb.key` are now required fields; env var substitution pattern unchanged (`${COSMOSDB_ENDPOINT}`, `${COSMOSDB_KEY}`).
 - **Key files:** `src/cosmos_db.py`, `src/context.py`, `src/config.py`, `config.yaml`.
 - **Dependency:** `azure-cosmos>=4.7.0` added to `requirements.txt`.
+
+## Cross-Agent Impact
+
+### Phase 1–3 Implementation (2026-03-28)
+This 3-phase CosmosDB refactor directly impacts:
+- **Danny (Lead):** Delivered all 8 sections of architecture (phases 1–4a complete as of 2026-03-28)
+- **Linus (Quant):** Agent instruction files remain unchanged — context output format identical (reason-per-line, oldest-first)
+- **Basher (Tester):** Phases 1–3 tested before handing to Phase 4a (provisioning)
+- **Orchestration log:** See `.squad/orchestration-log/2026-03-28T1350-rusty-phase1.md`, `2026-03-28T1355-rusty-phase2.md`, `2026-03-28T1400-rusty-phase3.md`
+
+---
 
 ### Phase 2: Scheduler + Agent Runner CosmosDB Refactor (2025-07)
 - Refactored `agent_runner.py`: removed all file I/O (`_read_symbols`, `_read_positions`, file-based `append_decision/signal`). Now accepts `CosmosDBService` and `ContextProvider` as dependencies.

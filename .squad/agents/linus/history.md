@@ -268,3 +268,16 @@ ROLE, STRATEGY OVERVIEW, ANALYSIS FRAMEWORK, DECISION CRITERIA, OUTPUT FORMAT, C
 **2026-03-27 TradingView Navigation Optimization:**
 Rusty removed main symbol page (103K chars) from TV navigation to free context window. Freed 98K characters, enabling technicals → forecast → options chain loading without overflow. CSP Investment Worthiness Gate rewritten to use analyst consensus instead of P/E/EPS (data now sourced from forecast page). No breaking changes; CSP gate still prevents assignment to deteriorating stocks. Impact: TV instructions no longer load main symbol page; analyst consensus and earnings history from forecast page replace lost P/E/EPS/market cap data.
 
+## Cross-Agent Impact
+
+### 2026-03-28: CosmosDB Refactor (No Instruction Changes Required)
+**From:** Rusty (Agent Dev), Phase 1–3 implementation
+
+This large refactor (file-based → CosmosDB across entire system) has **zero impact** on Linus's instruction files:
+- Context output format remains identical (reason-per-line, oldest-first) via `src/context.py` adapter pattern
+- Agent decision criteria, Greeks targets, DTE windows, fundamentals gates unchanged
+- Backward compatibility: agent_runner output parsing logic unmodified
+
+**Status:** Notification only — no action required
+**Team:** Rusty (implementation), Danny (architecture), Basher (provisioning)
+

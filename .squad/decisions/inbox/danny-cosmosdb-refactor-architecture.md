@@ -626,35 +626,41 @@ class CosmosDBService:
 
 ### 3.2 Context Injection Adapter
 
-Replace `src/logger.py` read functions with CosmosDB-backed equivalents. The adapter returns formatted strings identical to the current format, so agent instructions don't change.
+> **Updated per user directive:** Context injection uses a single `get_context()` method that fetches the last N decisions (default 2, configurable 0–5). Each decision includes its signal status via the `is_signal` field. There is NO separate signal context — signals are embedded in their parent decisions.
+
+Replace `src/logger.py` read functions with a single CosmosDB-backed method.
 
 ```python
 # src/context.py
 
 class ContextProvider:
-    """Provides per-symbol decision/signal context for agent prompts."""
+    """Provides per-symbol decision context for agent prompts."""
 
     def __init__(self, cosmos: CosmosDBService):
         self.cosmos = cosmos
 
-    def get_decision_context(self, symbol: str, agent_type: str,
-                              max_entries: int = 20,
-                              position_id: str | None = None) -> str:
-        """Return formatted string of recent decisions for prompt injection."""
+    def get_context(self, symbol: str, agent_type: str,
+                    max_entries: int = 2,
+                    position_id: str | None = None) -> str:
+        """Return formatted context of recent decisions with embedded signal status.
+
+        Args:
+            max_entries: Number of recent decisions (0-5, default 2).
+        """
+        if max_entries <= 0:
+            return "Context injection disabled."
         decisions = self.cosmos.get_recent_decisions(
             symbol, agent_type, max_entries, position_id
         )
         if not decisions:
             return "No previous decisions recorded."
-        return "\n".join(d.get("reason", str(d)) for d in reversed(decisions))
-
-    def get_signal_context(self, symbol: str, agent_type: str,
-                            max_entries: int = 10) -> str:
-        """Return formatted string of recent signals for prompt injection."""
-        signals = self.cosmos.get_recent_signals(symbol, agent_type, max_entries)
-        if not signals:
-            return "No previous signals recorded."
-        return "\n".join(s.get("reason", str(s)) for s in reversed(signals))
+        blocks = []
+        for d in reversed(decisions):  # oldest-first
+            header = f"[{d.get('timestamp', '?')}] {d.get('decision', '?')}"
+            if d.get("is_signal"):
+                header += " ⚡ SIGNAL"
+            blocks.append(f"{header}\n{d.get('reason', '')}")
+        return "\n\n".join(blocks)
 ```
 
 ---
@@ -829,8 +835,7 @@ cosmosdb:
   database: "stock-options-manager"
 
 context:
-  max_decision_entries: 5
-  max_signal_entries: 1
+  max_decision_entries: 2   # Recent decisions to inject as agent context (0=none, max 5). Each includes its signal if actionable.
   decision_ttl_days: 90
 
 scheduler:

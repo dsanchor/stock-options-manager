@@ -24,7 +24,7 @@
 **Status:** ✅ Updated in config/team.md
 **Team:** User directive (dsanchor), Rusty (config implementation)
 
-### 2026-03-28: CosmosDB-Centric Architecture Design
+### 2026-03-28: CosmosDB-Centric Architecture Design (IMPLEMENTED)
 
 **User Directive (dsanchor):** Full architectural refactor from file-based to CosmosDB-backed symbol-centric data model.
 
@@ -44,19 +44,32 @@
 
 7. **Agent runner no longer owns discovery:** Scheduler queries CosmosDB for enabled symbols/positions and passes them individually to the runner. Runner only handles single-symbol execution.
 
-**Key File Paths:**
-- Architecture doc: `.squad/decisions/inbox/danny-cosmosdb-refactor-architecture.md`
-- New modules planned: `src/cosmos_db.py`, `src/context.py`, `scripts/migrate_to_cosmosdb.py`, `scripts/provision_cosmosdb.sh`
-- Modified: `config.yaml`, `src/config.py`, `src/agent_runner.py`, `src/main.py`, `web/app.py`, all 4 agent modules
+**Implementation Status: ✅ COMPLETE (all 4 phases delivered as of 2026-03-28)**
+
+**Implementation Timeline:**
+- **Phase 1 (2026-03-28T13:50):** Rusty — CosmosDB service layer + config. Created `src/cosmos_db.py` (18 methods), `src/context.py`, updated config layer. Orchestration log: `2026-03-28T1350-rusty-phase1.md`
+- **Phase 2 (2026-03-28T13:55):** Rusty — Scheduler + agent runner refactor. Refactored `main.py`, `agent_runner.py`, all 4 agent wrappers to use CosmosDB. Orchestration log: `2026-03-28T1355-rusty-phase2.md`
+- **Phase 3 (2026-03-28T14:00):** Rusty — Web dashboard refactor. Rewrote `web/app.py` with REST API, created `symbols.html`, `symbol_detail.html`. Orchestration log: `2026-03-28T1400-rusty-phase3.md`
+- **Phase 4a (2026-03-28T13:50):** Basher — Provisioning + deployment. Created `scripts/provision_cosmosdb.sh`, `scripts/migrate_to_cosmosdb.py`, updated Dockerfile, comprehensive README. Orchestration log: `2026-03-28T1350-basher-phase4a.md`
+
+**Key Files Modified/Created:**
+- Architecture doc: `.squad/decisions/inbox/danny-cosmosdb-refactor-architecture.md` (kept as reference, 1288 lines)
+- Modules: `src/cosmos_db.py`, `src/context.py`, `scripts/migrate_to_cosmosdb.py`, `scripts/provision_cosmosdb.sh`
+- Modified: `config.yaml`, `src/config.py`, `src/agent_runner.py`, `src/main.py`, `web/app.py`, all 4 agent modules, Dockerfile, README.md
 - Deprecated: `src/logger.py`, `data/*.txt`, `logs/*.jsonl`
 - New web templates: `web/templates/symbols.html`, `web/templates/symbol_detail.html`
 - New dependency: `azure-cosmos>=4.7.0`
 
 **User Preferences (dsanchor):**
-- Prefers comprehensive design docs with actual schemas, code, and CLI commands
-- Wants everything symbol-centric (per-symbol settings, not global config files)
-- Only global setting = cron expression
-- Full CRUD through web dashboard
+- Prefers comprehensive design docs with actual schemas, code, and CLI commands ✅
+- Wants everything symbol-centric (per-symbol settings, not global config files) ✅
+- Only global setting = cron expression ✅
+- Full CRUD through web dashboard ✅
 
-**Status:** ✅ Architecture document delivered
-**Team:** Danny (architecture), delegates to Rusty (implementation phases 1-3), Basher (phase 4)
+**Team Cross-References:**
+- **Rusty (Agent Dev):** Implemented all 3 phases (service layer, scheduler, web); architecture fully realized
+- **Basher (Tester):** Implemented provisioning phase; tested phases 1–3 before handoff
+- **Linus (Quant):** Agent instructions unaffected — context format identical; zero downstream impact
+- **Session log:** `.squad/log/2026-03-28T1347-cosmosdb-refactor-implementation.md`
+
+**Status:** ✅ Architecture delivered and fully implemented
