@@ -252,6 +252,14 @@ async def api_update_symbol(request: Request, symbol: str):
 
         doc["updated_at"] = datetime.utcnow().isoformat() + "Z"
         updated = cosmos.container.replace_item(item=doc["id"], body=doc)
+
+        # Cascade-delete decisions & signals when a watchlist agent is toggled OFF
+        sym = symbol.upper()
+        if "covered_call" in body and not bool(body["covered_call"]):
+            cosmos.delete_decisions_by_agent_type(sym, "covered_call")
+        if "cash_secured_put" in body and not bool(body["cash_secured_put"]):
+            cosmos.delete_decisions_by_agent_type(sym, "cash_secured_put")
+
         return JSONResponse(_clean_doc(updated))
     except RuntimeError as e:
         return JSONResponse({"error": str(e)}, status_code=503)

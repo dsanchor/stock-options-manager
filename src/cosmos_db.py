@@ -259,6 +259,48 @@ class CosmosDBService:
         )
         return result
 
+    def delete_decisions_by_agent_type(
+        self, symbol: str, agent_type: str
+    ) -> tuple[int, int]:
+        """Cascade-delete all decisions (and their signals) for a given agent type on a symbol."""
+        dec_query = (
+            "SELECT c.id FROM c "
+            "WHERE c.doc_type = 'decision' AND c.agent_type = @agent_type"
+        )
+        decisions = list(self.container.query_items(
+            query=dec_query,
+            parameters=[{"name": "@agent_type", "value": agent_type}],
+            partition_key=symbol,
+        ))
+        decision_ids = {d["id"] for d in decisions}
+
+        sig_count = 0
+        if decision_ids:
+            id_list = ", ".join(f"'{did}'" for did in decision_ids)
+            sig_query = (
+                f"SELECT c.id FROM c "
+                f"WHERE c.doc_type = 'signal' "
+                f"AND c.decision_id IN ({id_list})"
+            )
+            signals = list(self.container.query_items(
+                query=sig_query,
+                parameters=[],
+                partition_key=symbol,
+            ))
+            for sig in signals:
+                self.container.delete_item(
+                    item=sig["id"], partition_key=symbol)
+            sig_count = len(signals)
+
+        for dec in decisions:
+            self.container.delete_item(item=dec["id"], partition_key=symbol)
+
+        logger.info(
+            "Cascade-deleted agent_type '%s' for %s: %d decisions, %d signals removed",
+            agent_type, symbol, len(decisions), sig_count,
+        )
+        return len(decisions), sig_count
+
     # ── Decision / Signal Write ────────────────────────────────────────
 
     def write_decision(self, symbol: str, agent_type: str,
