@@ -65,6 +65,9 @@ def _stop_scheduler():
 
 @asynccontextmanager
 async def lifespan(app):
+    # Initialise CosmosDB (on_event("startup") is skipped when lifespan is set)
+    from web.app import init_cosmos
+    await init_cosmos(app)
     _start_scheduler()
     app.state.scheduler = _scheduler_instance
     yield

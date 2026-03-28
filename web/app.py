@@ -113,8 +113,9 @@ templates.env.filters["json_pretty"] = _json_pretty
 
 # ── Startup — initialise CosmosDB ─────────────────────────────────────────
 
-@app.on_event("startup")
-async def startup():
+async def init_cosmos(app_instance):
+    """Initialise CosmosDB on the given FastAPI app. Safe to call from
+    either the on_event("startup") handler or an external lifespan."""
     try:
         config = _load_config()
         cosmos_cfg = config.get("cosmosdb", {})
@@ -134,8 +135,8 @@ async def startup():
             )
             # Eagerly validate the connection so failures surface at startup
             cosmos.database.read()
-            app.state.cosmos = cosmos
-            app.state.cosmos_error = None
+            app_instance.state.cosmos = cosmos
+            app_instance.state.cosmos_error = None
             logger.info("CosmosDB initialized successfully: %s, database=%s",
                         endpoint, database)
         else:
@@ -146,13 +147,18 @@ async def startup():
                 missing.append("COSMOSDB_KEY")
             error_msg = (f"{' and '.join(missing)} environment variable"
                          f"{'s' if len(missing) > 1 else ''} not set")
-            app.state.cosmos = None
-            app.state.cosmos_error = error_msg
+            app_instance.state.cosmos = None
+            app_instance.state.cosmos_error = error_msg
             logger.warning("CosmosDB not initialized: %s", error_msg)
     except Exception as e:
         logger.exception("CosmosDB init failed")
-        app.state.cosmos = None
-        app.state.cosmos_error = str(e)
+        app_instance.state.cosmos = None
+        app_instance.state.cosmos_error = str(e)
+
+
+@app.on_event("startup")
+async def startup():
+    await init_cosmos(app)
 
 
 def _get_cosmos(request: Request):
