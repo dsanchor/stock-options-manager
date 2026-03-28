@@ -551,3 +551,18 @@ This 3-phase CosmosDB refactor directly impacts:
 - TradingView fetcher is now instantiated once per agent wrapper (shared across symbols) via `async with TradingViewFetcher() as fetcher` — fetcher passed to runner methods.
 - Agent instructions (tv_*_instructions.py) and tv_data_fetcher.py are UNCHANGED.
 - `logger.py` file I/O functions are no longer imported by agent_runner — they remain for any legacy usage but are effectively dead code in the agent pipeline.
+
+### Phase 4 — File-Based Storage Cleanup (2025-07)
+- Deleted `data/` directory (old .txt symbol files: covered_call_symbols, cash_secured_put_symbols, opened_calls, opened_puts).
+- Deleted `logs/` directory (old .jsonl decision/signal logs for all agent types).
+- Deleted `src/logger.py` — deprecated file-based logger, no longer imported anywhere after the CosmosDB migration.
+- Deleted `scripts/migrate_to_cosmosdb.py` — one-time migration script, no longer needed now that CosmosDB is the sole data store.
+- Updated README.md: fixed Per-symbol Context Filtering config (max_decision_entries: 2, no separate signal config), removed Migration section, removed Azure Files reference, added inline az CLI commands for CosmosDB provisioning, cleaned project structure tree.
+- Verified `config.py`, `cosmos_db.py`, and `main.py` compile cleanly — no references to deleted files.
+
+### Phase 5 — Unified Azure Setup Docs (2025-07)
+- Merged the separate "Deploy to Azure Container Apps" and "Azure CosmosDB Setup" README sections into a single "Azure Setup" section with a logical flow: variables → resource group → CosmosDB → Container Apps → update deployment.
+- Eliminated duplicate resource group creation and inconsistent location defaults (was `swedencentral` for Container Apps, `eastus` for CosmosDB — unified on `eastus`).
+- Replaced mixed `export VAR="value"` / `${VAR:-default}` patterns with consistent `${VAR:-default}` throughout.
+- Collapsed three CosmosDB setup options (script, inline CLI, portal) into inline CLI commands as the primary path, with a one-line note pointing to the script and portal as alternatives.
+- Verified `scripts/provision_cosmosdb.sh` variable names already match the README exactly — no script changes needed.

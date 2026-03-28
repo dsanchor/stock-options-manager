@@ -357,164 +357,54 @@ stock-options-manager/
 └── README.md
 ```
 
-## Deploy to Azure Container Apps
+## Azure Setup
 
-This section deploys the Stock Options Manager to Azure Container Apps. It assumes your Microsoft Foundry project, model deployment, and CosmosDB account already exist.
+This section provisions all Azure resources needed to run the Stock Options Manager: CosmosDB for data storage and Container Apps for hosting.
 
-### 1. Set Environment Variables
+### Prerequisites
+
+- [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/install-azure-cli) installed and logged in (`az login`)
+- Azure AI Foundry project with a model deployment already exists
+- Container image built (e.g., via GitHub Actions)
+
+### 1. Set Variables
 
 ```bash
-# Azure resource configuration
-export RESOURCE_GROUP="rg-stock-options-manager"
-export LOCATION="swedencentral"
-export CONTAINER_ENV="cae-stock-options-manager"
-export CONTAINER_APP="ca-stock-options-manager"
+# ── Resource names ───────────────────────────────────────────────────────────
+RESOURCE_GROUP="${RESOURCE_GROUP:-rg-stock-options-manager}"
+LOCATION="${LOCATION:-eastus}"
 
-# Azure OpenAI (from your existing Foundry deployment)
-export AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com"
-export MODEL_DEPLOYMENT="gpt-5.1"
-export AZURE_OPENAI_API_KEY="your-api-key-here"
+# CosmosDB
+COSMOSDB_ACCOUNT="${COSMOSDB_ACCOUNT:-cosmos-stock-options}"
+DATABASE_NAME="${DATABASE_NAME:-stock-options-manager}"
+CONTAINER_NAME="${CONTAINER_NAME:-symbols}"
 
-# CosmosDB (from provisioning script output)
-export COSMOSDB_ENDPOINT="https://your-account.documents.azure.com:443/"
-export COSMOSDB_KEY="your-primary-key"
+# Container Apps
+CONTAINER_ENV="${CONTAINER_ENV:-cae-stock-options-manager}"
+CONTAINER_APP="${CONTAINER_APP:-ca-stock-options-manager}"
+IMAGE="${IMAGE:-ghcr.io/dsanchor/stock-options-manager:latest}"
 
-# Container image (built by GitHub Actions)
-export IMAGE="ghcr.io/dsanchor/stock-options-manager:latest"
+# ── Credentials (fill these in) ─────────────────────────────────────────────
+AZURE_AI_PROJECT_ENDPOINT="${AZURE_AI_PROJECT_ENDPOINT:-your-project-endpoint}"
+MODEL_DEPLOYMENT="${MODEL_DEPLOYMENT:-gpt-5.1}"
+AZURE_OPENAI_API_KEY="${AZURE_OPENAI_API_KEY:-your-api-key-here}"
 ```
 
 ### 2. Create Resource Group
 
 ```bash
 az group create \
-  --name $RESOURCE_GROUP \
-  --location $LOCATION
-```
-
-### 3. Create Container Apps Environment
-
-```bash
-# Create the Container Apps environment
-az containerapp env create \
-  --name $CONTAINER_ENV \
-  --resource-group $RESOURCE_GROUP \
-  --location $LOCATION
-```
-
-### 4. Deploy the Container App
-
-```bash
-az containerapp create \
-  --name $CONTAINER_APP \
-  --resource-group $RESOURCE_GROUP \
-  --environment $CONTAINER_ENV \
-  --image $IMAGE \
-  --target-port 8000 \
-  --ingress external \
-  --min-replicas 1 \
-  --max-replicas 1 \
-  --cpu 1 \
-  --memory 2Gi \
-  --env-vars \
-    AZURE_AI_PROJECT_ENDPOINT="$AZURE_AI_PROJECT_ENDPOINT" \
-    MODEL_DEPLOYMENT="$MODEL_DEPLOYMENT" \
-    AZURE_OPENAI_API_KEY="$AZURE_OPENAI_API_KEY" \
-    COSMOSDB_ENDPOINT="$COSMOSDB_ENDPOINT" \
-    COSMOSDB_KEY="$COSMOSDB_KEY"
-```
-
-> **Note:** If your GHCR package is private, add `--registry-username <github-username> --registry-password <github-pat>` with a PAT that has `read:packages` scope.
-
-### 5. Verify Deployment
-
-```bash
-# Get the app URL
-export APP_URL=$(az containerapp show \
-  --name $CONTAINER_APP \
-  --resource-group $RESOURCE_GROUP \
-  --query "properties.configuration.ingress.fqdn" -o tsv)
-
-echo "Dashboard: https://$APP_URL"
-
-# Check logs
-az containerapp logs show \
-  --name $CONTAINER_APP \
-  --resource-group $RESOURCE_GROUP \
-  --follow
-```
-
-### Updating the Deployment
-
-After pushing new code (triggers the GitHub Actions workflow to build a new image):
-
-```bash
-az containerapp update \
-  --name $CONTAINER_APP \
-  --resource-group $RESOURCE_GROUP \
-  --image $IMAGE
-```
-
-## Azure CosmosDB Setup
-
-The application requires an Azure CosmosDB account with a `symbols` container. You can provision it automatically or set it up manually.
-
-### Option A: Automated Provisioning (Recommended)
-
-**Prerequisites:**
-- [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/install-azure-cli) installed
-- Logged in: `az login`
-- Sufficient permissions to create resources
-
-**Run the provisioning script:**
-
-```bash
-bash scripts/provision_cosmosdb.sh
-```
-
-This creates:
-1. Resource group `rg-stock-options-manager`
-2. CosmosDB account (serverless) `cosmos-stock-options`
-3. Database `stock-options-manager`
-4. Container `symbols` with partition key `/symbol`
-5. Custom indexing policy optimized for query patterns
-
-The script outputs the `COSMOSDB_ENDPOINT` and `COSMOSDB_KEY` values. Set them as environment variables:
-
-```bash
-export COSMOSDB_ENDPOINT="https://cosmos-stock-options.documents.azure.com:443/"
-export COSMOSDB_KEY="<primary-key-from-script-output>"
-```
-
-**Customizing resource names:** Override defaults with environment variables before running:
-
-```bash
-export RESOURCE_GROUP="my-rg"
-export LOCATION="westus2"
-export COSMOSDB_ACCOUNT="my-cosmos-account"
-bash scripts/provision_cosmosdb.sh
-```
-
-### Inline az CLI Commands
-
-If you prefer to run each step individually (or want to see exactly what the script does), here are the commands:
-
-> **Note:** Serverless mode is recommended for development and low-traffic workloads — you pay only per request with no minimum cost. It's the cheapest option for this use case.
-
-```bash
-# ── Variables ────────────────────────────────────────────────────────────────
-RESOURCE_GROUP="${RESOURCE_GROUP:-rg-stock-options-manager}"
-LOCATION="${LOCATION:-eastus}"
-COSMOSDB_ACCOUNT="${COSMOSDB_ACCOUNT:-cosmos-stock-options}"
-DATABASE_NAME="${DATABASE_NAME:-stock-options-manager}"
-CONTAINER_NAME="${CONTAINER_NAME:-symbols}"
-
-# ── 1. Create resource group ────────────────────────────────────────────────
-az group create \
   --name "$RESOURCE_GROUP" \
   --location "$LOCATION" \
   -o none
+```
 
-# ── 2. Create CosmosDB account (serverless — pay-per-request) ───────────────
+### 3. Provision CosmosDB
+
+Serverless is recommended — pay-per-request with no minimum cost.
+
+```bash
+# Create CosmosDB account (serverless)
 az cosmosdb create \
   --name "$COSMOSDB_ACCOUNT" \
   --resource-group "$RESOURCE_GROUP" \
@@ -524,14 +414,14 @@ az cosmosdb create \
   --locations regionName="$LOCATION" failoverPriority=0 isZoneRedundant=false \
   -o none
 
-# ── 3. Create database ──────────────────────────────────────────────────────
+# Create database
 az cosmosdb sql database create \
   --account-name "$COSMOSDB_ACCOUNT" \
   --resource-group "$RESOURCE_GROUP" \
   --name "$DATABASE_NAME" \
   -o none
 
-# ── 4. Create container with partition key /symbol ──────────────────────────
+# Create container with partition key /symbol
 az cosmosdb sql container create \
   --account-name "$COSMOSDB_ACCOUNT" \
   --resource-group "$RESOURCE_GROUP" \
@@ -541,9 +431,7 @@ az cosmosdb sql container create \
   --partition-key-version 2 \
   -o none
 
-# ── 5. Apply custom indexing policy ─────────────────────────────────────────
-#   Index query fields: symbol, doc_type, timestamp, watchlist flags, agent_type, decision
-#   Exclude large blobs: reason, raw_response, analysis_context
+# Apply custom indexing policy
 az cosmosdb sql container update \
   --account-name "$COSMOSDB_ACCOUNT" \
   --resource-group "$RESOURCE_GROUP" \
@@ -570,28 +458,84 @@ az cosmosdb sql container update \
   }' \
   -o none
 
-# ── 6. Retrieve endpoint and key ────────────────────────────────────────────
-az cosmosdb show \
+# Retrieve endpoint and key
+COSMOSDB_ENDPOINT=$(az cosmosdb show \
   --name "$COSMOSDB_ACCOUNT" \
   --resource-group "$RESOURCE_GROUP" \
   --query documentEndpoint \
-  --output tsv
+  --output tsv)
 
-az cosmosdb keys list \
+COSMOSDB_KEY=$(az cosmosdb keys list \
   --name "$COSMOSDB_ACCOUNT" \
   --resource-group "$RESOURCE_GROUP" \
   --query primaryMasterKey \
-  --output tsv
+  --output tsv)
+
+echo "COSMOSDB_ENDPOINT=$COSMOSDB_ENDPOINT"
+echo "COSMOSDB_KEY=$COSMOSDB_KEY"
 ```
 
-### Option B: Manual Setup via Azure Portal
+> **Alternatively**, run `bash scripts/provision_cosmosdb.sh` which performs these same steps, or create the resources manually via the [Azure Portal](https://portal.azure.com) (CosmosDB → NoSQL → serverless capacity mode).
 
-1. Go to **Azure Portal** → **Create a resource** → **Azure Cosmos DB** → **NoSQL**
-2. Create account with **serverless** capacity mode
-3. Create database: `stock-options-manager`
-4. Create container: `symbols` with partition key `/symbol`
-5. Go to **Keys** → copy the **URI** (endpoint) and **PRIMARY KEY**
-6. Set environment variables as shown above
+### 4. Deploy to Container Apps
+
+```bash
+# Create Container Apps environment
+az containerapp env create \
+  --name "$CONTAINER_ENV" \
+  --resource-group "$RESOURCE_GROUP" \
+  --location "$LOCATION" \
+  -o none
+
+# Deploy the container app
+az containerapp create \
+  --name "$CONTAINER_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --environment "$CONTAINER_ENV" \
+  --image "$IMAGE" \
+  --target-port 8000 \
+  --ingress external \
+  --min-replicas 1 \
+  --max-replicas 1 \
+  --cpu 1 \
+  --memory 2Gi \
+  --env-vars \
+    AZURE_AI_PROJECT_ENDPOINT="$AZURE_AI_PROJECT_ENDPOINT" \
+    MODEL_DEPLOYMENT="$MODEL_DEPLOYMENT" \
+    AZURE_OPENAI_API_KEY="$AZURE_OPENAI_API_KEY" \
+    COSMOSDB_ENDPOINT="$COSMOSDB_ENDPOINT" \
+    COSMOSDB_KEY="$COSMOSDB_KEY" \
+  -o none
+```
+
+> **Note:** If your GHCR package is private, add `--registry-username <github-username> --registry-password <github-pat>` with a PAT that has `read:packages` scope.
+
+```bash
+# Verify — get the app URL
+APP_URL=$(az containerapp show \
+  --name "$CONTAINER_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --query "properties.configuration.ingress.fqdn" -o tsv)
+
+echo "Dashboard: https://$APP_URL"
+
+# Check logs
+az containerapp logs show \
+  --name "$CONTAINER_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --follow
+```
+
+### 5. Update Deployment
+
+After pushing new code (triggers the GitHub Actions workflow to build a new image):
+
+```bash
+az containerapp update \
+  --name "$CONTAINER_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --image "$IMAGE"
+```
 
 ## Environment Variables
 
