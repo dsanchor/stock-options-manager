@@ -12,8 +12,11 @@ import argparse
 import threading
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
 import yaml
 import uvicorn
+
+load_dotenv()  # Load .env file if present
 
 # ---------------------------------------------------------------------------
 # Config helpers
