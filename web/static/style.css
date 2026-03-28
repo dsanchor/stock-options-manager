@@ -242,6 +242,17 @@ tbody td.num { text-align: right; font-family: var(--font-mono); }
 }
 .detail-value { font-size: 0.95rem; word-break: break-word; }
 
+.signal-banner {
+    margin-top: 0.5rem;
+    padding: 0.4rem 0.8rem;
+    background: rgba(255, 193, 7, 0.12);
+    border: 1px solid rgba(255, 193, 7, 0.3);
+    border-radius: 6px;
+    color: #ffc107;
+    font-size: 0.9rem;
+    display: inline-block;
+}
+
 .json-block {
     padding: 1rem 1.25rem;
     overflow-x: auto;

@@ -3,9 +3,11 @@
 
 {% block content %}
 <div class="page-header">
-    <a href="/signals/{{ agent_type }}/{{ symbol }}" class="back-link">← {{ agent_label }}: {{ symbol }}</a>
+    <a href="/symbols/{{ symbol }}" class="back-link">← {{ display_name }}</a>
     <h1>Decision Detail</h1>
-    <p class="subtitle">{{ agent_label }} · {{ symbol }} · Decision #{{ decision_index + 1 }}</p>
+    {% if is_signal %}
+    <div class="signal-banner">⚡ This decision triggered a signal</div>
+    {% endif %}
 </div>
 
 <!-- Decision card -->
@@ -22,32 +24,80 @@
     {% endif %}
 
     <div class="detail-grid">
-        {% for key, value in decision.items() %}
-        {% if key != 'reason' %}
         <div class="detail-field">
-            <div class="detail-label">{{ key }}</div>
-            <div class="detail-value {% if key in ('strike', 'underlying_price', 'premium', 'delta', 'iv', 'premium_pct', 'current_strike', 'new_strike') %}mono{% endif %}">
-                {% if value is mapping or value is iterable and value is not string %}
-                    {{ value | json_pretty }}
-                {% elif key in ('strike', 'underlying_price', 'premium', 'current_strike', 'new_strike') and value is not none %}
-                    ${{ value }}
-                {% elif key in ('premium_pct', 'iv') and value is not none %}
-                    {{ value }}%
-                {% else %}
-                    {{ value if value is not none else "—" }}
-                {% endif %}
+            <div class="detail-label">Timestamp</div>
+            <div class="detail-value mono">{{ decision.timestamp or "—" }}</div>
+        </div>
+        <div class="detail-field">
+            <div class="detail-label">Agent</div>
+            <div class="detail-value">{{ agent_label }}</div>
+        </div>
+        <div class="detail-field">
+            <div class="detail-label">Symbol</div>
+            <div class="detail-value mono">{{ symbol }}</div>
+        </div>
+        <div class="detail-field">
+            <div class="detail-label">Decision</div>
+            <div class="detail-value"><span class="badge badge-{{ decision.decision | lower }}">{{ decision.decision }}</span></div>
+        </div>
+        <div class="detail-field">
+            <div class="detail-label">Confidence</div>
+            <div class="detail-value"><span class="confidence confidence-{{ decision.confidence or 'medium' }}">{{ decision.confidence or "—" }}</span></div>
+        </div>
+        {% if decision.underlying_price is not none %}
+        <div class="detail-field">
+            <div class="detail-label">Underlying Price</div>
+            <div class="detail-value mono">${{ decision.underlying_price }}</div>
+        </div>
+        {% endif %}
+        {% if decision.strike is not none %}
+        <div class="detail-field">
+            <div class="detail-label">Strike</div>
+            <div class="detail-value mono">${{ decision.strike }}</div>
+        </div>
+        {% endif %}
+        {% if decision.expiration %}
+        <div class="detail-field">
+            <div class="detail-label">Expiration</div>
+            <div class="detail-value mono">{{ decision.expiration }}</div>
+        </div>
+        {% endif %}
+        {% if decision.premium is not none %}
+        <div class="detail-field">
+            <div class="detail-label">Premium</div>
+            <div class="detail-value mono">${{ decision.premium }}</div>
+        </div>
+        {% endif %}
+        {% if decision.iv is not none %}
+        <div class="detail-field">
+            <div class="detail-label">IV</div>
+            <div class="detail-value mono">{{ decision.iv }}%</div>
+        </div>
+        {% endif %}
+        {% if decision.risk_flags %}
+        <div class="detail-field">
+            <div class="detail-label">Risk Flags</div>
+            <div class="detail-value">
+                {% for flag in decision.risk_flags %}
+                <span class="flag">{{ flag }}</span>
+                {% endfor %}
             </div>
         </div>
         {% endif %}
-        {% endfor %}
+        {% if decision.position_id %}
+        <div class="detail-field">
+            <div class="detail-label">Position ID</div>
+            <div class="detail-value mono">{{ decision.position_id }}</div>
+        </div>
+        {% endif %}
     </div>
 </div>
 
 <!-- Full decision JSON -->
 <div class="card">
-    <div class="card-header">
-        <h2>Raw Decision JSON</h2>
-    </div>
-    <pre class="json-block">{{ decision | json_pretty }}</pre>
+    <details>
+        <summary style="cursor:pointer; padding:1rem; font-weight:600; color:var(--text-muted, #aaa);">Raw JSON</summary>
+        <pre class="json-block">{{ decision | json_pretty }}</pre>
+    </details>
 </div>
 {% endblock %}

@@ -374,6 +374,18 @@ class CosmosDBService:
             partition_key=symbol,
         ))
 
+    # ── Single-Document Lookups ────────────────────────────────────────
+
+    def get_decision_by_id(self, decision_id: str) -> dict | None:
+        """Get a single decision by its document ID (cross-partition)."""
+        query = "SELECT * FROM c WHERE c.id = @id AND c.doc_type = 'decision'"
+        results = list(self.container.query_items(
+            query=query,
+            parameters=[{"name": "@id", "value": decision_id}],
+            enable_cross_partition_query=True,
+        ))
+        return results[0] if results else None
+
     # ── Dashboard Queries ──────────────────────────────────────────────
 
     def get_all_signals(self, agent_type: str | None = None,

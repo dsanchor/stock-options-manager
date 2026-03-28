@@ -658,6 +658,42 @@ async def symbol_detail_page(request: Request, symbol: str):
 
 
 # ===========================================================================
+# Page Routes — Decision Detail
+# ===========================================================================
+
+@app.get("/decisions/{decision_id}", response_class=HTMLResponse)
+async def decision_detail_page(request: Request, decision_id: str):
+    cosmos = getattr(request.app.state, "cosmos", None)
+    if cosmos is None:
+        error_detail = getattr(request.app.state, "cosmos_error", "unknown")
+        return HTMLResponse(f"CosmosDB not available: {error_detail}",
+                            status_code=503)
+
+    decision = cosmos.get_decision_by_id(decision_id)
+    if not decision:
+        return HTMLResponse("Decision not found", status_code=404)
+
+    symbol = decision.get("symbol", "")
+    agent_type = decision.get("agent_type", "")
+    agent_label = AGENT_TYPES.get(agent_type, {}).get("label", agent_type)
+    is_signal = decision.get("is_signal", False)
+
+    # Build display_name from symbol config (for back link)
+    sym_doc = cosmos.get_symbol(symbol)
+    display_name = sym_doc["display_name"] if sym_doc else symbol
+
+    return templates.TemplateResponse("decision_detail.html", {
+        "request": request,
+        "decision": decision,
+        "symbol": symbol,
+        "display_name": display_name,
+        "agent_label": agent_label,
+        "agent_type": agent_type,
+        "is_signal": is_signal,
+    })
+
+
+# ===========================================================================
 # Page Routes — Settings
 # ===========================================================================
 

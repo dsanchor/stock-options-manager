@@ -5,7 +5,6 @@
 <div class="page-header">
     <a href="/symbols" class="back-link">← Symbols</a>
     <h1>{{ symbol_doc.display_name }}</h1>
-    <p class="subtitle">{{ symbol_doc.exchange }}</p>
     <div class="watchlist-toggles" style="display:flex; gap:1.5rem; align-items:center; margin-top:0.5rem;">
         <span style="display:flex; align-items:center; gap:0.4rem;">
             <label class="switch">
@@ -108,10 +107,10 @@
             </thead>
             <tbody>
                 {% for d in decisions %}
-                <tr>
+                <tr class="clickable-row" data-href="/decisions/{{ d.id }}">
                     <td class="mono">{{ d.timestamp[:19] }}</td>
                     <td>{{ d._agent_label }}</td>
-                    <td><span class="badge badge-{{ d.decision | lower }}">{{ d.decision }}</span></td>
+                    <td><span class="badge badge-{{ d.decision | lower }}">{{ d.decision }}</span>{% if d.is_signal %} ⚡{% endif %}</td>
                     <td class="mono">${{ d.underlying_price if d.underlying_price else "—" }}</td>
                     <td><span class="confidence confidence-{{ d.confidence or 'medium' }}">{{ d.confidence or "—" }}</span></td>
                     <td>{{ d.reason[:120] ~ ("…" if d.reason | length > 120 else "") if d.reason else "—" }}</td>
@@ -147,7 +146,7 @@
             </thead>
             <tbody>
                 {% for sig in signals %}
-                <tr>
+                <tr class="clickable-row" data-href="/decisions/{{ sig.decision_id }}">
                     <td class="mono">{{ sig.timestamp[:19] }}</td>
                     <td>{{ sig._agent_label }}</td>
                     <td><span class="badge badge-{{ (sig.decision | default('UNKNOWN', true)) | lower }}">{{ sig.decision | default("—", true) }}</span></td>
