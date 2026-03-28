@@ -206,7 +206,7 @@ class CosmosDBService:
         return self.container.replace_item(item=doc["id"], body=doc)
 
     def delete_position(self, symbol: str, position_id: str) -> dict:
-        """Remove a position entirely from a symbol."""
+        """Remove a position and all linked decisions/signals from a symbol."""
         doc = self.get_symbol(symbol)
         if doc is None:
             raise ValueError(f"Symbol {symbol} not found")
@@ -216,7 +216,48 @@ class CosmosDBService:
             if p["position_id"] != position_id
         ]
         doc["updated_at"] = datetime.utcnow().isoformat() + "Z"
-        return self.container.replace_item(item=doc["id"], body=doc)
+        result = self.container.replace_item(item=doc["id"], body=doc)
+
+        # Cascade: delete all decisions linked to this position
+        dec_query = (
+            "SELECT c.id FROM c "
+            "WHERE c.doc_type = 'decision' AND c.position_id = @position_id"
+        )
+        decisions = list(self.container.query_items(
+            query=dec_query,
+            parameters=[{"name": "@position_id", "value": position_id}],
+            partition_key=symbol,
+        ))
+        decision_ids = {d["id"] for d in decisions}
+
+        # Cascade: delete all signals linked to those decisions
+        if decision_ids:
+            # CosmosDB doesn't support parameterised IN lists directly,
+            # so build a safe literal list from the known document ids.
+            id_list = ", ".join(f"'{did}'" for did in decision_ids)
+            sig_query = (
+                f"SELECT c.id FROM c "
+                f"WHERE c.doc_type = 'signal' "
+                f"AND c.decision_id IN ({id_list})"
+            )
+            signals = list(self.container.query_items(
+                query=sig_query,
+                parameters=[],
+                partition_key=symbol,
+            ))
+            for sig in signals:
+                self.container.delete_item(
+                    item=sig["id"], partition_key=symbol)
+
+        for dec in decisions:
+            self.container.delete_item(item=dec["id"], partition_key=symbol)
+
+        logger.info(
+            "Cascade-deleted position %s: %d decisions, %d signals removed",
+            position_id, len(decisions),
+            len(signals) if decision_ids else 0,
+        )
+        return result
 
     # ── Decision / Signal Write ────────────────────────────────────────
 

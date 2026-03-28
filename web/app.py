@@ -541,6 +541,29 @@ async def dashboard(request: Request):
         empty_ctx["error"] = f"CosmosDB query failed: {e}"
         return templates.TemplateResponse("dashboard.html", empty_ctx)
 
+    # Build set of closed position IDs so we can exclude their data
+    closed_position_ids: set = set()
+    for sym_cfg in all_symbols:
+        for pos in sym_cfg.get("positions", []):
+            if pos.get("status") != "active":
+                closed_position_ids.add(pos["position_id"])
+
+    # Exclude decisions/signals linked to closed positions from dashboard
+    if closed_position_ids:
+        closed_decision_ids = {
+            d["id"] for d in all_decisions
+            if d.get("position_id") in closed_position_ids
+        }
+        all_decisions = [
+            d for d in all_decisions
+            if d.get("position_id") not in closed_position_ids
+        ]
+        all_signals = [
+            s for s in all_signals
+            if s.get("position_id") not in closed_position_ids
+            and s.get("decision_id") not in closed_decision_ids
+        ]
+
     symbol_count = len(all_symbols)
     position_count = sum(
         len([p for p in s.get("positions", []) if p.get("status") == "active"])
