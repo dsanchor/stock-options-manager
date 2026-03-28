@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import threading
@@ -13,6 +14,8 @@ from fastapi import FastAPI, Request, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+
+logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -44,7 +47,11 @@ def _write_config(config: Dict[str, Any]):
 def _resolve_env(s: str) -> str:
     """Resolve ${VAR_NAME} patterns in a string."""
     def _repl(m):
-        return os.environ.get(m.group(1), "")
+        var_name = m.group(1)
+        value = os.environ.get(var_name, "")
+        if not value:
+            logger.warning("Environment variable %s is not set", var_name)
+        return value
     return re.sub(r'\$\{([^}]+)\}', _repl, s)
 
 
@@ -114,22 +121,45 @@ async def startup():
         endpoint = _resolve_env(cosmos_cfg.get("endpoint", ""))
         key = _resolve_env(cosmos_cfg.get("key", ""))
         database = cosmos_cfg.get("database", "stock-options-manager")
+
+        logger.info("CosmosDB config — endpoint: %s, database: %s, "
+                     "key present: %s, key length: %d",
+                     endpoint or "(empty)", database,
+                     bool(key), len(key))
+
         if endpoint and key:
             from src.cosmos_db import CosmosDBService
-            app.state.cosmos = CosmosDBService(
+            cosmos = CosmosDBService(
                 endpoint=endpoint, key=key, database_name=database,
             )
+            # Eagerly validate the connection so failures surface at startup
+            cosmos.database.read()
+            app.state.cosmos = cosmos
+            app.state.cosmos_error = None
+            logger.info("CosmosDB initialized successfully: %s, database=%s",
+                        endpoint, database)
         else:
+            missing = []
+            if not endpoint:
+                missing.append("COSMOSDB_ENDPOINT")
+            if not key:
+                missing.append("COSMOSDB_KEY")
+            error_msg = (f"{' and '.join(missing)} environment variable"
+                         f"{'s' if len(missing) > 1 else ''} not set")
             app.state.cosmos = None
+            app.state.cosmos_error = error_msg
+            logger.warning("CosmosDB not initialized: %s", error_msg)
     except Exception as e:
-        print(f"WARNING: CosmosDB init failed: {e}")
+        logger.exception("CosmosDB init failed")
         app.state.cosmos = None
+        app.state.cosmos_error = str(e)
 
 
 def _get_cosmos(request: Request):
     cosmos = getattr(request.app.state, "cosmos", None)
     if cosmos is None:
-        raise RuntimeError("CosmosDB not available")
+        error = getattr(request.app.state, "cosmos_error", "unknown")
+        raise RuntimeError(f"CosmosDB not available: {error}")
     return cosmos
 
 
@@ -491,7 +521,8 @@ async def dashboard(request: Request):
         "symbol_count": 0, "position_count": 0, "activity": [],
     }
     if cosmos is None:
-        empty_ctx["error"] = "CosmosDB not available"
+        error_detail = getattr(request.app.state, "cosmos_error", "unknown")
+        empty_ctx["error"] = f"CosmosDB not available: {error_detail}"
         return templates.TemplateResponse("dashboard.html", empty_ctx)
 
     try:
@@ -558,7 +589,9 @@ async def symbols_page(request: Request):
 async def symbol_detail_page(request: Request, symbol: str):
     cosmos = getattr(request.app.state, "cosmos", None)
     if cosmos is None:
-        return HTMLResponse("CosmosDB not available", status_code=503)
+        error_detail = getattr(request.app.state, "cosmos_error", "unknown")
+        return HTMLResponse(f"CosmosDB not available: {error_detail}",
+                            status_code=503)
 
     doc = cosmos.get_symbol(symbol.upper())
     if not doc:
@@ -608,6 +641,7 @@ async def settings_page(request: Request):
     cosmos_status = ("Connected"
                      if getattr(request.app.state, "cosmos", None)
                      else "Not connected")
+    cosmos_error = getattr(request.app.state, "cosmos_error", None)
 
     return templates.TemplateResponse("settings.html", {
         "request": request,
@@ -615,6 +649,7 @@ async def settings_page(request: Request):
         "cosmos_endpoint": cosmos_endpoint,
         "cosmos_database": cosmos_database,
         "cosmos_status": cosmos_status,
+        "cosmos_error": cosmos_error,
     })
 
 
@@ -647,6 +682,7 @@ async def settings_save(request: Request):
     cosmos_status = ("Connected"
                      if getattr(request.app.state, "cosmos", None)
                      else "Not connected")
+    cosmos_error = getattr(request.app.state, "cosmos_error", None)
 
     return templates.TemplateResponse("settings.html", {
         "request": request,
@@ -655,6 +691,7 @@ async def settings_save(request: Request):
         "cosmos_endpoint": cosmos_endpoint,
         "cosmos_database": cosmos_database,
         "cosmos_status": cosmos_status,
+        "cosmos_error": cosmos_error,
     })
 
 

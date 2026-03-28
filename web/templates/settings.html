@@ -34,7 +34,9 @@
 <div class="card settings-card">
     <div class="card-header">
         <h2>CosmosDB Connection</h2>
-        <span class="badge badge-{{ 'wait' if cosmos_status == 'Connected' else 'sell' }}">{{ cosmos_status }}</span>
+        <span class="badge badge-{{ 'wait' if cosmos_status == 'Connected' else 'sell' }}">
+            {{ '✅' if cosmos_status == 'Connected' else '❌' }} {{ cosmos_status }}
+        </span>
     </div>
     <div class="detail-grid" style="padding:0.5rem 1rem;">
         <div class="detail-field">
@@ -45,6 +47,12 @@
             <div class="detail-label">Database</div>
             <div class="detail-value mono">{{ cosmos_database }}</div>
         </div>
+        {% if cosmos_error %}
+        <div class="detail-field" style="grid-column: 1 / -1;">
+            <div class="detail-label">Error</div>
+            <div class="detail-value mono" style="color: var(--red, #e06c75);">{{ cosmos_error }}</div>
+        </div>
+        {% endif %}
     </div>
 </div>
 {% endblock %}
