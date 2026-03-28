@@ -653,7 +653,8 @@ def _run_agent_in_background(agent_type: str, scheduler):
     }
     func = funcs[agent_type]
     try:
-        asyncio.run(func(scheduler.config, scheduler.runner))
+        asyncio.run(func(scheduler.config, scheduler.runner,
+                         scheduler.cosmos, scheduler.context_provider))
     except Exception as e:
         print(f"ERROR running {agent_type} trigger: {e}")
 

@@ -6,13 +6,14 @@ import re
 import traceback
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
+
 from agent_framework import ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient
 
-from .logger import read_decision_log, read_signal_log, append_decision, append_signal
+from .cosmos_db import CosmosDBService
+from .context import ContextProvider
 
 # Canonical timestamp format — used for ALL decision and signal log entries.
-# Must match the format expected by web/app.py parse_timestamp().
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 # ---------------------------------------------------------------------------
@@ -51,53 +52,6 @@ class AgentRunner:
             deployment_name=model,
             api_key=api_key,
         )
-    
-    def _read_symbols(self, symbols_file: str) -> List[str]:
-        """Read symbols from file, one per line, ignoring comments."""
-        if not os.path.exists(symbols_file):
-            print(f"Warning: Symbols file {symbols_file} not found")
-            return []
-        
-        with open(symbols_file, 'r') as f:
-            symbols = [line.strip() for line in f if line.strip() and not line.startswith('#')]
-        
-        return symbols
-
-    @staticmethod
-    def _read_positions(positions_file: str) -> List[Tuple[str, float, str]]:
-        """Read positions from file. Each line: EXCHANGE-SYMBOL,strike,expiration.
-
-        Returns:
-            List of (symbol, strike, expiration) tuples.
-            symbol is the full EXCHANGE-SYMBOL string (e.g. "NYSE-MO").
-        """
-        if not os.path.exists(positions_file):
-            return []
-
-        positions: List[Tuple[str, float, str]] = []
-        with open(positions_file, 'r') as f:
-            for lineno, raw in enumerate(f, 1):
-                line = raw.strip()
-                if not line or line.startswith('#'):
-                    continue
-                parts = [p.strip() for p in line.split(',')]
-                if len(parts) != 3:
-                    logger.warning(
-                        "Skipping malformed position line %d in %s: %r",
-                        lineno, positions_file, line,
-                    )
-                    continue
-                symbol_str, strike_str, expiration = parts
-                try:
-                    strike = float(strike_str)
-                except ValueError:
-                    logger.warning(
-                        "Invalid strike %r on line %d of %s — skipping",
-                        strike_str, lineno, positions_file,
-                    )
-                    continue
-                positions.append((symbol_str, strike, expiration))
-        return positions
     
     # ── JSON / SUMMARY extraction ──────────────────────────────────────
 
@@ -284,292 +238,309 @@ class AgentRunner:
         upper = response_text.upper()
         return "CLEAR SELL SIGNAL" in upper or "🚨" in response_text or "SIGNAL: SELL" in upper
     
-    async def run_agent(self, name: str, instructions: str, symbols_file: str, 
-                       decision_log_path: str, signal_log_path: str,
-                       max_decision_entries: int = 20,
-                       max_signal_entries: int = 10):
-        """Run agent analysis for all symbols.
-        
+    async def run_symbol_agent(
+        self,
+        name: str,
+        instructions: str,
+        symbol: str,
+        exchange: str,
+        agent_type: str,
+        cosmos: CosmosDBService,
+        context_provider: ContextProvider,
+        max_decision_entries: int = 2,
+        fetcher=None,
+    ):
+        """Run agent analysis for a single symbol.
+
         Args:
-            name: Agent name
+            name: Agent name (e.g. "CoveredCallAgent")
             instructions: Base instructions for the agent
-            symbols_file: Path to file containing symbols (one per line)
-            decision_log_path: Path to decision log
-            signal_log_path: Path to signal log
-            max_decision_entries: Max recent decisions to inject per symbol
-            max_signal_entries: Max recent signals to inject per symbol
+            symbol: Ticker symbol (e.g. "AAPL")
+            exchange: Exchange code (e.g. "NASDAQ")
+            agent_type: Agent type key (e.g. "covered_call")
+            cosmos: CosmosDBService instance for persistence
+            context_provider: ContextProvider for decision history injection
+            max_decision_entries: Max recent decisions for context (0–5)
+            fetcher: TradingViewFetcher instance (shared across symbols)
         """
-        print(f"\n{'='*60}")
-        print(f"Starting {name} analysis")
-        print(f"{'='*60}")
-        
-        # Read symbols
-        symbols = self._read_symbols(symbols_file)
-        if not symbols:
-            print(f"No symbols found in {symbols_file}")
-            return
-        
-        print(f"Analyzing {len(symbols)} symbols: {', '.join(symbols)}")
-        
-        from .tv_data_fetcher import TradingViewFetcher
+        full_symbol = f"{exchange}-{symbol}" if exchange else symbol
 
-        async with TradingViewFetcher() as fetcher:
-            agent = ChatAgent(
-                chat_client=self.client,
-                name=name,
-                instructions=instructions,
-                # NO tools — agent only analyzes pre-fetched data
-            )
-            logger.debug(
-                "ChatAgent '%s' (TradingView pre-fetch mode).",
-                name,
+        print(f"\n--- Analyzing {full_symbol} ---")
+        logger.info("Starting pre-fetch + agent.run() for symbol=%s", full_symbol)
+
+        analysis_ts = datetime.now().strftime(TIMESTAMP_FORMAT)
+
+        try:
+            # Context injection from CosmosDB
+            previous_context = context_provider.get_context(
+                symbol, agent_type, max_entries=max_decision_entries,
             )
 
-            for symbol in symbols:
-                print(f"\n--- Analyzing {symbol} ---")
-                logger.info("Starting pre-fetch + agent.run() for symbol=%s", symbol)
+            # Pre-fetch all TradingView data
+            data = await fetcher.fetch_all(full_symbol)
 
-                # Capture timestamp BEFORE agent execution — single source of truth
-                analysis_ts = datetime.now().strftime(TIMESTAMP_FORMAT)
-
-                try:
-                    exchange, ticker = symbol.split('-', 1) if '-' in symbol else ("", symbol)
-
-                    # Read per-symbol context
-                    previous_decisions = read_decision_log(
-                        decision_log_path, max_entries=max_decision_entries, symbol=ticker)
-                    previous_signals = read_signal_log(
-                        signal_log_path, max_entries=max_signal_entries, symbol=ticker)
-
-                    # Pre-fetch all TradingView data deterministically
-                    data = await fetcher.fetch_all(symbol)
-
-                    message = f"""Analyze {ticker} (exchange: {exchange}, full symbol: {symbol}).
+            message = f"""Analyze {symbol} (exchange: {exchange}, full symbol: {full_symbol}).
 
 === PRE-FETCHED TRADINGVIEW DATA ===
 
---- OVERVIEW PAGE ({exchange}:{ticker}) ---
+--- OVERVIEW PAGE ({exchange}:{symbol}) ---
 {data['overview']}
 
---- TECHNICALS PAGE ({exchange}:{ticker}) ---
+--- TECHNICALS PAGE ({exchange}:{symbol}) ---
 {data['technicals']}
 
---- FORECAST PAGE ({exchange}:{ticker}) ---
+--- FORECAST PAGE ({exchange}:{symbol}) ---
 {data['forecast']}
 
---- OPTIONS CHAIN ({exchange}:{ticker}) ---
+--- OPTIONS CHAIN ({exchange}:{symbol}) ---
 {data['options_chain']}
 
 === END OF DATA ===
 
-Previous decisions for {ticker}:
-{previous_decisions}
-
-Previous signals for {ticker}:
-{previous_signals}
+Previous decisions for {symbol}:
+{previous_context}
 
 Current timestamp: {analysis_ts}
 All market data has been pre-fetched above. Do NOT use any browser tools — analyze the data provided and output your decision in the required JSON format. Use the timestamp above in your JSON output; do NOT generate your own."""
 
-                    result = await agent.run(message)
-                    response_text = result.text or str(result)
-
-                    logger.info(
-                        "agent.run() completed for %s – response length=%d",
-                        symbol, len(response_text),
-                    )
-                    logger.debug(
-                        "Response first 500 chars for %s: %s",
-                        symbol, response_text[:500],
-                    )
-
-                    print(f"Response: {response_text[:200]}...")
-
-                    # Log decision — always override timestamp from Python
-                    decision_line, json_data = self._extract_decision_line(symbol, response_text)
-                    if json_data is not None:
-                        json_data["timestamp"] = analysis_ts
-                        append_decision(decision_log_path, json_data)
-                    else:
-                        append_decision(decision_log_path, {
-                            "symbol": symbol,
-                            "summary": decision_line,
-                            "timestamp": analysis_ts,
-                        })
-                    print(f"Logged decision")
-
-                    # Check for sell signal
-                    if self._is_sell_signal(response_text, json_data):
-                        signal_data = self._build_signal_data(symbol, json_data, analysis_ts)
-                        append_signal(signal_log_path, signal_data)
-                        print(f"⚠️ SELL SIGNAL logged for {symbol}")
-
-                except Exception as e:
-                    logger.error(
-                        "agent.run() FAILED for %s:\n%s",
-                        symbol, traceback.format_exc(),
-                    )
-                    print(f"Error analyzing {symbol}: {e}")
-                    append_decision(decision_log_path, {
-                        "error": str(e),
-                        "symbol": symbol,
-                        "timestamp": analysis_ts,
-                    })
-
-        print(f"\n{'='*60}")
-        print(f"Completed {name} analysis")
-        print(f"{'='*60}\n")
-
-    # ------------------------------------------------------------------
-    # Position Monitor Agent (TradingView-only)
-    # ------------------------------------------------------------------
-
-    async def run_position_monitor_agent(
-        self,
-        name: str,
-        instructions: str,
-        positions_file: str,
-        decision_log_path: str,
-        signal_log_path: str,
-        position_type: str = "call",
-        max_decision_entries: int = 20,
-        max_signal_entries: int = 10,
-    ):
-        """Run position monitor for open options positions (TradingView only).
-
-        Args:
-            name: Agent name (e.g. "OpenCallMonitor")
-            instructions: System instructions for the monitor agent
-            positions_file: Path to file with positions (EXCHANGE-SYMBOL,strike,expiration)
-            decision_log_path: Path to decision JSONL log
-            signal_log_path: Path to signal JSONL log (roll signals only)
-            position_type: "call" or "put"
-            max_decision_entries: Max recent decisions to inject per symbol
-            max_signal_entries: Max recent signals to inject per symbol
-        """
-        print(f"\n{'='*60}")
-        print(f"Starting {name} monitoring")
-        print(f"{'='*60}")
-
-        positions = self._read_positions(positions_file)
-        if not positions:
-            print(f"No active positions in {positions_file} — skipping {name}")
-            return
-
-        print(f"Monitoring {len(positions)} open {position_type} position(s)")
-
-        from .tv_data_fetcher import TradingViewFetcher
-
-        async with TradingViewFetcher() as fetcher:
             agent = ChatAgent(
                 chat_client=self.client,
                 name=name,
                 instructions=instructions,
             )
-            logger.debug("ChatAgent '%s' (position monitor, TradingView pre-fetch).", name)
+            result = await agent.run(message)
+            response_text = result.text or str(result)
 
-            for symbol, strike, expiration in positions:
-                exchange, ticker = (symbol.split('-', 1) if '-' in symbol
-                                    else ("", symbol))
+            logger.info(
+                "agent.run() completed for %s – response length=%d",
+                full_symbol, len(response_text),
+            )
+            logger.debug(
+                "Response first 500 chars for %s: %s",
+                full_symbol, response_text[:500],
+            )
 
-                print(f"\n--- Monitoring {ticker} ${strike} exp {expiration} ---")
-                logger.info(
-                    "Position monitor pre-fetch + agent.run() for %s strike=%s exp=%s",
-                    symbol, strike, expiration,
+            print(f"Response: {response_text[:200]}...")
+
+            # Parse decision from agent output
+            decision_line, json_data = self._extract_decision_line(full_symbol, response_text)
+
+            # Build decision payload
+            decision_payload: Dict = {}
+            if json_data is not None:
+                decision_payload = dict(json_data)
+                decision_payload["timestamp"] = analysis_ts
+            else:
+                decision_payload = {
+                    "symbol": symbol,
+                    "exchange": exchange,
+                    "summary": decision_line,
+                    "timestamp": analysis_ts,
+                }
+
+            # Determine if this is a signal
+            is_signal = self._is_sell_signal(response_text, json_data)
+            decision_payload["is_signal"] = is_signal
+
+            # Write decision to CosmosDB
+            dec_doc = cosmos.write_decision(
+                symbol=symbol,
+                agent_type=agent_type,
+                decision_data=decision_payload,
+                timestamp=analysis_ts,
+            )
+            print(f"Logged decision")
+
+            # Write signal if actionable
+            if is_signal:
+                signal_data = self._build_signal_data(full_symbol, json_data, analysis_ts)
+                cosmos.write_signal(
+                    symbol=symbol,
+                    agent_type=agent_type,
+                    signal_data=signal_data,
+                    decision_id=dec_doc["id"],
+                    timestamp=analysis_ts,
                 )
+                print(f"⚠️ SELL SIGNAL logged for {full_symbol}")
 
-                # Capture timestamp BEFORE agent execution — single source of truth
-                analysis_ts = datetime.now().strftime(TIMESTAMP_FORMAT)
+        except Exception as e:
+            logger.error(
+                "agent.run() FAILED for %s:\n%s",
+                full_symbol, traceback.format_exc(),
+            )
+            print(f"Error analyzing {full_symbol}: {e}")
+            cosmos.write_decision(
+                symbol=symbol,
+                agent_type=agent_type,
+                decision_data={
+                    "error": str(e),
+                    "symbol": symbol,
+                    "exchange": exchange,
+                    "timestamp": analysis_ts,
+                    "is_signal": False,
+                },
+                timestamp=analysis_ts,
+            )
 
-                try:
-                    previous_decisions = read_decision_log(
-                        decision_log_path, max_entries=max_decision_entries, symbol=ticker)
-                    previous_signals = read_signal_log(
-                        signal_log_path, max_entries=max_signal_entries, symbol=ticker)
+    # ------------------------------------------------------------------
+    # Position Monitor (single position, CosmosDB-backed)
+    # ------------------------------------------------------------------
 
-                    data = await fetcher.fetch_all(symbol)
+    async def run_position_monitor(
+        self,
+        name: str,
+        instructions: str,
+        symbol: str,
+        exchange: str,
+        position: dict,
+        agent_type: str,
+        cosmos: CosmosDBService,
+        context_provider: ContextProvider,
+        max_decision_entries: int = 2,
+        fetcher=None,
+    ):
+        """Run position monitor for a single open position.
 
-                    message = f"""Analyze open {position_type} position for {ticker}:
+        Args:
+            name: Agent name (e.g. "OpenCallMonitor")
+            instructions: System instructions for the monitor agent
+            symbol: Ticker symbol
+            exchange: Exchange code
+            position: Position dict with strike, expiration, position_id, type
+            agent_type: Agent type key (e.g. "open_call_monitor")
+            cosmos: CosmosDBService instance
+            context_provider: ContextProvider for history injection
+            max_decision_entries: Max recent decisions for context (0–5)
+            fetcher: TradingViewFetcher instance (shared)
+        """
+        full_symbol = f"{exchange}-{symbol}" if exchange else symbol
+        strike = position["strike"]
+        expiration = position["expiration"]
+        position_id = position.get("position_id", "")
+        position_type = position.get("type", "call")
+
+        print(f"\n--- Monitoring {symbol} ${strike} exp {expiration} ---")
+        logger.info(
+            "Position monitor pre-fetch + agent.run() for %s strike=%s exp=%s",
+            full_symbol, strike, expiration,
+        )
+
+        analysis_ts = datetime.now().strftime(TIMESTAMP_FORMAT)
+
+        try:
+            # Context injection from CosmosDB (filtered by position)
+            previous_context = context_provider.get_context(
+                symbol, agent_type, max_entries=max_decision_entries,
+                position_id=position_id,
+            )
+
+            data = await fetcher.fetch_all(full_symbol)
+
+            message = f"""Analyze open {position_type} position for {symbol}:
 - Current strike: ${strike}
 - Current expiration: {expiration}
 - Exchange: {exchange}
 
 === PRE-FETCHED TRADINGVIEW DATA ===
 
---- OVERVIEW PAGE ({exchange}:{ticker}) ---
+--- OVERVIEW PAGE ({exchange}:{symbol}) ---
 {data['overview']}
 
---- TECHNICALS PAGE ({exchange}:{ticker}) ---
+--- TECHNICALS PAGE ({exchange}:{symbol}) ---
 {data['technicals']}
 
---- FORECAST PAGE ({exchange}:{ticker}) ---
+--- FORECAST PAGE ({exchange}:{symbol}) ---
 {data['forecast']}
 
---- OPTIONS CHAIN ({exchange}:{ticker}) ---
+--- OPTIONS CHAIN ({exchange}:{symbol}) ---
 {data['options_chain']}
 
 === END OF DATA ===
 
-Previous monitor decisions for {ticker}:
-{previous_decisions}
-
-Previous roll signals for {ticker}:
-{previous_signals}
+Previous monitor decisions for {symbol}:
+{previous_context}
 
 Current timestamp: {analysis_ts}
 Analyze the position risk and output your decision in the required JSON format. Use the timestamp above in your JSON output; do NOT generate your own."""
 
-                    result = await agent.run(message)
-                    response_text = result.text or str(result)
+            agent = ChatAgent(
+                chat_client=self.client,
+                name=name,
+                instructions=instructions,
+            )
+            result = await agent.run(message)
+            response_text = result.text or str(result)
 
-                    logger.info(
-                        "agent.run() completed for %s – response length=%d",
-                        symbol, len(response_text),
-                    )
-                    logger.debug(
-                        "Response first 500 chars for %s: %s",
-                        symbol, response_text[:500],
-                    )
+            logger.info(
+                "agent.run() completed for %s – response length=%d",
+                full_symbol, len(response_text),
+            )
+            logger.debug(
+                "Response first 500 chars for %s: %s",
+                full_symbol, response_text[:500],
+            )
 
-                    print(f"Response: {response_text[:200]}...")
+            print(f"Response: {response_text[:200]}...")
 
-                    # Log decision — always override timestamp from Python
-                    decision_line, json_data = self._extract_decision_line(symbol, response_text)
-                    if json_data is not None:
-                        json_data["timestamp"] = analysis_ts
-                        append_decision(decision_log_path, json_data)
-                    else:
-                        append_decision(decision_log_path, {
-                            "symbol": ticker,
-                            "exchange": exchange,
-                            "current_strike": strike,
-                            "current_expiration": expiration,
-                            "summary": decision_line,
-                            "timestamp": analysis_ts,
-                        })
-                    print(f"Logged decision")
+            # Parse decision
+            decision_line, json_data = self._extract_decision_line(full_symbol, response_text)
 
-                    # Check for roll signal
-                    if self._is_roll_signal(response_text, json_data):
-                        signal_data = self._build_roll_signal_data(symbol, json_data, analysis_ts)
-                        append_signal(signal_log_path, signal_data)
-                        print(f"⚠️ ROLL SIGNAL logged for {symbol} ${strike} exp {expiration}")
+            decision_payload: Dict = {}
+            if json_data is not None:
+                decision_payload = dict(json_data)
+                decision_payload["timestamp"] = analysis_ts
+            else:
+                decision_payload = {
+                    "symbol": symbol,
+                    "exchange": exchange,
+                    "current_strike": strike,
+                    "current_expiration": expiration,
+                    "summary": decision_line,
+                    "timestamp": analysis_ts,
+                }
+            decision_payload["position_id"] = position_id
 
-                except Exception as e:
-                    logger.error(
-                        "Position monitor FAILED for %s strike=%s exp=%s:\n%s",
-                        symbol, strike, expiration, traceback.format_exc(),
-                    )
-                    print(f"Error monitoring {symbol} ${strike} exp {expiration}: {e}")
-                    append_decision(decision_log_path, {
-                        "error": str(e),
-                        "symbol": ticker,
-                        "exchange": exchange,
-                        "current_strike": strike,
-                        "current_expiration": expiration,
-                        "timestamp": analysis_ts,
-                    })
+            # Determine if this is a roll/close signal
+            is_signal = self._is_roll_signal(response_text, json_data)
+            decision_payload["is_signal"] = is_signal
 
-        print(f"\n{'='*60}")
-        print(f"Completed {name} monitoring")
-        print(f"{'='*60}\n")
+            dec_doc = cosmos.write_decision(
+                symbol=symbol,
+                agent_type=agent_type,
+                decision_data=decision_payload,
+                timestamp=analysis_ts,
+            )
+            print(f"Logged decision")
+
+            if is_signal:
+                signal_data = self._build_roll_signal_data(full_symbol, json_data, analysis_ts)
+                cosmos.write_signal(
+                    symbol=symbol,
+                    agent_type=agent_type,
+                    signal_data=signal_data,
+                    decision_id=dec_doc["id"],
+                    timestamp=analysis_ts,
+                )
+                print(f"⚠️ ROLL SIGNAL logged for {full_symbol} ${strike} exp {expiration}")
+
+        except Exception as e:
+            logger.error(
+                "Position monitor FAILED for %s strike=%s exp=%s:\n%s",
+                full_symbol, strike, expiration, traceback.format_exc(),
+            )
+            print(f"Error monitoring {full_symbol} ${strike} exp {expiration}: {e}")
+            cosmos.write_decision(
+                symbol=symbol,
+                agent_type=agent_type,
+                decision_data={
+                    "error": str(e),
+                    "symbol": symbol,
+                    "exchange": exchange,
+                    "current_strike": strike,
+                    "current_expiration": expiration,
+                    "position_id": position_id,
+                    "timestamp": analysis_ts,
+                    "is_signal": False,
+                },
+                timestamp=analysis_ts,
+            )

@@ -8,6 +8,8 @@ from croniter import croniter
 
 from .config import Config
 from .agent_runner import AgentRunner
+from .cosmos_db import CosmosDBService
+from .context import ContextProvider
 from .covered_call_agent import run_covered_call_analysis
 from .cash_secured_put_agent import run_cash_secured_put_analysis
 from .open_call_monitor_agent import run_open_call_monitor
@@ -21,6 +23,8 @@ class OptionsAgentScheduler:
         self.running = True
         self.config = None
         self.runner = None
+        self.cosmos = None
+        self.context_provider = None
         self._cron_changed = False
     
     def reschedule(self, new_cron: str):
@@ -29,10 +33,18 @@ class OptionsAgentScheduler:
         self._cron_changed = True
     
     def setup(self):
-        """Initialize configuration and agent runner."""
+        """Initialize configuration, CosmosDB, and agent runner."""
         print("Loading configuration...")
         self.config = Config()
         
+        print("Initializing CosmosDB service...")
+        self.cosmos = CosmosDBService(
+            endpoint=self.config.cosmosdb_endpoint,
+            key=self.config.cosmosdb_key,
+            database_name=self.config.cosmosdb_database,
+        )
+        self.context_provider = ContextProvider(self.cosmos)
+
         print("Initializing Agent Framework Runner...")
         self.runner = AgentRunner(
             project_endpoint=self.config.azure_endpoint,
@@ -53,15 +65,20 @@ class OptionsAgentScheduler:
         print(f"{'#'*70}\n")
         
         try:
+            cosmos = self.cosmos
+            ctx = self.context_provider
+            runner = self.runner
+            config = self.config
+
             # Run covered call agent
-            await run_covered_call_analysis(self.config, self.runner)
+            await run_covered_call_analysis(config, runner, cosmos, ctx)
             
             # Run cash secured put agent
-            await run_cash_secured_put_analysis(self.config, self.runner)
+            await run_cash_secured_put_analysis(config, runner, cosmos, ctx)
 
-            # Run open position monitors (skip gracefully if no active positions)
-            await run_open_call_monitor(self.config, self.runner)
-            await run_open_put_monitor(self.config, self.runner)
+            # Run open position monitors
+            await run_open_call_monitor(config, runner, cosmos, ctx)
+            await run_open_put_monitor(config, runner, cosmos, ctx)
             
         except Exception as e:
             print(f"ERROR during agent execution: {str(e)}")

@@ -504,3 +504,26 @@ Replaced the pipe-delimited output format across ALL 8 instruction files, plus u
 - Troubleshooting: replaced "run az login" with "check your API key" guidance.
 - Key files: `src/agent_runner.py` (client init), `src/config.py` (api_key property + validation), `src/main.py` (runner instantiation), `config.yaml`, `requirements.txt`, `README.md`.
 - Key pattern: API key auth is simpler for containerized workloads — no need to mount Azure CLI state or manage token refresh.
+
+### CosmosDB Foundation — Phase 1 (2025-07)
+- Replaced the file-based data model (`.txt` symbol lists, `.jsonl` logs) with a symbol-centric CosmosDB backend.
+- New files: `src/cosmos_db.py` (CosmosDBService — 18 methods), `src/context.py` (ContextProvider adapter).
+- Modified files: `src/config.py` (added cosmosdb section, removed per-agent file path properties), `config.yaml` (added cosmosdb section, removed covered_call/cash_secured_put/open_call_monitor/open_put_monitor sections), `requirements.txt` (added azure-cosmos>=4.7.0).
+- **Architecture decision:** Hybrid document model — single container "symbols" with partition key `/symbol`, three doc types: `symbol_config`, `decision`, `signal`. All cross-type queries within a symbol are single-partition.
+- **TTL support:** `write_decision()` accepts optional `ttl_seconds` param; `decision_ttl_days` config field (default 90) enables automatic cleanup.
+- **Context injection pattern:** `ContextProvider` produces the same `reason`-per-line format that `logger.read_decision_log` / `read_signal_log` did, so agent instructions require zero changes.
+- **Config validation:** `cosmosdb.endpoint` and `cosmosdb.key` are now required fields; env var substitution pattern unchanged (`${COSMOSDB_ENDPOINT}`, `${COSMOSDB_KEY}`).
+- **Key files:** `src/cosmos_db.py`, `src/context.py`, `src/config.py`, `config.yaml`.
+- **Dependency:** `azure-cosmos>=4.7.0` added to `requirements.txt`.
+
+### Phase 2: Scheduler + Agent Runner CosmosDB Refactor (2025-07)
+- Refactored `agent_runner.py`: removed all file I/O (`_read_symbols`, `_read_positions`, file-based `append_decision/signal`). Now accepts `CosmosDBService` and `ContextProvider` as dependencies.
+- Two new entry methods: `run_symbol_agent()` (for covered call + CSP) and `run_position_monitor()` (for open call/put monitors). Each handles a single symbol/position — scheduler owns the iteration loop.
+- Context injection uses `ContextProvider.get_context(symbol, agent_type, max_entries=config.max_decision_entries)` — no separate signal context, signals are embedded in decisions via `is_signal` field.
+- Decision writing: `cosmos.write_decision()` produces a doc, then if actionable (SELL for sell-side, ROLL/CLOSE for monitors), `cosmos.write_signal()` is called with the decision_id linkage, and `is_signal=True` is set on the decision payload.
+- Refactored `main.py`: scheduler now initializes `CosmosDBService` and `ContextProvider` at `setup()`. `_run_all_agents_async()` passes cosmos+context_provider to all four agent wrappers.
+- All four agent wrappers (`covered_call_agent.py`, `cash_secured_put_agent.py`, `open_call_monitor_agent.py`, `open_put_monitor_agent.py`) rewritten: query CosmosDB for enabled symbols/positions, create a shared `TradingViewFetcher` context manager, iterate symbols calling the runner per-symbol.
+- Updated `web/app.py` `_run_agent_in_background()` to pass `scheduler.cosmos` and `scheduler.context_provider` to agent wrapper functions.
+- TradingView fetcher is now instantiated once per agent wrapper (shared across symbols) via `async with TradingViewFetcher() as fetcher` — fetcher passed to runner methods.
+- Agent instructions (tv_*_instructions.py) and tv_data_fetcher.py are UNCHANGED.
+- `logger.py` file I/O functions are no longer imported by agent_runner — they remain for any legacy usage but are effectively dead code in the agent pipeline.

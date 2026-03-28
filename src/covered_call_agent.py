@@ -1,22 +1,48 @@
 from .agent_runner import AgentRunner
+from .cosmos_db import CosmosDBService
+from .context import ContextProvider
 from .tv_covered_call_instructions import TV_COVERED_CALL_INSTRUCTIONS
 
 
-async def run_covered_call_analysis(config, runner: AgentRunner):
-    """Run covered call analysis for configured symbols.
-    
+async def run_covered_call_analysis(config, runner: AgentRunner,
+                                     cosmos: CosmosDBService,
+                                     context_provider: ContextProvider):
+    """Run covered call analysis for all enabled symbols from CosmosDB.
+
     Args:
-        config: Configuration object with covered call settings
+        config: Configuration object
         runner: Initialized AgentRunner instance
+        cosmos: CosmosDBService instance
+        context_provider: ContextProvider for decision history
     """
-    cc_config = config.covered_call_config
-    
-    await runner.run_agent(
-        name="CoveredCallAgent",
-        instructions=TV_COVERED_CALL_INSTRUCTIONS,
-        symbols_file=cc_config['symbols_file'],
-        decision_log_path=cc_config['decision_log'],
-        signal_log_path=cc_config['signal_log'],
-        max_decision_entries=config.max_decision_entries,
-        max_signal_entries=config.max_signal_entries,
-    )
+    print(f"\n{'='*60}")
+    print(f"Starting CoveredCallAgent analysis")
+    print(f"{'='*60}")
+
+    cc_symbols = cosmos.get_covered_call_symbols()
+    if not cc_symbols:
+        print("No symbols enabled for covered call — skipping")
+        return
+
+    symbol_names = [s["symbol"] for s in cc_symbols]
+    print(f"Analyzing {len(cc_symbols)} symbols: {', '.join(symbol_names)}")
+
+    from .tv_data_fetcher import TradingViewFetcher
+
+    async with TradingViewFetcher() as fetcher:
+        for sym_doc in cc_symbols:
+            await runner.run_symbol_agent(
+                name="CoveredCallAgent",
+                instructions=TV_COVERED_CALL_INSTRUCTIONS,
+                symbol=sym_doc["symbol"],
+                exchange=sym_doc["exchange"],
+                agent_type="covered_call",
+                cosmos=cosmos,
+                context_provider=context_provider,
+                max_decision_entries=config.max_decision_entries,
+                fetcher=fetcher,
+            )
+
+    print(f"\n{'='*60}")
+    print(f"Completed CoveredCallAgent analysis")
+    print(f"{'='*60}\n")
