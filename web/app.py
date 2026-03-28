@@ -926,3 +926,169 @@ async def chat_api(request: Request):
 
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ===========================================================================
+# Per-Symbol Chat
+# ===========================================================================
+
+@app.get("/symbols/{symbol}/chat", response_class=HTMLResponse)
+async def symbol_chat_page(request: Request, symbol: str):
+    cosmos = getattr(request.app.state, "cosmos", None)
+    if cosmos is None:
+        error_detail = getattr(request.app.state, "cosmos_error", "unknown")
+        return HTMLResponse(f"CosmosDB not available: {error_detail}",
+                            status_code=503)
+
+    doc = cosmos.get_symbol(symbol.upper())
+    if not doc:
+        return HTMLResponse(f"Symbol {symbol} not found", status_code=404)
+
+    return templates.TemplateResponse("symbol_chat.html", {
+        "request": request,
+        "symbol_doc": doc,
+    })
+
+
+@app.post("/api/symbols/{symbol}/chat")
+async def symbol_chat_api(request: Request, symbol: str):
+    body = await request.json()
+    messages = body.get("messages", [])
+    if not messages:
+        return JSONResponse({"error": "No messages provided"},
+                            status_code=400)
+
+    symbol = symbol.upper()
+    cosmos = getattr(request.app.state, "cosmos", None)
+    context_parts: List[str] = []
+
+    # --- Symbol config (watchlist, positions) ---
+    symbol_doc = None
+    exchange = "NYSE"  # fallback
+    if cosmos:
+        try:
+            symbol_doc = cosmos.get_symbol(symbol)
+            if symbol_doc:
+                exchange = symbol_doc.get("exchange", "NYSE")
+                context_parts.append("--- Symbol Config ---")
+                context_parts.append(json.dumps(
+                    {k: v for k, v in symbol_doc.items()
+                     if k in ("symbol", "display_name", "exchange",
+                              "watchlist", "positions")},
+                    indent=2, default=str))
+        except Exception as exc:
+            logger.warning("symbol_chat: failed to load symbol doc: %s", exc)
+
+    # --- Recent decisions (last 5 across all agent types) ---
+    if cosmos:
+        try:
+            decisions: List[Dict] = []
+            for agent_type, meta in AGENT_TYPES.items():
+                decs = cosmos.get_recent_decisions(
+                    symbol, agent_type, max_entries=5)
+                for d in decs:
+                    d["_agent_label"] = meta["label"]
+                decisions.extend(decs)
+            decisions.sort(key=lambda d: d.get("timestamp", ""),
+                           reverse=True)
+            decisions = decisions[:5]
+
+            if decisions:
+                context_parts.append("\n--- Recent Decisions ---")
+                for d in decisions:
+                    context_parts.append(json.dumps(
+                        _clean_doc(d), indent=2, default=str))
+        except Exception as exc:
+            logger.warning("symbol_chat: failed to load decisions: %s", exc)
+            context_parts.append("(Error loading decisions from CosmosDB)")
+
+    # --- Live TradingView data ---
+    tv_context = ""
+    try:
+        from src.tv_data_fetcher import TradingViewFetcher
+
+        full_symbol = f"{exchange}-{symbol}"
+        async with TradingViewFetcher() as fetcher:
+            tv_data = await fetcher.fetch_all(full_symbol)
+
+        tv_sections = []
+        for section_key, section_label in [
+            ("overview", "Overview"),
+            ("technicals", "Technicals"),
+            ("forecast", "Forecast"),
+            ("options_chain", "Options Chain"),
+        ]:
+            content = tv_data.get(section_key, "")
+            if content and not content.startswith("[ERROR"):
+                tv_sections.append(
+                    f"\n--- TradingView {section_label} ---\n{content}")
+
+        if tv_sections:
+            tv_context = "\n".join(tv_sections)
+            context_parts.append(tv_context)
+    except Exception as exc:
+        logger.warning("symbol_chat: TradingView fetch failed: %s", exc)
+        context_parts.append("(Live TradingView data unavailable)")
+
+    context_text = ("\n".join(context_parts) if context_parts
+                    else "No context data available.")
+
+    display_name = (symbol_doc.get("display_name", symbol)
+                    if symbol_doc else symbol)
+    system_prompt = (
+        f"You are a stock options advisor focused exclusively on "
+        f"{symbol} ({exchange}:{symbol}).\n"
+        f"You have access to:\n"
+        f"1. Recent analysis decisions for this symbol\n"
+        f"2. Live market data from TradingView "
+        f"(overview, technicals, forecast, options chain)\n"
+        f"3. Current positions and watchlist status\n\n"
+        f"Answer questions about this symbol's options opportunities, "
+        f"risks, positions, and market conditions.\n"
+        f"Stay focused on {symbol} — redirect if the user asks about "
+        f"other symbols.\n\n"
+        f"Context data:\n{context_text}"
+    )
+
+    # --- Call Azure OpenAI ---
+    config = _load_config()
+    azure_cfg = config.get("azure", {})
+    endpoint = _resolve_env(azure_cfg.get("project_endpoint", ""))
+    model = _resolve_env(azure_cfg.get("model_deployment", "gpt-4o"))
+    api_key = _resolve_env(azure_cfg.get("api_key", ""))
+
+    if not endpoint:
+        return JSONResponse({"error": "Azure endpoint not configured"},
+                            status_code=500)
+    if not api_key:
+        return JSONResponse({"error": "Azure API key not configured"},
+                            status_code=500)
+
+    if endpoint.endswith("/api"):
+        endpoint = endpoint[:-4]
+
+    try:
+        from openai import AzureOpenAI
+
+        client = AzureOpenAI(
+            azure_endpoint=endpoint,
+            api_key=api_key,
+            api_version="2024-12-01-preview",
+        )
+
+        api_messages = [{"role": "system", "content": system_prompt}]
+        for m in messages:
+            api_messages.append({"role": m["role"], "content": m["content"]})
+
+        response = client.chat.completions.create(
+            model=model,
+            messages=api_messages,
+            temperature=0.7,
+            max_completion_tokens=2048,
+        )
+
+        reply = response.choices[0].message.content
+        return JSONResponse({"reply": reply})
+
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)

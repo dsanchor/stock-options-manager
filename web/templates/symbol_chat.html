@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Chat — {{ symbol_doc.display_name }} — Stock Options Manager{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <a href="/symbols/{{ symbol_doc.symbol }}" class="back-link">← {{ symbol_doc.display_name }}</a>
+    <h1>Chat — {{ symbol_doc.display_name }}</h1>
+    <p class="subtitle">Ask questions about {{ symbol_doc.symbol }} with live market data</p>
+</div>
+
+<div class="card chat-card">
+    <div id="chatMessages" class="chat-messages">
+        <div class="chat-msg assistant">
+            <div class="chat-bubble">
+                Hello! I'm focused on {{ symbol_doc.symbol }}. I have access to live TradingView data
+                (overview, technicals, forecast, options chain) and your recent analysis history.
+                What would you like to know?
+            </div>
+        </div>
+    </div>
+    <div class="chat-input-row">
+        <input type="text" id="chatInput" placeholder="Ask about {{ symbol_doc.symbol }}..." autocomplete="off">
+        <button id="chatSend" class="btn btn-primary">Send</button>
+    </div>
+    <div id="chatError" class="alert alert-error" style="display:none;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    var SYMBOL = '{{ symbol_doc.symbol }}';
+    const messagesEl = document.getElementById('chatMessages');
+    const inputEl = document.getElementById('chatInput');
+    const sendBtn = document.getElementById('chatSend');
+    const errorEl = document.getElementById('chatError');
+
+    let history = [];
+
+    function addMessage(role, content) {
+        const div = document.createElement('div');
+        div.className = 'chat-msg ' + role;
+        const bubble = document.createElement('div');
+        bubble.className = 'chat-bubble';
+        bubble.textContent = content;
+        div.appendChild(bubble);
+        messagesEl.appendChild(div);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    async function sendMessage() {
+        const text = inputEl.value.trim();
+        if (!text) return;
+
+        inputEl.value = '';
+        errorEl.style.display = 'none';
+        addMessage('user', text);
+        history.push({role: 'user', content: text});
+
+        sendBtn.disabled = true;
+        sendBtn.textContent = '...';
+
+        try {
+            const res = await fetch('/api/symbols/' + SYMBOL + '/chat', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({messages: history}),
+            });
+            const data = await res.json();
+
+            if (data.error) {
+                errorEl.textContent = '⚠️ ' + data.error;
+                errorEl.style.display = 'block';
+            } else {
+                addMessage('assistant', data.reply);
+                history.push({role: 'assistant', content: data.reply});
+            }
+        } catch (e) {
+            errorEl.textContent = '⚠️ Network error: ' + e.message;
+            errorEl.style.display = 'block';
+        } finally {
+            sendBtn.disabled = false;
+            sendBtn.textContent = 'Send';
+        }
+    }
+
+    sendBtn.addEventListener('click', sendMessage);
+    inputEl.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
+    });
+
+    inputEl.focus();
+})();
+</script>
+{% endblock %}
