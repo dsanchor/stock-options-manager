@@ -46,7 +46,7 @@ Scheduler (main.py)
 
 **Data gathering:** Python pre-fetches ALL TradingView data deterministically — overview, technicals, forecast, and options chain — using the Playwright Python package driven from `tv_data_fetcher.py`. The LLM never touches the browser. It receives the data as text and only performs analysis. See [Pre-fetch Architecture](#pre-fetch-architecture-tradingview) below.
 
-**Per-symbol context injection:** Before each symbol is analyzed, the runner reads that symbol's recent decisions and signals from CosmosDB and injects them into the prompt. The LLM sees only context for the symbol it's currently analyzing — not a mix of all symbols. Context limits are configurable in `config.yaml` (`context.max_decision_entries`, `context.max_signal_entries`).
+**Per-symbol context injection:** Before each symbol is analyzed, the runner reads that symbol's recent decisions from CosmosDB and injects them into the prompt. Each decision includes whether it triggered a signal (via the `is_signal` field). The LLM sees only context for the symbol it's currently analyzing — not a mix of all symbols. Context depth is configurable in `config.yaml` (`context.max_decision_entries`, default 2, range 0–5).
 
 **Output:** Every symbol produces a decision (SELL, WAIT, or HOLD) written to CosmosDB as a `decision` document. Only SELL decisions also produce a `signal` document — the actionable alerts that the dashboard and downstream systems watch. Position monitors produce WAIT or ROLL decisions, with ROLL/CLOSE decisions creating signal documents.
 
@@ -188,8 +188,7 @@ cosmosdb:
   database: "stock-options-manager"
 
 context:
-  max_decision_entries: 5               # Recent decisions injected per symbol
-  max_signal_entries: 1                 # Recent signals injected per symbol
+  max_decision_entries: 2               # Recent decisions injected per symbol (0=none, max 5). Each includes signal status.
   decision_ttl_days: 90                 # Auto-cleanup old decisions
 
 scheduler:
