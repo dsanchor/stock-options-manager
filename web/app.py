@@ -193,6 +193,8 @@ async def api_create_symbol(request: Request):
         symbol = body.get("symbol", "").strip().upper()
         exchange = body.get("exchange", "").strip().upper()
         display_name = body.get("display_name", "").strip()
+        if not display_name:
+            display_name = f"{exchange}:{symbol}"
         covered_call = bool(body.get("covered_call", False))
         cash_secured_put = bool(body.get("cash_secured_put", False))
 

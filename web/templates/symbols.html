@@ -15,9 +15,7 @@
     <div id="addSymbolForm" class="form-inline-row">
         <input type="text" id="newTicker" placeholder="Ticker (e.g. MO)" class="input-field" style="width:120px">
         <input type="text" id="newExchange" placeholder="Exchange (e.g. NYSE)" class="input-field" style="width:140px">
-        <input type="text" id="newDisplayName" placeholder="Display name (optional)" class="input-field" style="flex:1">
-        <label class="toggle-label"><input type="checkbox" id="newCC"> CC</label>
-        <label class="toggle-label"><input type="checkbox" id="newCSP"> CSP</label>
+        <input type="text" id="newDisplayName" placeholder="Display Name" class="input-field" style="flex:1">
         <button class="btn btn-primary" id="btnAddSymbol">+ Add</button>
     </div>
     <div id="addSymbolError" class="alert alert-error" style="display:none; margin:0.75rem 1.25rem;"></div>
@@ -28,7 +26,6 @@
 <div class="card">
     <div class="card-header">
         <h2>All Symbols</h2>
-        <span class="card-badge">{{ symbols | length }} total</span>
     </div>
     {% if symbols %}
     <div class="table-wrap">
@@ -88,8 +85,6 @@
         var ticker = document.getElementById('newTicker').value.trim().toUpperCase();
         var exchange = document.getElementById('newExchange').value.trim().toUpperCase();
         var displayName = document.getElementById('newDisplayName').value.trim();
-        var cc = document.getElementById('newCC').checked;
-        var csp = document.getElementById('newCSP').checked;
         var errEl = document.getElementById('addSymbolError');
         var okEl = document.getElementById('addSymbolSuccess');
         errEl.style.display = 'none';
@@ -107,8 +102,7 @@
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
                     symbol: ticker, exchange: exchange,
-                    display_name: displayName || ticker,
-                    covered_call: cc, cash_secured_put: csp
+                    display_name: displayName || (exchange + ':' + ticker)
                 })
             });
             var data = await res.json();

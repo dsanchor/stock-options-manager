@@ -5,7 +5,7 @@
 <div class="page-header">
     <a href="/dashboard" class="back-link">← Dashboard</a>
     <h1>{{ agent_label }}: {{ symbol }}</h1>
-    <p class="subtitle">{{ signals | length }} signal{{ "s" if signals | length != 1 else "" }} recorded</p>
+    <p class="subtitle">Signals recorded</p>
 </div>
 
 {% if signals %}
@@ -70,7 +70,7 @@
 {% if decisions %}
 <div class="page-header" style="margin-top: 2rem;">
     <h2>Recent Decisions</h2>
-    <p class="subtitle">Last {{ decisions | length }} decision{{ "s" if decisions | length != 1 else "" }} from the analysis log</p>
+    <p class="subtitle">Recent decisions from the analysis log</p>
 </div>
 <div class="card">
     <div class="table-wrap">
