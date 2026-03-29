@@ -236,7 +236,7 @@ stock-options-manager/
 │   │   └── chat.html                     # Chat interface
 │   └── static/
 │       ├── style.css                     # Dark trading theme CSS
-│       └── app.js                        # Client-side JS (row clicks, auto-refresh)
+│       └── app.js                        # Client-side JS (row clicks, trigger buttons)
 ├── run_web.py                            # Web dashboard entry point
 ├── requirements.txt
 └── README.md
@@ -244,7 +244,7 @@ stock-options-manager/
 
 ## Web Dashboard
 
-- **Dashboard** (`/`) — Alerts overview by agent type with time-range counts, scheduler status, recent activity feed, and position summary. Auto-refresh toggle (60s).
+- **Dashboard** (`/`) — Alerts overview by agent type with time-range counts, scheduler status, recent activity feed, and position summary.
 - **Alert Details** (`/alerts/{agent}/{symbol}`) — All alerts for a specific symbol, newest first, with activity badges and risk flags.
 - **Alert + Activities** (`/alerts/{agent}/{symbol}/{index}`) — Full alert JSON and backing activities from the same time window.
 - **Symbol Detail** (`/symbols/{symbol}`) — Full detail page for a symbol: expandable positions with source traceability, Close/Roll/Delete actions, activities, alerts, and "Open Position from Alert" / "Roll Position from Alert" buttons on activity detail; per-symbol chat.

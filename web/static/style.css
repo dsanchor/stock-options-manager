@@ -70,7 +70,6 @@ code { font-family: var(--font-mono); background: var(--bg-input); padding: 2px 
 .back-link { display: inline-block; margin-bottom: 0.5rem; font-size: 0.85rem; }
 
 .header-controls { display: flex; align-items: center; gap: 1rem; margin-top: 0.5rem; }
-.auto-refresh-toggle { display: flex; align-items: center; gap: 0.4rem; color: var(--text-muted); font-size: 0.85rem; cursor: pointer; }
 
 /* ── Summary cards ── */
 .summary-row {
