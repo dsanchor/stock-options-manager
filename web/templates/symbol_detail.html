@@ -35,6 +35,7 @@
         <table id="positionsTable">
             <thead>
                 <tr>
+                    <th style="width:2rem;"></th>
                     <th>Type</th>
                     <th>Strike</th>
                     <th>Expiration</th>
@@ -46,7 +47,8 @@
             </thead>
             <tbody>
                 {% for pos in symbol_doc.positions %}
-                <tr class="{% if pos.status == 'closed' %}row-muted{% endif %}">
+                <tr class="pos-row {% if pos.status == 'closed' %}row-muted{% endif %}" data-pos-idx="{{ loop.index0 }}" style="cursor:pointer;">
+                    <td class="pos-chevron" style="text-align:center; color:var(--text-muted, #888);">▸</td>
                     <td><span class="badge badge-{{ 'sell' if pos.type == 'call' else 'info' }}">{{ pos.type | upper }}</span></td>
                     <td class="mono">${{ pos.strike }}</td>
                     <td class="mono">{{ pos.expiration }}</td>
@@ -58,6 +60,105 @@
                         <button class="btn-sm" data-close-pos="{{ pos.position_id }}">Close</button>
                         {% endif %}
                         <button class="btn-sm btn-danger" data-delete-pos="{{ pos.position_id }}">Delete</button>
+                    </td>
+                </tr>
+                <tr class="pos-detail-row" data-pos-idx="{{ loop.index0 }}" style="display:none;">
+                    <td colspan="8" style="padding:0; border-top:none;">
+                        <div style="padding:1rem 1.5rem; background:var(--bg-card, #1a1a2e); border-top:1px dashed var(--border-color, #2a2a4a);">
+                            {% if pos.source %}
+                            <h4 style="margin:0 0 0.75rem; color:var(--text-primary, #e0e0f0);">📊 Opened from signal</h4>
+                            <div class="detail-grid">
+                                <div class="detail-field">
+                                    <div class="detail-label">Strategy</div>
+                                    <div class="detail-value">{{ "Covered Call" if pos.source.agent_type == "covered_call" else ("Cash-Secured Put" if pos.source.agent_type == "cash_secured_put" else pos.source.agent_type) }}</div>
+                                </div>
+                                <div class="detail-field">
+                                    <div class="detail-label">Decision</div>
+                                    <div class="detail-value"><span class="badge badge-{{ (pos.source.decision or '') | lower }}">{{ pos.source.decision or "—" }}</span></div>
+                                </div>
+                                <div class="detail-field">
+                                    <div class="detail-label">Confidence</div>
+                                    <div class="detail-value"><span class="confidence confidence-{{ pos.source.confidence or 'medium' }}">{{ pos.source.confidence or "—" }}</span></div>
+                                </div>
+                                {% if pos.source.underlying_price is not none %}
+                                <div class="detail-field">
+                                    <div class="detail-label">Underlying Price</div>
+                                    <div class="detail-value mono">${{ pos.source.underlying_price }}</div>
+                                </div>
+                                {% endif %}
+                                {% if pos.source.premium is not none %}
+                                <div class="detail-field">
+                                    <div class="detail-label">Premium</div>
+                                    <div class="detail-value mono">${{ pos.source.premium }}</div>
+                                </div>
+                                {% endif %}
+                                {% if pos.source.iv is not none %}
+                                <div class="detail-field">
+                                    <div class="detail-label">IV</div>
+                                    <div class="detail-value mono">{{ pos.source.iv }}%</div>
+                                </div>
+                                {% endif %}
+                                {% if pos.source.risk_flags %}
+                                <div class="detail-field">
+                                    <div class="detail-label">Risk Flags</div>
+                                    <div class="detail-value">
+                                        {% for flag in pos.source.risk_flags %}
+                                        <span class="flag">{{ flag }}</span>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                                {% endif %}
+                                {% if pos.source.timestamp %}
+                                <div class="detail-field">
+                                    <div class="detail-label">Signal Time</div>
+                                    <div class="detail-value mono">{{ pos.source.timestamp[:19] if pos.source.timestamp else "—" }}</div>
+                                </div>
+                                {% endif %}
+                            </div>
+                            {% if pos.source.reason %}
+                            <div style="margin-top:0.75rem; padding:0.75rem; background:rgba(255,255,255,0.03); border-radius:6px; border-left:3px solid var(--accent-blue, #4a90d9);">
+                                <div style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted, #888); margin-bottom:0.3rem;">Reason</div>
+                                <div style="color:var(--text-primary, #e0e0f0); line-height:1.5;">{{ pos.source.reason }}</div>
+                            </div>
+                            {% endif %}
+                            {% else %}
+                            <div style="color:var(--text-muted, #888); font-style:italic;">Created manually</div>
+                            <div class="detail-grid" style="margin-top:0.5rem;">
+                                <div class="detail-field">
+                                    <div class="detail-label">Type</div>
+                                    <div class="detail-value">{{ pos.type | upper }}</div>
+                                </div>
+                                <div class="detail-field">
+                                    <div class="detail-label">Strike</div>
+                                    <div class="detail-value mono">${{ pos.strike }}</div>
+                                </div>
+                                <div class="detail-field">
+                                    <div class="detail-label">Expiration</div>
+                                    <div class="detail-value mono">{{ pos.expiration }}</div>
+                                </div>
+                                <div class="detail-field">
+                                    <div class="detail-label">Status</div>
+                                    <div class="detail-value"><span class="badge badge-{{ 'wait' if pos.status == 'active' else 'info' }}">{{ pos.status }}</span></div>
+                                </div>
+                                <div class="detail-field">
+                                    <div class="detail-label">Opened</div>
+                                    <div class="detail-value mono">{{ pos.opened_at[:10] if pos.opened_at else "—" }}</div>
+                                </div>
+                                {% if pos.closed_at %}
+                                <div class="detail-field">
+                                    <div class="detail-label">Closed</div>
+                                    <div class="detail-value mono">{{ pos.closed_at[:10] }}</div>
+                                </div>
+                                {% endif %}
+                                {% if pos.notes %}
+                                <div class="detail-field">
+                                    <div class="detail-label">Notes</div>
+                                    <div class="detail-value">{{ pos.notes }}</div>
+                                </div>
+                                {% endif %}
+                            </div>
+                            {% endif %}
+                        </div>
                     </td>
                 </tr>
                 {% endfor %}
@@ -250,6 +351,25 @@
                 }
             } catch(e) {
                 this.checked = !this.checked;
+            }
+        });
+    });
+
+    // Expandable position rows
+    document.querySelectorAll('tr.pos-row').forEach(function(row) {
+        row.addEventListener('click', function(e) {
+            // Don't toggle when clicking action buttons
+            if (e.target.closest('[data-close-pos], [data-delete-pos]')) return;
+            var idx = this.dataset.posIdx;
+            var detailRow = document.querySelector('tr.pos-detail-row[data-pos-idx="' + idx + '"]');
+            var chevron = this.querySelector('.pos-chevron');
+            if (!detailRow) return;
+            if (detailRow.style.display === 'none') {
+                detailRow.style.display = 'table-row';
+                if (chevron) chevron.textContent = '▾';
+            } else {
+                detailRow.style.display = 'none';
+                if (chevron) chevron.textContent = '▸';
             }
         });
     });

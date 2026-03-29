@@ -6,7 +6,11 @@
     <a href="/symbols/{{ symbol }}" class="back-link">← {{ display_name }}</a>
     <h1>Decision Detail</h1>
     {% if is_signal %}
-    <div class="signal-banner">⚡ This decision triggered a signal</div>
+    <div class="signal-banner" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.5rem;">
+        <span>⚡ This decision triggered a signal</span>
+        <button class="btn btn-primary" id="btnOpenPosition" style="white-space:nowrap;">📂 Open Position</button>
+    </div>
+    <div id="openPosMsg" style="display:none; margin-top:0.5rem; padding:0.5rem 1rem; border-radius:6px; font-size:0.9rem;"></div>
     {% endif %}
 </div>
 
@@ -100,4 +104,47 @@
         <pre class="json-block">{{ decision | json_pretty }}</pre>
     </details>
 </div>
+{% endblock %}
+
+{% block scripts %}
+{% if is_signal %}
+<script>
+(function() {
+    var btn = document.getElementById('btnOpenPosition');
+    if (!btn) return;
+    btn.addEventListener('click', async function() {
+        if (!confirm('Open a position from this signal? This will disable the watchlist.')) return;
+        btn.disabled = true;
+        btn.textContent = 'Opening…';
+        var msgEl = document.getElementById('openPosMsg');
+        msgEl.style.display = 'none';
+        try {
+            var res = await fetch('/api/symbols/{{ symbol }}/positions/from-decision/{{ decision.id }}', { method: 'POST' });
+            var data = await res.json();
+            if (!res.ok) {
+                msgEl.style.display = 'block';
+                msgEl.style.background = 'rgba(255,80,80,0.15)';
+                msgEl.style.color = '#ff6b6b';
+                msgEl.textContent = data.error || 'Failed to open position.';
+                btn.disabled = false;
+                btn.textContent = '📂 Open Position';
+            } else {
+                msgEl.style.display = 'block';
+                msgEl.style.background = 'rgba(80,255,120,0.15)';
+                msgEl.style.color = '#50ff78';
+                msgEl.textContent = '✓ Position opened! Redirecting…';
+                setTimeout(function() { window.location.href = '/symbols/{{ symbol }}'; }, 1000);
+            }
+        } catch(e) {
+            msgEl.style.display = 'block';
+            msgEl.style.background = 'rgba(255,80,80,0.15)';
+            msgEl.style.color = '#ff6b6b';
+            msgEl.textContent = 'Network error: ' + e.message;
+            btn.disabled = false;
+            btn.textContent = '📂 Open Position';
+        }
+    });
+})();
+</script>
+{% endif %}
 {% endblock %}

@@ -177,7 +177,8 @@ class CosmosDBService:
 
     def add_position(self, symbol: str, position_type: str,
                      strike: float, expiration: str,
-                     notes: str = "") -> dict:
+                     notes: str = "",
+                     source: dict | None = None) -> dict:
         """Add an open position to a symbol."""
         doc = self.get_symbol(symbol)
         if doc is None:
@@ -199,6 +200,8 @@ class CosmosDBService:
             "status": "active",
             "notes": notes,
         }
+        if source is not None:
+            position["source"] = source
         doc["positions"].append(position)
         doc["updated_at"] = datetime.utcnow().isoformat() + "Z"
         return self.container.replace_item(item=doc["id"], body=doc)

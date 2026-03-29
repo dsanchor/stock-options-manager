@@ -321,6 +321,72 @@ async def api_add_position(request: Request, symbol: str):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.post("/api/symbols/{symbol}/positions/from-decision/{decision_id}")
+async def api_add_position_from_decision(request: Request, symbol: str,
+                                         decision_id: str):
+    """Create a position from an existing decision, disable watchlist, and
+    cascade-delete related decisions/signals."""
+    try:
+        cosmos = _get_cosmos(request)
+        decision = cosmos.get_decision_by_id(decision_id)
+        if decision is None:
+            return JSONResponse({"error": f"Decision {decision_id} not found"},
+                                status_code=404)
+
+        strike = decision.get("strike")
+        expiration = decision.get("expiration")
+        agent_type = decision.get("agent_type")
+
+        if not strike or not expiration or not agent_type:
+            return JSONResponse(
+                {"error": "Decision missing required fields (strike, expiration, agent_type)"},
+                status_code=400,
+            )
+
+        agent_type_map = {"covered_call": "call", "cash_secured_put": "put"}
+        position_type = agent_type_map.get(agent_type)
+        if position_type is None:
+            return JSONResponse(
+                {"error": f"Unsupported agent_type '{agent_type}'"},
+                status_code=400,
+            )
+
+        source = {
+            "decision_id": decision["id"],
+            "agent_type": decision.get("agent_type"),
+            "decision": decision.get("decision"),
+            "confidence": decision.get("confidence"),
+            "reason": decision.get("reason"),
+            "underlying_price": decision.get("underlying_price"),
+            "premium": decision.get("premium"),
+            "iv": decision.get("iv"),
+            "risk_flags": decision.get("risk_flags", []),
+            "timestamp": decision.get("timestamp"),
+        }
+
+        doc = cosmos.add_position(
+            symbol.upper(), position_type, float(strike),
+            expiration, notes="", source=source,
+        )
+
+        # Disable the watchlist for this agent type
+        sym_doc = cosmos.get_symbol(symbol.upper())
+        if agent_type in ("covered_call", "cash_secured_put"):
+            sym_doc["watchlist"][agent_type] = False
+            sym_doc["updated_at"] = datetime.utcnow().isoformat() + "Z"
+            cosmos.container.replace_item(item=sym_doc["id"], body=sym_doc)
+            # Cascade-delete decisions/signals for this agent type
+            cosmos.delete_decisions_by_agent_type(symbol.upper(), agent_type)
+
+        return JSONResponse(_clean_doc(doc), status_code=201)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.put("/api/symbols/{symbol}/positions/{position_id}/close")
 async def api_close_position(request: Request, symbol: str, position_id: str):
     try:
