@@ -9,6 +9,14 @@
 
 ## Learnings
 
+### Price + Signal Timeline Chart (symbol detail page)
+- TradingView Lightweight Charts CDN loaded only in symbol_detail.html (not base.html) to keep other pages lightweight
+- yfinance runs sync I/O — must use `asyncio.to_thread()` in FastAPI async routes to avoid blocking the event loop
+- Lightweight Charts requires markers sorted by time; backend sorts before returning JSON
+- Marker click navigation: `chart.subscribeClick()` matches time to marker array, then redirects to `/decisions/{id}`
+- Signal markers use `is_signal` flag OR cross-reference against signal `decision_id` set for complete coverage
+- Chart colors matched to CSS variables: `--bg-card: #1a1a2e`, `--border: #2a2a4a`, `--text: #e0e0f0`
+
 ## Core Context
 
 **2024-01 Foundation: Trading Agent Instructions Framework**
