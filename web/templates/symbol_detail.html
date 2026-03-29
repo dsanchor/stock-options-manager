@@ -4,7 +4,7 @@
 {% block content %}
 <div class="page-header">
     <a href="/symbols" class="back-link">← Symbols</a>
-    <h1>{{ symbol_doc.display_name }} <a href="/symbols/{{ symbol_doc.symbol }}/chat" class="btn btn-sm" style="font-size:0.5em; vertical-align:middle;">💬 Chat</a></h1>
+    <h1>{{ symbol_doc.display_name }} <a href="/symbols/{{ symbol_doc.symbol }}/chat" class="btn btn-sm" style="font-size:0.5em; vertical-align:middle;">💬 Chat</a> <a href="/symbols/{{ symbol_doc.symbol }}/fetch-preview" class="btn btn-sm" style="font-size:0.5em; vertical-align:middle;">🔍 Raw Data</a></h1>
     <div class="watchlist-toggles" style="display:flex; gap:1.5rem; align-items:center; margin-top:0.5rem;">
         <span style="display:flex; align-items:center; gap:0.4rem;">
             <label class="switch">

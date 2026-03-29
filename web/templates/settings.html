@@ -110,6 +110,30 @@
     </div>
 </form>
 
+<!-- Debug: TradingView Fetch Test -->
+<div class="card settings-card">
+    <div class="card-header">
+        <h2>🔍 Debug: TradingView Fetch</h2>
+    </div>
+    <div style="padding: 0.75rem 1.25rem;">
+        <p class="hint" style="margin-bottom:0.75rem;">Test the TradingView data fetcher for any symbol. This launches a headless browser and fetches live data (~30-60s).</p>
+        <div style="display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap;">
+            <select id="debugSymbol" class="input-field" style="width:220px; padding:0.5rem 0.8rem;">
+                <option value="">— Select symbol —</option>
+                {% for sym in symbols %}
+                <option value="{{ sym.symbol }}">{{ sym.display_name }}</option>
+                {% endfor %}
+            </select>
+            <button class="btn btn-primary" id="btnDebugFetch" disabled>⟳ Fetch</button>
+            <span id="debugSpinner" style="display:none;">
+                <span class="loading-dots">Fetching<span>.</span><span>.</span><span>.</span></span>
+            </span>
+            <span id="debugStatus" class="mono" style="opacity:0.6; font-size:0.85rem;"></span>
+        </div>
+        <div id="debugResults" style="margin-top:1rem;"></div>
+    </div>
+</div>
+
 <!-- CosmosDB Diagnostics (read-only) -->
 <div class="card settings-card">
     <div class="card-header">
@@ -135,4 +159,87 @@
         {% endif %}
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    var sel = document.getElementById('debugSymbol');
+    var btn = document.getElementById('btnDebugFetch');
+    var spinner = document.getElementById('debugSpinner');
+    var status = document.getElementById('debugStatus');
+    var results = document.getElementById('debugResults');
+
+    sel.addEventListener('change', function() {
+        btn.disabled = !this.value;
+    });
+
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function formatSize(chars) {
+        if (chars > 1000) return (chars / 1000).toFixed(1) + 'K';
+        return chars + '';
+    }
+
+    btn.addEventListener('click', async function() {
+        var symbol = sel.value;
+        if (!symbol) return;
+
+        btn.disabled = true;
+        spinner.style.display = 'inline';
+        status.textContent = '';
+        results.innerHTML = '';
+
+        var startTime = Date.now();
+        try {
+            var res = await fetch('/api/symbols/' + symbol + '/fetch-preview');
+            var data = await res.json();
+            var elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+            if (!res.ok) {
+                status.textContent = '❌ ' + (data.error || 'Unknown error');
+                return;
+            }
+
+            status.textContent = '✅ Done in ' + elapsed + 's';
+
+            var order = ['overview', 'technicals', 'forecast', 'options_chain'];
+            var labels = { overview: 'Overview', technicals: 'Technicals', forecast: 'Forecast', options_chain: 'Options Chain' };
+            var html = '';
+
+            for (var i = 0; i < order.length; i++) {
+                var key = order[i];
+                var r = data.resources[key];
+                if (!r) continue;
+                var hasError = r.text && r.text.startsWith('[ERROR');
+                html += '<div style="background:var(--card-bg,#1e1e2e); border:1px solid var(--border,#333); border-radius:8px; padding:1rem; margin-bottom:1rem;">'
+                    + '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">'
+                    + '<strong>' + labels[key] + '</strong>'
+                    + '<span class="mono" style="font-size:0.8rem; opacity:0.6;">'
+                    + formatSize(r.size) + ' chars · ' + r.duration_seconds.toFixed(1) + 's'
+                    + (hasError ? ' · <span style="color:var(--red,#e06c75);">ERROR</span>' : '')
+                    + '</span></div>'
+                    + '<pre style="background:var(--bg,#111); border:1px solid var(--border,#333); border-radius:4px; padding:0.75rem; max-height:350px; overflow:auto; white-space:pre-wrap; word-break:break-word; font-size:0.78rem; line-height:1.35; margin:0;">'
+                    + escapeHtml(r.text) + '</pre></div>';
+            }
+            results.innerHTML = html;
+        } catch(e) {
+            status.textContent = '❌ Network error: ' + e.message;
+        } finally {
+            btn.disabled = false;
+            spinner.style.display = 'none';
+        }
+    });
+})();
+</script>
+<style>
+.loading-dots span { animation: blink 1.4s infinite both; }
+.loading-dots span:nth-child(2) { animation-delay: 0.2s; }
+.loading-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink { 0%,80%,100%{opacity:0} 40%{opacity:1} }
+</style>
 {% endblock %}

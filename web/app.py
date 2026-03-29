@@ -667,6 +667,68 @@ async def symbol_detail_page(request: Request, symbol: str):
 
 
 # ===========================================================================
+# Page Routes — Fetch Preview (raw TradingView data)
+# ===========================================================================
+
+@app.get("/symbols/{symbol}/fetch-preview", response_class=HTMLResponse)
+async def fetch_preview_page(request: Request, symbol: str):
+    cosmos = getattr(request.app.state, "cosmos", None)
+    if cosmos is None:
+        error_detail = getattr(request.app.state, "cosmos_error", "unknown")
+        return HTMLResponse(f"CosmosDB not available: {error_detail}",
+                            status_code=503)
+
+    doc = cosmos.get_symbol(symbol.upper())
+    if not doc:
+        return HTMLResponse(f"Symbol {symbol} not found", status_code=404)
+
+    return templates.TemplateResponse("fetch_preview.html", {
+        "request": request,
+        "symbol_doc": doc,
+    })
+
+
+@app.get("/api/symbols/{symbol}/fetch-preview")
+async def api_fetch_preview(request: Request, symbol: str):
+    """Fetch raw TradingView data for a symbol and return as JSON."""
+    try:
+        cosmos = _get_cosmos(request)
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
+
+    doc = cosmos.get_symbol(symbol.upper())
+    if not doc:
+        return JSONResponse({"error": f"Symbol {symbol} not found"},
+                            status_code=404)
+
+    full_symbol = doc["exchange"] + "-" + doc["symbol"]
+
+    from src.tv_data_fetcher import TradingViewFetcher
+    try:
+        async with TradingViewFetcher() as fetcher:
+            data = await fetcher.fetch_all(full_symbol)
+            stats = fetcher.last_fetch_stats
+    except Exception as e:
+        logger.exception("Fetch preview failed for %s", full_symbol)
+        return JSONResponse({"error": f"Fetch failed: {e}"}, status_code=500)
+
+    resources = {}
+    for key in ("overview", "technicals", "forecast", "options_chain"):
+        text = data.get(key, "")
+        st = stats.get(key, {})
+        resources[key] = {
+            "text": text,
+            "size": st.get("size", len(text)),
+            "duration_seconds": st.get("duration", 0),
+        }
+
+    return JSONResponse({
+        "symbol": full_symbol,
+        "resources": resources,
+    })
+
+
+# ===========================================================================
 # Page Routes — Decision Detail
 # ===========================================================================
 
@@ -720,10 +782,15 @@ async def settings_page(request: Request):
     cosmos_error = getattr(request.app.state, "cosmos_error", None)
 
     telemetry_stats = {}
+    symbols = []
     cosmos = getattr(request.app.state, "cosmos", None)
     if cosmos:
         try:
             telemetry_stats = cosmos.get_telemetry_stats()
+        except Exception:
+            pass
+        try:
+            symbols = cosmos.get_symbols()
         except Exception:
             pass
 
@@ -735,6 +802,7 @@ async def settings_page(request: Request):
         "cosmos_status": cosmos_status,
         "cosmos_error": cosmos_error,
         "telemetry_stats": telemetry_stats,
+        "symbols": symbols,
     })
 
 
