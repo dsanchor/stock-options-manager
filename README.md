@@ -44,7 +44,7 @@ Scheduler (main.py)
        (same loop, different agent instructions)
 ```
 
-**Data gathering:** Python pre-fetches ALL TradingView data deterministically — overview, technicals, forecast, and options chain — using the Playwright Python package driven from `tv_data_fetcher.py`. The LLM never touches the browser. It receives the data as text and only performs analysis. See [Pre-fetch Architecture](#pre-fetch-architecture-tradingview) below.
+**Data gathering:** Python pre-fetches ALL TradingView data deterministically — overview (targeted div extraction of 5 specific page sections), technicals, forecast, and options chain (API response interception via TradingView scanner endpoints, with DOM fallback) — using the Playwright Python package driven from `tv_data_fetcher.py`. The LLM never touches the browser. It receives the data as text and only performs analysis. See [Pre-fetch Architecture](#pre-fetch-architecture-tradingview) below.
 
 **Per-symbol context injection:** Before each symbol is analyzed, the runner reads that symbol's recent decisions from CosmosDB and injects them into the prompt. Each decision includes whether it triggered a signal (via the `is_signal` field). The LLM sees only context for the symbol it's currently analyzing — not a mix of all symbols. Context depth is configurable in `config.yaml` (`context.max_decision_entries`, default 2, range 0–5).
 
@@ -90,10 +90,10 @@ The solution: `TradingViewFetcher` (`src/tv_data_fetcher.py`) drives Playwright'
 
 | Page | Method | Typical Size | Content |
 |------|--------|-------------|---------|
-| Overview | `page.goto` + `innerText` | ~variable | Current price, market cap, P/E ratio, dividend yield, 52-week range, volume, sector, industry, earnings date |
+| Overview | `page.goto` + `getElementById` (targeted) | ~variable | Upcoming earnings, key stats, employees, company info, financials overview (5 specific div sections by ID) |
 | Technicals | `page.goto` + `innerText` | ~3K chars | RSI, MACD, Stochastic, all MAs (10-200), pivot points (R1-R3, S1-S3) with Buy/Sell/Neutral signals |
 | Forecast | `page.goto` + `innerText` | ~2.5K chars | Analyst consensus, price targets, EPS history, revenue data |
-| Options chain | `page.goto` + `click` + `innerText` | ~65K chars | Full chain expanded to best 30-45 DTE expiration |
+| Options chain | `page.on("response")` interception | ~variable | Structured JSON from TradingView scanner API (`scanner.tradingview.com/global/scan2` + `options/scan2`): strikes, bids, asks, greeks, volume, OI. Falls back to DOM `innerText` if no API responses captured |
 
 The agent is created with **no tools** — it only analyzes the pre-fetched data included in its prompt. This is the key pattern: move deterministic multi-step workflows to the host language; let the LLM do what it's good at — analysis.
 
@@ -196,6 +196,8 @@ stock-options-manager/
 │   │   ├── signals.html                  # Signal list for agent+symbol
 │   │   ├── signal_detail.html            # Single signal + backing decisions
 │   │   ├── settings.html                 # Settings (cron expression)
+│   │   ├── symbol_detail.html            # Symbol detail with positions, decisions, per-symbol chat
+│   │   ├── fetch_preview.html            # Raw data debug/preview page
 │   │   └── chat.html                     # Chat interface
 │   └── static/
 │       ├── style.css                     # Dark trading theme CSS
@@ -210,6 +212,9 @@ stock-options-manager/
 - **Dashboard** (`/`) — Signals overview by agent type with time-range counts, scheduler status, recent activity feed, and position summary. Auto-refresh toggle (60s).
 - **Signal Details** (`/signals/{agent}/{symbol}`) — All signals for a specific symbol, newest first, with decision badges and risk flags.
 - **Signal + Decisions** (`/signals/{agent}/{symbol}/{index}`) — Full signal JSON and backing decisions from the same time window.
+- **Symbol Detail** (`/symbols/{symbol}`) — Full detail page for a symbol: positions, decisions, signals, per-symbol chat.
+- **Fetch Preview** (`/symbols/{symbol}/fetch-preview`) — Debug page showing raw TradingView data for each resource (overview, technicals, forecast, options chain) with fetch timing and size.
+- **Settings** (`/settings`) — Scheduler config, runtime stats (today/7d/30d telemetry), and a Debug TradingView Fetch tool for testing data fetching per symbol.
 - **Chat** (`/chat`) — Ask questions about your portfolio. Uses the same Azure OpenAI model with recent decisions as context.
 
 ---
