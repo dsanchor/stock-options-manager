@@ -453,7 +453,15 @@ az cosmosdb sql container create \
   --name "telemetry" \
   --partition-key-path "/metric_type" \
   --partition-key-version 2 \
-  --default-ttl -1 \
+  -o none
+
+# Then update to enable TTL (30 days = 2592000 seconds)
+az cosmosdb sql container update \
+  --account-name "$COSMOSDB_ACCOUNT" \
+  --resource-group "$RESOURCE_GROUP" \
+  --database-name "$DATABASE_NAME" \
+  --name "telemetry" \
+  --ttl 2592000 \
   -o none
 
 # Apply custom indexing policy
