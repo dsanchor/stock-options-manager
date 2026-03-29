@@ -121,25 +121,18 @@ class TradingViewFetcher:
             logger.error("Failed to fetch forecast for %s: %s", full_symbol, e)
             return f"[ERROR: {e}]"
 
-    # Keywords in URLs that likely carry options/chain data
-    _OPTIONS_URL_KEYWORDS = [
-        "option", "chain", "derivatives", "scanner", "symbol",
-        "quote", "instrument", "contract", "expir",
-    ]
-
-    # Field names that indicate options-related JSON payloads
-    _OPTIONS_JSON_FIELDS = [
-        "strike", "expiry", "expiration", "bid", "ask", "iv",
-        "delta", "gamma", "theta", "vega", "volume", "open_interest",
-        "openInterest", "impliedVolatility", "lastPrice", "put", "call",
+    # Exact TradingView scanner endpoints that carry options chain data
+    _OPTIONS_SCAN_URLS = [
+        "scanner.tradingview.com/global/scan2?label-product=symbols-options",
+        "scanner.tradingview.com/options/scan2?label-product=symbols-options",
     ]
 
     async def fetch_options_chain(self, full_symbol: str) -> str:
-        """Fetch options chain by intercepting TradingView API responses.
+        """Fetch options chain by intercepting TradingView scanner API responses.
 
-        Opens the options chain page and captures all relevant XHR / API
-        responses during initial page load — no clicking required.  Falls
-        back to DOM innerText if no API data is captured.
+        Opens the options chain page and captures responses from the two known
+        scanner endpoints. No clicking required.  Falls back to DOM innerText
+        if no API data is captured.
         """
         url = f"https://www.tradingview.com/symbols/{full_symbol}/options-chain/"
         page = await self._browser.new_page()
@@ -148,43 +141,15 @@ class TradingViewFetcher:
 
         async def _on_response(response):
             resp_url = response.url
-            url_lower = resp_url.lower()
-
-            # Decide whether this response is worth capturing
-            url_match = any(
-                kw in url_lower for kw in self._OPTIONS_URL_KEYWORDS
-            )
-
-            content_type = (response.headers.get("content-type") or "").lower()
-            json_content = (
-                "application/json" in content_type
-                or "text/plain" in content_type
-            )
-
             if not response.ok:
                 return
-            if not (url_match or json_content):
+            if not any(ep in resp_url for ep in self._OPTIONS_SCAN_URLS):
                 return
 
             try:
                 body = await response.text()
             except Exception:
                 return
-
-            if len(body) <= 100:
-                return
-
-            # If neither the URL nor content-type matched strongly, inspect
-            # the body for options-related field names as a last filter.
-            if not url_match and not json_content:
-                return
-
-            # Extra heuristic: when content-type is JSON but URL is generic,
-            # keep it only if the body contains options-related terms.
-            if not url_match:
-                body_lower = body[:5000].lower()
-                if not any(f in body_lower for f in self._OPTIONS_JSON_FIELDS):
-                    return
 
             captured_responses.append({
                 "url": resp_url,
