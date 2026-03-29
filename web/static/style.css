@@ -166,7 +166,7 @@ tbody td.num { text-align: right; font-family: var(--font-mono); }
     text-transform: uppercase;
     letter-spacing: 0.03em;
 }
-/* Decision badges — non-WAIT actions get light orange */
+/* Activity badges — non-WAIT actions get light orange */
 .badge-sell, .badge-close,
 .badge-roll, .badge-roll_up, .badge-roll_down, .badge-roll_out,
 .badge-roll_up_and_out, .badge-roll_down_and_out { background: rgba(245,158,11,0.2); color: var(--accent-orange); }
@@ -242,7 +242,7 @@ tbody td.num { text-align: right; font-family: var(--font-mono); }
 }
 .detail-value { font-size: 0.95rem; word-break: break-word; }
 
-.signal-banner {
+.alert-banner {
     margin-top: 0.5rem;
     padding: 0.4rem 0.8rem;
     background: rgba(255, 193, 7, 0.12);
@@ -265,13 +265,13 @@ tbody td.num { text-align: right; font-family: var(--font-mono); }
     word-break: break-word;
 }
 
-.decision-entry {
+.activity-entry {
     padding: 1rem 1.25rem;
     border-bottom: 1px solid var(--border);
 }
-.decision-entry:last-child { border-bottom: none; }
-.decision-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
-.decision-reason { color: var(--text-muted); font-size: 0.85rem; line-height: 1.5; margin-bottom: 0.5rem; }
+.activity-entry:last-child { border-bottom: none; }
+.activity-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
+.activity-reason { color: var(--text-muted); font-size: 0.85rem; line-height: 1.5; margin-bottom: 0.5rem; }
 details summary {
     cursor: pointer;
     color: var(--accent-blue);

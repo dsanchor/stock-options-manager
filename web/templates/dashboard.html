@@ -19,7 +19,7 @@
 <div class="summary-row">
     <div class="summary-card">
         <div class="summary-value">{{ grand_totals.today }}</div>
-        <div class="summary-label">Signals Today</div>
+        <div class="summary-label">Alerts Today</div>
     </div>
     <div class="summary-card">
         <div class="summary-value">{{ grand_totals.week }}</div>
@@ -105,7 +105,7 @@
         </table>
     </div>
     {% else %}
-    <p class="empty-state">No signals recorded yet</p>
+    <p class="empty-state">No alerts recorded yet</p>
     {% endif %}
 </div>
 {% endfor %}
@@ -120,7 +120,7 @@
         {% for item in activity %}
         <div class="activity-item">
             <div class="activity-time">{{ item.timestamp[:19] }}</div>
-            <span class="badge badge-{{ item.decision | lower if item.decision else 'info' }}">{{ item.decision or "N/A" }}</span>
+            <span class="badge badge-{{ item.activity | lower if item.activity else 'info' }}">{{ item.activity or "N/A" }}</span>
             <span class="activity-agent">{{ item._agent_label }}</span>
             <strong>{{ item.symbol }}</strong>
             {% if item.strike %}

@@ -1,6 +1,6 @@
 # Stock Options Manager
 
-Periodic options trading analysis using Microsoft Agent Framework with Playwright-based data fetching. All data — watchlists, positions, decisions, and signals — is stored in **Azure CosmosDB** (NoSQL) with a symbol-centric partition model.
+Periodic options trading analysis using Microsoft Agent Framework with Playwright-based data fetching. All data — watchlists, positions, activities, and alerts — is stored in **Azure CosmosDB** (NoSQL) with a symbol-centric partition model.
 
 ## Architecture
 
@@ -14,7 +14,7 @@ The first two agents (sell-side) decide whether to **open** new positions. The l
 
 Both sell-side agents use the Microsoft Agent Framework (`agent-framework`) with TradingView as the data source. Market data is pre-fetched deterministically via [Playwright](https://playwright.dev/python/) (headless Chromium) and passed to the LLM for analysis — the LLM never touches the browser directly.
 
-**Storage backend:** Azure CosmosDB with two containers: `symbols` (watchlists, positions, decisions, signals) and `telemetry` (runtime performance stats with 30-day TTL). Each symbol is a partition key in the symbols container containing three document types: `symbol_config` (watchlist flags + positions), `decision` (full audit trail), and `signal` (actionable alerts). The telemetry container tracks TradingView fetch durations and agent run times, displayed on the Settings page. See the [Azure CosmosDB Setup](#azure-cosmosdb-setup) section for provisioning.
+**Storage backend:** Azure CosmosDB with two containers: `symbols` (watchlists, positions, activities, alerts) and `telemetry` (runtime performance stats with 30-day TTL). Each symbol is a partition key in the symbols container containing three document types: `symbol_config` (watchlist flags + positions), `activity` (full audit trail), and `alert` (actionable alerts). The telemetry container tracks TradingView fetch durations and agent run times, displayed on the Settings page. See the [Azure CosmosDB Setup](#azure-cosmosdb-setup) section for provisioning.
 
 ## How It Works
 
@@ -25,10 +25,10 @@ Scheduler (main.py)
   │
   ├─ Query CosmosDB for symbols with watchlist.covered_call = true
   │    for each symbol:
-  │      1. Load per-symbol context (recent decisions + signals from CosmosDB)
+  │      1. Load per-symbol context (recent activities + alerts from CosmosDB)
   │      2. Pre-fetch TradingView data (overview, technicals, forecast, options chain)
-  │      3. LLM analyzes pre-fetched data → structured JSON decision
-  │      4. Write decision to CosmosDB; if SELL → also write signal document
+  │      3. LLM analyzes pre-fetched data → structured JSON activity
+  │      4. Write activity to CosmosDB; if SELL → also write alert document
   │
   ├─ Query CosmosDB for symbols with watchlist.cash_secured_put = true
   │    (same loop, different agent instructions)
@@ -37,8 +37,8 @@ Scheduler (main.py)
   │    for each position:
   │      1. Load position details from symbol_config
   │      2. Pre-fetch TradingView data
-  │      3. LLM assesses assignment risk → WAIT or ROLL decision
-  │      4. Write decision to CosmosDB; if ROLL/CLOSE → also write signal
+  │      3. LLM assesses assignment risk → WAIT or ROLL activity
+  │      4. Write activity to CosmosDB; if ROLL/CLOSE → also write alert
   │
   └─ Query CosmosDB for symbols with active put positions
        (same loop, different agent instructions)
@@ -46,19 +46,19 @@ Scheduler (main.py)
 
 **Data gathering:** Python pre-fetches ALL TradingView data deterministically — overview (targeted div extraction of 5 specific page sections), technicals, forecast, and options chain (API response interception via TradingView scanner endpoints, with DOM fallback) — using the Playwright Python package driven from `tv_data_fetcher.py`. The LLM never touches the browser. It receives the data as text and only performs analysis. See [Pre-fetch Architecture](#pre-fetch-architecture-tradingview) below.
 
-**Per-symbol context injection:** Before each symbol is analyzed, the runner reads that symbol's recent decisions from CosmosDB and injects them into the prompt. Each decision includes whether it triggered a signal (via the `is_signal` field). The LLM sees only context for the symbol it's currently analyzing — not a mix of all symbols. Context depth is configurable in `config.yaml` (`context.max_decision_entries`, default 2, range 0–5).
+**Per-symbol context injection:** Before each symbol is analyzed, the runner reads that symbol's recent activities from CosmosDB and injects them into the prompt. Each activity includes whether it triggered an alert (via the `is_alert` field). The LLM sees only context for the symbol it's currently analyzing — not a mix of all symbols. Context depth is configurable in `config.yaml` (`context.max_activity_entries`, default 2, range 0–5).
 
-**Output:** Every symbol produces a decision (SELL, WAIT, or HOLD) written to CosmosDB as a `decision` document. Only SELL decisions also produce a `signal` document — the actionable alerts that the dashboard and downstream systems watch. Position monitors produce WAIT or ROLL decisions, with ROLL/CLOSE decisions creating signal documents.
+**Output:** Every symbol produces an activity (SELL, WAIT, or HOLD) written to CosmosDB as a `activity` document. Only SELL activitys also produce a `alert` document — the actionable alerts that the dashboard and downstream systems watch. Position monitors produce WAIT or ROLL activities, with ROLL/CLOSE activities creating alert documents.
 
 ## Key Concepts
 
-### Decision vs Signal
+### Activity vs Alert
 
 **Sell-side agents (Covered Call, Cash Secured Put):**
-A **decision** is recorded for EVERY symbol on EVERY run as a `decision` document in CosmosDB. Possible values: `SELL`, `WAIT`, or `HOLD`. The decision collection is the complete audit trail. A **signal** is the subset of decisions where the action is `SELL` — stored as a separate `signal` document for efficient querying.
+A **activity** is recorded for EVERY symbol on EVERY run as an `activity` document in CosmosDB. Possible values: `SELL`, `WAIT`, or `HOLD`. The activity collection is the complete audit trail. An **alert** is the subset of activities where the action is `SELL` — stored as a separate `alert` document for efficient querying.
 
 **Position monitors (Open Call Monitor, Open Put Monitor):**
-A **decision** is recorded for EVERY position on EVERY run. Possible values: `WAIT`, `ROLL_UP`, `ROLL_DOWN`, `ROLL_OUT`, `ROLL_UP_AND_OUT`, `ROLL_DOWN_AND_OUT`, or `CLOSE`. A **signal** is any decision that is NOT `WAIT` — any roll or close action that requires attention. Positions are stored within the symbol's `symbol_config` document in CosmosDB.
+A **activity** is recorded for EVERY position on EVERY run. Possible values: `WAIT`, `ROLL_UP`, `ROLL_DOWN`, `ROLL_OUT`, `ROLL_UP_AND_OUT`, `ROLL_DOWN_AND_OUT`, or `CLOSE`. An **alert** is any activity that is NOT `WAIT` — any roll or close action that requires attention. Positions are stored within the symbol's `symbol_config` document in CosmosDB.
 
 ### Open Position Monitors
 
@@ -67,8 +67,8 @@ The Open Call Monitor and Open Put Monitor watch **existing** short options posi
 | | Sell-Side Agents | Position Monitors |
 |---|---|---|
 | **Input** | Symbols with watchlist flag enabled in CosmosDB | Symbols with active positions in CosmosDB |
-| **Decisions** | SELL / WAIT | WAIT / ROLL_UP / ROLL_DOWN / ROLL_OUT / ROLL_UP_AND_OUT / ROLL_DOWN_AND_OUT / CLOSE |
-| **Signals** | SELL only | Any ROLL or CLOSE |
+| **Activities** | SELL / WAIT | WAIT / ROLL_UP / ROLL_DOWN / ROLL_OUT / ROLL_UP_AND_OUT / ROLL_DOWN_AND_OUT / CLOSE |
+| **Alerts** | SELL only | Any ROLL or CLOSE |
 | **Focus** | "Should I open a new position?" | "Is my existing position safe?" |
 
 Positions are managed via the web dashboard or API. Each position is stored within the symbol's `symbol_config` document in CosmosDB with type (call/put), strike, expiration, status, and notes. Position monitors only run for symbols with `status: "active"` positions.
@@ -84,19 +84,19 @@ Positions are managed via the web dashboard or API. Each position is stored with
 
 ### Position Lifecycle
 
-**Open Position from Signal:**
-When a sell-side agent (covered_call, cash_secured_put) generates a SELL signal, the decision detail page displays an "Open Position" button. Clicking it creates a position from the signal data (strike, expiration, type), storing a `source` snapshot of the original signal for full traceability. The watchlist flag is disabled for that symbol, and related decisions/signals are cascade-deleted.
+**Open Position from Alert:**
+When a sell-side agent (covered_call, cash_secured_put) generates a SELL alert, the activity detail page displays an "Open Position" button. Clicking it creates a position from the alert data (strike, expiration, type), storing a `source` snapshot of the original alert for full traceability. The watchlist flag is disabled for that symbol, and related activities/alerts are cascade-deleted.
 
-**Roll Position from Signal:**
-When a monitor agent (open_call_monitor, open_put_monitor) generates a ROLL signal, the decision detail page shows a "Roll Position" button. Clicking it atomically closes the old position and creates a new one. The old position is marked `status: "closed"` with a `closing_source` snapshot (the signal) and `rolled_to` pointing to the new position ID. The new position carries a `source` snapshot and `rolled_from` pointing to the old position ID, creating an auditable chain.
+**Roll Position from Alert:**
+When a monitor agent (open_call_monitor, open_put_monitor) generates a ROLL alert, the activity detail page shows a "Roll Position" button. Clicking it atomically closes the old position and creates a new one. The old position is marked `status: "closed"` with a `closing_source` snapshot (the alert) and `rolled_to` pointing to the new position ID. The new position carries a `source` snapshot and `rolled_from` pointing to the old position ID, creating an auditable chain.
 
 **Manual Roll:**
-Active positions in the Symbol Detail page have a Roll button in the positions table. Clicking it opens an inline form to specify new strike, new expiration, and optional notes. The same `rolled_to`/`rolled_from` chain is created without signal snapshots.
+Active positions in the Symbol Detail page have a Roll button in the positions table. Clicking it opens an inline form to specify new strike, new expiration, and optional notes. The same `rolled_to`/`rolled_from` chain is created without alert snapshots.
 
 **Position Actions:**
 - **Close** — Marks position as closed (status: "closed") with the timestamp
 - **Roll** — Atomically closes current position and opens a new one, maintaining traceability chain
-- **Delete** — Permanently removes the position and cascade-deletes all linked decisions/signals
+- **Delete** — Permanently removes the position and cascade-deletes all linked activities/alerts
 
 **Position Model Example:**
 ```json
@@ -126,7 +126,7 @@ The solution: `TradingViewFetcher` (`src/tv_data_fetcher.py`) drives Playwright'
 | Page | Method | Typical Size | Content |
 |------|--------|-------------|---------|
 | Overview | `page.goto` + `getElementById` (targeted) | ~variable | Upcoming earnings, key stats, employees, company info, financials overview (5 specific div sections by ID) |
-| Technicals | `page.goto` + `innerText` | ~3K chars | RSI, MACD, Stochastic, all MAs (10-200), pivot points (R1-R3, S1-S3) with Buy/Sell/Neutral signals |
+| Technicals | `page.goto` + `innerText` | ~3K chars | RSI, MACD, Stochastic, all MAs (10-200), pivot points (R1-R3, S1-S3) with Buy/Sell/Neutral alerts |
 | Forecast | `page.goto` + `innerText` | ~2.5K chars | Analyst consensus, price targets, EPS history, revenue data |
 | Options chain | `page.on("response")` interception | ~variable | Structured JSON from TradingView scanner API (`scanner.tradingview.com/global/scan2` + `options/scan2`): strikes, bids, asks, greeks, volume, OI. Falls back to DOM `innerText` if no API responses captured |
 
@@ -134,13 +134,13 @@ The agent is created with **no tools** — it only analyzes the pre-fetched data
 
 ### Per-symbol Context Filtering
 
-Each symbol's analysis sees its last N decisions (default 2, configurable 0–5). Each decision includes whether it triggered a signal via the `is_signal` field — there is no separate signal configuration. The context provider queries CosmosDB within the symbol's partition, returning only matching entries up to the configured limit. This prevents cross-contamination between symbols and keeps context focused.
+Each symbol's analysis sees its last N activities (default 2, configurable 0–5). Each activity includes whether it triggered an alert via the `is_alert` field — there is no separate alert configuration. The context provider queries CosmosDB within the symbol's partition, returning only matching entries up to the configured limit. This prevents cross-contamination between symbols and keeps context focused.
 
 Configurable in `config.yaml`:
 ```yaml
 context:
-  max_decision_entries: 2   # Recent decisions to inject as agent context (0=none, max 5). Each decision includes its signal status.
-  decision_ttl_days: 90
+  max_activity_entries: 2   # Recent activities to inject as agent context (0=none, max 5). Each activity includes its alert status.
+  activity_ttl_days: 90
 ```
 
 ### CosmosDB Document Model
@@ -152,8 +152,8 @@ All data is stored in Azure CosmosDB across two containers:
 | Document Type | Purpose | Growth |
 |---|---|---|
 | `symbol_config` | One per symbol — watchlist flags, positions, metadata | Static (updated, not appended) |
-| `decision` | One per symbol per agent run — full analysis output | ~20/day per symbol |
-| `signal` | One per actionable decision (SELL, ROLL, CLOSE) | ~1-5/week per symbol |
+| `activity` | One per symbol per agent run — full analysis output | ~20/day per symbol |
+| `alert` | One per actionable activity (SELL, ROLL, CLOSE) | ~1-5/week per symbol |
 
 **`telemetry` container** (partition key: `/metric_type`) — runtime performance stats with 30-day TTL:
 
@@ -164,30 +164,30 @@ All data is stored in Azure CosmosDB across two containers:
 
 Telemetry stats are displayed on the Settings page and auto-expire after 30 days.
 
-Decisions older than 90 days can be configured for TTL-based cleanup. Signals are kept indefinitely for audit.
+Activities older than 90 days can be configured for TTL-based cleanup. Alerts are kept indefinitely for audit.
 
 ## Output
 
-All decisions and signals are stored in Azure CosmosDB. The web dashboard provides a UI for browsing them, or query directly via the CosmosDB Data Explorer.
+All activities and alerts are stored in Azure CosmosDB. The web dashboard provides a UI for browsing them, or query directly via the CosmosDB Data Explorer.
 
-### Decision Documents (complete audit trail)
+### Activity Documents (complete audit trail)
 
-Every agent run creates a `decision` document per symbol in CosmosDB. Query by `doc_type = "decision"` and filter by `agent_type` or `symbol`.
+Every agent run creates an `activity` document per symbol in CosmosDB. Query by `doc_type = "activity"` and filter by `agent_type` or `symbol`.
 
-### Signal Documents (actionable alerts only)
+### Alert Documents (actionable alerts only)
 
-Actionable decisions (SELL, ROLL, CLOSE) also create a `signal` document linked to the decision. Query by `doc_type = "signal"` for the dashboard's primary read path.
+Actionable activities (SELL, ROLL, CLOSE) also create a `alert` document linked to the activity. Query by `doc_type = "alert"` for the dashboard's primary read path.
 
-### Example Decision Object
+### Example Activity Object
 
-Each decision document in CosmosDB:
+Each activity document in CosmosDB:
 ```json
 {
   "timestamp": "2026-03-27T00:00:00Z",
   "symbol": "MO",
   "exchange": "NYSE",
   "agent": "covered_call",
-  "decision": "WAIT",
+  "activity": "WAIT",
   "strike": null,
   "expiration": null,
   "iv": 25.0,
@@ -197,7 +197,7 @@ Each decision document in CosmosDB:
 }
 ```
 
-For `SELL` decisions, `strike`, `expiration`, and premium fields are populated. A corresponding `signal` document is also created with the actionable subset of the decision data.
+For `SELL` activities, `strike`, `expiration`, and premium fields are populated. A corresponding `alert` document is also created with the actionable subset of the activity data.
 
 ## Project Structure
 
@@ -227,11 +227,11 @@ stock-options-manager/
 │   ├── app.py                            # FastAPI web dashboard — all routes + CosmosDB queries
 │   ├── templates/                        # Jinja2 HTML templates (dark trading theme)
 │   │   ├── base.html                     # Base layout with nav
-│   │   ├── dashboard.html                # Main dashboard — signal overview + activity feed
-│   │   ├── signals.html                  # Signal list for agent+symbol
-│   │   ├── signal_detail.html            # Single signal + backing decisions
+│   │   ├── dashboard.html                # Main dashboard — alert overview + activity feed
+│   │   ├── alerts.html                  # Alert list for agent+symbol
+│   │   ├── alert_detail.html            # Single alert + backing activities
 │   │   ├── settings.html                 # Settings (cron expression)
-│   │   ├── symbol_detail.html            # Symbol detail with positions, decisions, per-symbol chat
+│   │   ├── symbol_detail.html            # Symbol detail with positions, activities, per-symbol chat
 │   │   ├── fetch_preview.html            # Raw data debug/preview page
 │   │   └── chat.html                     # Chat interface
 │   └── static/
@@ -244,12 +244,12 @@ stock-options-manager/
 
 ## Web Dashboard
 
-- **Dashboard** (`/`) — Signals overview by agent type with time-range counts, scheduler status, recent activity feed, and position summary. Auto-refresh toggle (60s).
-- **Signal Details** (`/signals/{agent}/{symbol}`) — All signals for a specific symbol, newest first, with decision badges and risk flags.
-- **Signal + Decisions** (`/signals/{agent}/{symbol}/{index}`) — Full signal JSON and backing decisions from the same time window.
-- **Symbol Detail** (`/symbols/{symbol}`) — Full detail page for a symbol: expandable positions with source traceability, Close/Roll/Delete actions, decisions, signals, and "Open Position from Signal" / "Roll Position from Signal" buttons on decision detail; per-symbol chat.
+- **Dashboard** (`/`) — Alerts overview by agent type with time-range counts, scheduler status, recent activity feed, and position summary. Auto-refresh toggle (60s).
+- **Alert Details** (`/alerts/{agent}/{symbol}`) — All alerts for a specific symbol, newest first, with activity badges and risk flags.
+- **Alert + Activities** (`/alerts/{agent}/{symbol}/{index}`) — Full alert JSON and backing activities from the same time window.
+- **Symbol Detail** (`/symbols/{symbol}`) — Full detail page for a symbol: expandable positions with source traceability, Close/Roll/Delete actions, activities, alerts, and "Open Position from Alert" / "Roll Position from Alert" buttons on activity detail; per-symbol chat.
 - **Fetch Preview** (`/symbols/{symbol}/fetch-preview`) — Debug page showing raw TradingView data for each resource (overview, technicals, forecast, options chain) with fetch timing and size.
-- **Chat** (`/chat`) — Ask questions about your portfolio. Uses the same Azure OpenAI model with recent decisions as context.
+- **Chat** (`/chat`) — Ask questions about your portfolio. Uses the same Azure OpenAI model with recent activities as context.
 - **Settings** (`/settings`) — Scheduler config, runtime stats (today/7d/30d telemetry), and a Debug TradingView Fetch tool for testing data fetching per symbol.
 
 ---
@@ -324,8 +324,8 @@ cosmosdb:
   database: "stock-options-manager"
 
 context:
-  max_decision_entries: 2               # Recent decisions injected per symbol (0=none, max 5). Each includes signal status.
-  decision_ttl_days: 90                 # Auto-cleanup old decisions
+  max_activity_entries: 2               # Recent activities injected per symbol (0=none, max 5). Each includes alert status.
+  activity_ttl_days: 90                 # Auto-cleanup old activities
 
 scheduler:
   cron: "0 9-16/2 * * 1-5"               # Cron expression (e.g. every 2h, Mon-Fri 9am-4pm)
@@ -520,7 +520,7 @@ az cosmosdb sql container update \
       {"path": "/watchlist/covered_call/?"},
       {"path": "/watchlist/cash_secured_put/?"},
       {"path": "/agent_type/?"},
-      {"path": "/decision/?"}
+      {"path": "/activity/?"}
     ],
     "excludedPaths": [
       {"path": "/reason/*"},

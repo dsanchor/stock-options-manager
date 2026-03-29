@@ -147,7 +147,7 @@
     document.querySelectorAll('[data-delete-symbol]').forEach(function(btn) {
         btn.addEventListener('click', async function() {
             var sym = this.dataset.deleteSymbol;
-            if (!confirm('Delete ' + sym + ' and ALL its data (decisions, signals, positions)? This cannot be undone.')) return;
+            if (!confirm('Delete ' + sym + ' and ALL its data (activities, alerts, positions)? This cannot be undone.')) return;
 
             try {
                 var res = await fetch('/api/symbols/' + sym, { method: 'DELETE' });

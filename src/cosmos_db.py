@@ -1,10 +1,10 @@
 """CosmosDB service layer for the stock-options-manager.
 
 Provides all database operations: symbol config CRUD, watchlist queries,
-position management, decision/signal write and read, and dashboard queries.
+position management, activity/alert write and read, and dashboard queries.
 
 Uses a single container ("symbols") with partition key /symbol and a hybrid
-document model (symbol_config, decision, signal doc types).
+document model (symbol_config, activity, alert doc types).
 """
 
 from azure.cosmos import CosmosClient, PartitionKey
@@ -97,7 +97,7 @@ class CosmosDBService:
         return self.container.replace_item(item=doc["id"], body=doc)
 
     def delete_symbol(self, symbol: str) -> None:
-        """Delete a symbol config and ALL associated decisions/signals."""
+        """Delete a symbol config and ALL associated activities/alerts."""
         try:
             self.container.delete_item(
                 item=f"config_{symbol}",
@@ -105,7 +105,7 @@ class CosmosDBService:
             )
         except CosmosResourceNotFoundError:
             pass
-        # Delete all decisions and signals in this partition
+        # Delete all activities and alerts in this partition
         query = (
             "SELECT c.id FROM c "
             "WHERE c.symbol = @symbol AND c.doc_type != 'symbol_config'"
@@ -275,7 +275,7 @@ class CosmosDBService:
         return self.container.replace_item(item=doc["id"], body=doc)
 
     def delete_position(self, symbol: str, position_id: str) -> dict:
-        """Remove a position and all linked decisions/signals from a symbol."""
+        """Remove a position and all linked activities/alerts from a symbol."""
         doc = self.get_symbol(symbol)
         if doc is None:
             raise ValueError(f"Symbol {symbol} not found")
@@ -287,102 +287,102 @@ class CosmosDBService:
         doc["updated_at"] = datetime.utcnow().isoformat() + "Z"
         result = self.container.replace_item(item=doc["id"], body=doc)
 
-        # Cascade: delete all decisions linked to this position
+        # Cascade: delete all activities linked to this position
         dec_query = (
             "SELECT c.id FROM c "
-            "WHERE c.doc_type = 'decision' AND c.position_id = @position_id"
+            "WHERE c.doc_type = 'activity' AND c.position_id = @position_id"
         )
-        decisions = list(self.container.query_items(
+        activities = list(self.container.query_items(
             query=dec_query,
             parameters=[{"name": "@position_id", "value": position_id}],
             partition_key=symbol,
         ))
-        decision_ids = {d["id"] for d in decisions}
+        activity_ids = {d["id"] for d in activities}
 
-        # Cascade: delete all signals linked to those decisions
-        if decision_ids:
+        # Cascade: delete all alerts linked to those activities
+        if activity_ids:
             # CosmosDB doesn't support parameterised IN lists directly,
             # so build a safe literal list from the known document ids.
-            id_list = ", ".join(f"'{did}'" for did in decision_ids)
+            id_list = ", ".join(f"'{did}'" for did in activity_ids)
             sig_query = (
                 f"SELECT c.id FROM c "
-                f"WHERE c.doc_type = 'signal' "
-                f"AND c.decision_id IN ({id_list})"
+                f"WHERE c.doc_type = 'alert' "
+                f"AND c.activity_id IN ({id_list})"
             )
-            signals = list(self.container.query_items(
+            alerts = list(self.container.query_items(
                 query=sig_query,
                 parameters=[],
                 partition_key=symbol,
             ))
-            for sig in signals:
+            for alt in alerts:
                 self.container.delete_item(
-                    item=sig["id"], partition_key=symbol)
+                    item=alt["id"], partition_key=symbol)
 
-        for dec in decisions:
-            self.container.delete_item(item=dec["id"], partition_key=symbol)
+        for act in activities:
+            self.container.delete_item(item=act["id"], partition_key=symbol)
 
         logger.info(
-            "Cascade-deleted position %s: %d decisions, %d signals removed",
-            position_id, len(decisions),
-            len(signals) if decision_ids else 0,
+            "Cascade-deleted position %s: %d activities, %d alerts removed",
+            position_id, len(activities),
+            len(alerts) if activity_ids else 0,
         )
         return result
 
-    def delete_decisions_by_agent_type(
+    def delete_activities_by_agent_type(
         self, symbol: str, agent_type: str
     ) -> tuple[int, int]:
-        """Cascade-delete all decisions (and their signals) for a given agent type on a symbol."""
+        """Cascade-delete all activities (and their alerts) for a given agent type on a symbol."""
         dec_query = (
             "SELECT c.id FROM c "
-            "WHERE c.doc_type = 'decision' AND c.agent_type = @agent_type"
+            "WHERE c.doc_type = 'activity' AND c.agent_type = @agent_type"
         )
-        decisions = list(self.container.query_items(
+        activities = list(self.container.query_items(
             query=dec_query,
             parameters=[{"name": "@agent_type", "value": agent_type}],
             partition_key=symbol,
         ))
-        decision_ids = {d["id"] for d in decisions}
+        activity_ids = {d["id"] for d in activities}
 
         sig_count = 0
-        if decision_ids:
-            id_list = ", ".join(f"'{did}'" for did in decision_ids)
+        if activity_ids:
+            id_list = ", ".join(f"'{did}'" for did in activity_ids)
             sig_query = (
                 f"SELECT c.id FROM c "
-                f"WHERE c.doc_type = 'signal' "
-                f"AND c.decision_id IN ({id_list})"
+                f"WHERE c.doc_type = 'alert' "
+                f"AND c.activity_id IN ({id_list})"
             )
-            signals = list(self.container.query_items(
+            alerts = list(self.container.query_items(
                 query=sig_query,
                 parameters=[],
                 partition_key=symbol,
             ))
-            for sig in signals:
+            for alt in alerts:
                 self.container.delete_item(
-                    item=sig["id"], partition_key=symbol)
-            sig_count = len(signals)
+                    item=alt["id"], partition_key=symbol)
+            sig_count = len(alerts)
 
-        for dec in decisions:
-            self.container.delete_item(item=dec["id"], partition_key=symbol)
+        for act in activities:
+            self.container.delete_item(item=act["id"], partition_key=symbol)
 
         logger.info(
-            "Cascade-deleted agent_type '%s' for %s: %d decisions, %d signals removed",
-            agent_type, symbol, len(decisions), sig_count,
+            "Cascade-deleted agent_type '%s' for %s: %d activities, %d alerts removed",
+            agent_type, symbol, len(activities), sig_count,
         )
-        return len(decisions), sig_count
+        return len(activities), sig_count
 
-    # ── Decision / Signal Write ────────────────────────────────────────
+    # ── Activity / Alert Write ─────────────────────────────────────────
 
-    def write_decision(self, symbol: str, agent_type: str,
-                       decision_data: dict,
+    def write_activity(self, symbol: str, agent_type: str,
+                       activity_data: dict,
                        timestamp: str | None = None,
                        ttl_seconds: int | None = None) -> dict:
-        """Write a decision document.
+        """Write a activity document.
 
         Args:
             symbol: Ticker symbol (partition key).
             agent_type: One of "covered_call", "cash_secured_put",
                 "open_call_monitor", "open_put_monitor".
-            decision_data: Full decision dict from agent output.
+            activity_data: Full activity dict from agent output.
             timestamp: Override timestamp (ISO format). Defaults to now.
             ttl_seconds: Optional TTL in seconds for automatic expiry.
 
@@ -392,7 +392,7 @@ class CosmosDBService:
         ts = timestamp or datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         ts_compact = ts.replace("-", "").replace(":", "").replace("T", "_")[:15]
 
-        position_id = decision_data.get("position_id", "")
+        position_id = activity_data.get("position_id", "")
         id_suffix = f"_{position_id}" if position_id else ""
 
         doc_id = f"dec_{symbol}_{agent_type}{id_suffix}_{ts_compact}"
@@ -400,13 +400,13 @@ class CosmosDBService:
         doc: dict = {
             "id": doc_id,
             "symbol": symbol,
-            "doc_type": "decision",
+            "doc_type": "activity",
             "agent_type": agent_type,
             "timestamp": ts,
-            "is_signal": False,
-            **decision_data,
+            "is_alert": False,
+            **activity_data,
         }
-        # Ensure the computed id is not overridden by decision_data
+        # Ensure the computed id is not overridden by activity_data
         doc["id"] = doc_id
 
         if ttl_seconds is not None:
@@ -414,10 +414,10 @@ class CosmosDBService:
 
         return self.container.create_item(doc)
 
-    def write_signal(self, symbol: str, agent_type: str,
-                     signal_data: dict, decision_id: str,
+    def write_alert(self, symbol: str, agent_type: str,
+                     alert_data: dict, activity_id: str,
                      timestamp: str | None = None) -> dict:
-        """Write a signal document linked to a decision."""
+        """Write a alert document linked to a activity."""
         ts = timestamp or datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         ts_compact = ts.replace("-", "").replace(":", "").replace("T", "_")[:15]
 
@@ -426,27 +426,27 @@ class CosmosDBService:
         doc: dict = {
             "id": doc_id,
             "symbol": symbol,
-            "doc_type": "signal",
+            "doc_type": "alert",
             "agent_type": agent_type,
             "timestamp": ts,
-            "decision_id": decision_id,
-            **signal_data,
+            "activity_id": activity_id,
+            **alert_data,
         }
         doc["id"] = doc_id
 
         return self.container.create_item(doc)
 
-    # ── Decision / Signal Read (context injection) ─────────────────────
+    # ── Activity / Alert Read (context injection) ──────────────────────
 
-    def get_recent_decisions(self, symbol: str, agent_type: str,
+    def get_recent_activities(self, symbol: str, agent_type: str,
                              max_entries: int = 20,
                              position_id: str | None = None) -> list[dict]:
-        """Get recent decisions for a symbol+agent, newest first.
+        """Get recent activities for a symbol+agent, newest first.
 
         For position monitors, optionally filter by position_id.
         """
         conditions = [
-            "c.doc_type = 'decision'",
+            "c.doc_type = 'activity'",
             "c.agent_type = @agent_type",
         ]
         params: list[dict] = [
@@ -468,12 +468,12 @@ class CosmosDBService:
             partition_key=symbol,
         ))
 
-    def get_recent_signals(self, symbol: str, agent_type: str,
+    def get_recent_alerts(self, symbol: str, agent_type: str,
                            max_entries: int = 10) -> list[dict]:
-        """Get recent signals for a symbol+agent, newest first."""
+        """Get recent alerts for a symbol+agent, newest first."""
         query = (
             "SELECT TOP @limit * FROM c "
-            "WHERE c.doc_type = 'signal' AND c.agent_type = @agent_type "
+            "WHERE c.doc_type = 'alert' AND c.agent_type = @agent_type "
             "ORDER BY c.timestamp DESC"
         )
         return list(self.container.query_items(
@@ -487,23 +487,23 @@ class CosmosDBService:
 
     # ── Single-Document Lookups ────────────────────────────────────────
 
-    def get_decision_by_id(self, decision_id: str) -> dict | None:
-        """Get a single decision by its document ID (cross-partition)."""
-        query = "SELECT * FROM c WHERE c.id = @id AND c.doc_type = 'decision'"
+    def get_activity_by_id(self, activity_id: str) -> dict | None:
+        """Get a single activity by its document ID (cross-partition)."""
+        query = "SELECT * FROM c WHERE c.id = @id AND c.doc_type = 'activity'"
         results = list(self.container.query_items(
             query=query,
-            parameters=[{"name": "@id", "value": decision_id}],
+            parameters=[{"name": "@id", "value": activity_id}],
             enable_cross_partition_query=True,
         ))
         return results[0] if results else None
 
     # ── Dashboard Queries ──────────────────────────────────────────────
 
-    def get_all_signals(self, agent_type: str | None = None,
+    def get_all_alerts(self, agent_type: str | None = None,
                         since: str | None = None,
                         limit: int = 100) -> list[dict]:
-        """Get signals across all symbols (cross-partition query)."""
-        conditions = ["c.doc_type = 'signal'"]
+        """Get alerts across all symbols (cross-partition query)."""
+        conditions = ["c.doc_type = 'alert'"]
         params: list[dict] = []
         if agent_type:
             conditions.append("c.agent_type = @agent_type")
@@ -524,11 +524,11 @@ class CosmosDBService:
             enable_cross_partition_query=True,
         ))
 
-    def get_all_decisions(self, agent_type: str | None = None,
+    def get_all_activities(self, agent_type: str | None = None,
                           since: str | None = None,
                           limit: int = 100) -> list[dict]:
-        """Get decisions across all symbols (cross-partition query)."""
-        conditions = ["c.doc_type = 'decision'"]
+        """Get activities across all symbols (cross-partition query)."""
+        conditions = ["c.doc_type = 'activity'"]
         params: list[dict] = []
         if agent_type:
             conditions.append("c.agent_type = @agent_type")
@@ -549,10 +549,10 @@ class CosmosDBService:
             enable_cross_partition_query=True,
         ))
 
-    def count_signals_by_symbol(self, agent_type: str,
+    def count_alerts_by_symbol(self, agent_type: str,
                                 since: str | None = None) -> dict[str, int]:
-        """Count signals per symbol for dashboard aggregation."""
-        conditions = ["c.doc_type = 'signal'", "c.agent_type = @agent_type"]
+        """Count alerts per symbol for dashboard aggregation."""
+        conditions = ["c.doc_type = 'alert'", "c.agent_type = @agent_type"]
         params: list[dict] = [{"name": "@agent_type", "value": agent_type}]
         if since:
             conditions.append("c.timestamp >= @since")

@@ -9,8 +9,8 @@ cosmosdb:
   database: "stock-options-manager"
 
 context:
-  max_decision_entries: 2   # Recent decisions to inject as agent context (0=none, max 5). Each includes its signal if actionable.
-  decision_ttl_days: 90     # Decisions older than this are auto-expired via CosmosDB TTL
+  max_activity_entries: 2   # Recent activities to inject as agent context (0=none, max 5). Each includes its alert if actionable.
+  activity_ttl_days: 90     # Activities older than this are auto-expired via CosmosDB TTL
 
 scheduler:
   cron: "0 14-21/2 * * 1-5"  # Cron expression: every 2 hours, market hours (Mon-Fri 14-21 Spain / 9-16 US)

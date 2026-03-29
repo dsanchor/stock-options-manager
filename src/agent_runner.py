@@ -14,7 +14,7 @@ from agent_framework.azure import AzureOpenAIChatClient
 from .cosmos_db import CosmosDBService
 from .context import ContextProvider
 
-# Canonical timestamp format — used for ALL decision and signal log entries.
+# Canonical timestamp format — used for ALL activity and alert log entries.
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 # ---------------------------------------------------------------------------
@@ -58,10 +58,10 @@ class AgentRunner:
 
     @staticmethod
     def _try_extract_json(response_text: str) -> Optional[Dict]:
-        """Try to parse a JSON decision block from the agent response.
+        """Try to parse a JSON activity block from the agent response.
 
         Looks for fenced ```json blocks first, then falls back to finding a
-        raw JSON object that contains a ``"decision"`` key.
+        raw JSON object that contains an ``"activity"`` key.
         """
         # 1. Fenced code block: ```json ... ```
         fenced = re.findall(r'```json\s*\n(.*?)```', response_text, re.DOTALL)
@@ -69,13 +69,13 @@ class AgentRunner:
             block = block.strip()
             try:
                 data = json.loads(block)
-                if isinstance(data, dict) and "decision" in data:
+                if isinstance(data, dict) and "activity" in data:
                     return data
             except json.JSONDecodeError:
                 continue
 
-        # 2. Raw JSON object containing "decision"
-        for match in re.finditer(r'\{[^{}]*"decision"\s*:', response_text):
+        # 2. Raw JSON object containing "activity"
+        for match in re.finditer(r'\{[^{}]*"activity"\s*:', response_text):
             start = match.start()
             depth = 0
             for i in range(start, len(response_text)):
@@ -87,7 +87,7 @@ class AgentRunner:
                         candidate = response_text[start:i + 1]
                         try:
                             data = json.loads(candidate)
-                            if isinstance(data, dict) and "decision" in data:
+                            if isinstance(data, dict) and "activity" in data:
                                 return data
                         except json.JSONDecodeError:
                             break
@@ -103,8 +103,8 @@ class AgentRunner:
                 return stripped
         return None
 
-    def _extract_decision_line(self, symbol: str, response_text: str) -> Tuple[str, Optional[Dict]]:
-        """Extract a concise decision line and optional JSON from the response.
+    def _extract_activity_line(self, symbol: str, response_text: str) -> Tuple[str, Optional[Dict]]:
+        """Extract a concise activity line and optional JSON from the response.
 
         Returns:
             (summary_line, json_data) — json_data is None when the agent used
@@ -119,9 +119,9 @@ class AgentRunner:
             if summary:
                 return summary, json_data
             # Build a SUMMARY from the JSON fields
-            decision = json_data.get("decision", "WAIT")
+            activity = json_data.get("activity", "WAIT")
             agent_type = json_data.get("agent", "covered_call").replace("_", " ")
-            if decision == "SELL":
+            if activity == "SELL":
                 strike = json_data.get("strike", "?")
                 exp = json_data.get("expiration", "?")
                 iv = json_data.get("iv", "?")
@@ -150,98 +150,98 @@ class AgentRunner:
                 return line.strip(), None
 
         # Last resort: synthesise a summary
-        decision = "SELL" if "SELL" in response_text.upper() and "CLEAR SELL SIGNAL" in response_text.upper() else "WAIT"
+        activity = "SELL" if "SELL" in response_text.upper() and "CLEAR SELL ALERT" in response_text.upper() else "WAIT"
         reason = response_text[:100].replace('\n', ' ').strip()
-        return f"{ticker} | DECISION: {decision} | Reason: {reason}", None
+        return f"{ticker} | ACTIVITY: {activity} | Reason: {reason}", None
 
-    # Fields allowed in the signal log (lean, machine-parseable)
-    _SIGNAL_FIELDS = (
-        "timestamp", "symbol", "exchange", "decision",
+    # Fields allowed in the alert log (lean, machine-parseable)
+    _ALERT_FIELDS = (
+        "timestamp", "symbol", "exchange", "activity",
         "strike", "expiration", "underlying_price",
         "confidence", "risk_flags",
     )
 
-    # Fields for roll signal log (position monitors)
-    _ROLL_SIGNAL_FIELDS = (
+    # Fields for roll alert log (position monitors)
+    _ROLL_ALERT_FIELDS = (
         "timestamp", "symbol", "exchange", "action",
         "current_strike", "current_expiration",
         "new_strike", "new_expiration",
         "underlying_price", "confidence", "risk_flags",
     )
 
-    _ROLL_DECISIONS = frozenset({
+    _ROLL_ACTIVITIES = frozenset({
         "ROLL_UP", "ROLL_DOWN", "ROLL_OUT",
         "ROLL_UP_AND_OUT", "ROLL_DOWN_AND_OUT", "CLOSE",
     })
 
-    def _is_roll_signal(self, response_text: str, json_data: Optional[Dict] = None) -> bool:
-        """Check if response indicates a roll or close signal."""
+    def _is_roll_alert(self, response_text: str, json_data: Optional[Dict] = None) -> bool:
+        """Check if response indicates a roll or close alert."""
         if json_data is not None:
-            decision = json_data.get("decision", "").upper()
-            if decision in self._ROLL_DECISIONS:
+            activity = json_data.get("activity", "").upper()
+            if activity in self._ROLL_ACTIVITIES:
                 return True
         # Fallback text check
         upper = response_text.upper()
-        return any(f"DECISION: {rd}" in upper or f'"decision": "{rd}"' in upper.replace(" ", "")
-                   for rd in self._ROLL_DECISIONS)
+        return any(f"ACTIVITY: {rd}" in upper or f'"activity": "{rd}"' in upper.replace(" ", "")
+                   for rd in self._ROLL_ACTIVITIES)
 
-    def _build_roll_signal_data(self, symbol: str, json_data: Optional[Dict],
+    def _build_roll_alert_data(self, symbol: str, json_data: Optional[Dict],
                                 timestamp: str) -> Dict:
-        """Build a roll signal entry with the allowed fields."""
+        """Build a roll alert entry with the allowed fields."""
         exchange, ticker = (symbol.split('-', 1) if '-' in symbol
                             else ("", symbol))
         base: Dict = {
             "timestamp": timestamp,
             "symbol": ticker,
             "exchange": exchange,
-            "action": json_data.get("decision", "ROLL") if json_data else "ROLL",
+            "action": json_data.get("activity", "ROLL") if json_data else "ROLL",
         }
         if json_data is not None:
-            for key in self._ROLL_SIGNAL_FIELDS:
+            for key in self._ROLL_ALERT_FIELDS:
                 if key in json_data and key not in base:
                     base[key] = json_data[key]
-        for key in self._ROLL_SIGNAL_FIELDS:
+        for key in self._ROLL_ALERT_FIELDS:
             base.setdefault(key, None)
         # Normalize field names so templates/APIs can use standard names
-        base["decision"] = base["action"]
+        base["activity"] = base["action"]
         base["strike"] = base.get("new_strike") or base.get("current_strike")
         base["expiration"] = base.get("new_expiration") or base.get("current_expiration")
         return base
 
-    def _build_signal_data(self, symbol: str, json_data: Optional[Dict],
+    def _build_alert_data(self, symbol: str, json_data: Optional[Dict],
                             timestamp: str) -> Dict:
-        """Build a signal entry with only the allowed fields."""
+        """Build an alert entry with only the allowed fields."""
         exchange, ticker = (symbol.split('-', 1) if '-' in symbol
                             else ("", symbol))
         base: Dict = {
             "timestamp": timestamp,
             "symbol": ticker,
             "exchange": exchange,
-            "decision": "SELL",
+            "activity": "SELL",
         }
         if json_data is not None:
-            for key in self._SIGNAL_FIELDS:
+            for key in self._ALERT_FIELDS:
                 if key in json_data and key not in base:
                     base[key] = json_data[key]
         # Ensure every allowed field is present (null if missing)
-        for key in self._SIGNAL_FIELDS:
+        for key in self._ALERT_FIELDS:
             base.setdefault(key, None)
         return base
 
-    def _is_sell_signal(self, response_text: str, json_data: Optional[Dict] = None) -> bool:
-        """Check if response indicates a clear sell signal.
+    def _is_sell_alert(self, response_text: str, json_data: Optional[Dict] = None) -> bool:
+        """Check if response indicates a clear sell alert.
 
-        Uses structured JSON ``decision`` field when available, with fallback
+        Uses structured JSON ``activity`` field when available, with fallback
         to text-based keyword matching for backward compatibility.
         """
         # Structured check
         if json_data is not None:
-            if json_data.get("decision", "").upper() == "SELL":
+            if json_data.get("activity", "").upper() == "SELL":
                 return True
 
         # Legacy text-based checks
         upper = response_text.upper()
-        return "CLEAR SELL SIGNAL" in upper or "🚨" in response_text or "SIGNAL: SELL" in upper
+        return "CLEAR SELL ALERT" in upper or "🚨" in response_text or "ALERT: SELL" in upper
     
     async def run_symbol_agent(
         self,
@@ -252,7 +252,7 @@ class AgentRunner:
         agent_type: str,
         cosmos: CosmosDBService,
         context_provider: ContextProvider,
-        max_decision_entries: int = 2,
+        max_activity_entries: int = 2,
         fetcher=None,
     ):
         """Run agent analysis for a single symbol.
@@ -264,8 +264,8 @@ class AgentRunner:
             exchange: Exchange code (e.g. "NASDAQ")
             agent_type: Agent type key (e.g. "covered_call")
             cosmos: CosmosDBService instance for persistence
-            context_provider: ContextProvider for decision history injection
-            max_decision_entries: Max recent decisions for context (0–5)
+            context_provider: ContextProvider for activity history injection
+            max_activity_entries: Max recent activities for context (0–5)
             fetcher: TradingViewFetcher instance (shared across symbols)
         """
         full_symbol = f"{exchange}-{symbol}" if exchange else symbol
@@ -279,7 +279,7 @@ class AgentRunner:
         try:
             # Context injection from CosmosDB
             previous_context = context_provider.get_context(
-                symbol, agent_type, max_entries=max_decision_entries,
+                symbol, agent_type, max_entries=max_activity_entries,
             )
 
             # Pre-fetch all TradingView data
@@ -303,11 +303,11 @@ class AgentRunner:
 
 === END OF DATA ===
 
-Previous decisions for {symbol}:
+Previous activities for {symbol}:
 {previous_context}
 
 Current timestamp: {analysis_ts}
-All market data has been pre-fetched above. Do NOT use any browser tools — analyze the data provided and output your decision in the required JSON format. Use the timestamp above in your JSON output; do NOT generate your own."""
+All market data has been pre-fetched above. Do NOT use any browser tools — analyze the data provided and output your activity in the required JSON format. Use the timestamp above in your JSON output; do NOT generate your own."""
 
             agent = ChatAgent(
                 chat_client=self.client,
@@ -328,46 +328,46 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
 
             print(f"Response: {response_text[:200]}...")
 
-            # Parse decision from agent output
-            decision_line, json_data = self._extract_decision_line(full_symbol, response_text)
+            # Parse activity from agent output
+            activity_line, json_data = self._extract_activity_line(full_symbol, response_text)
 
-            # Build decision payload
-            decision_payload: Dict = {}
+            # Build activity payload
+            activity_payload: Dict = {}
             if json_data is not None:
-                decision_payload = dict(json_data)
-                decision_payload["timestamp"] = analysis_ts
+                activity_payload = dict(json_data)
+                activity_payload["timestamp"] = analysis_ts
             else:
-                decision_payload = {
+                activity_payload = {
                     "symbol": symbol,
                     "exchange": exchange,
-                    "summary": decision_line,
+                    "summary": activity_line,
                     "timestamp": analysis_ts,
                 }
 
-            # Determine if this is a signal
-            is_signal = self._is_sell_signal(response_text, json_data)
-            decision_payload["is_signal"] = is_signal
+            # Determine if this is an alert
+            is_alert = self._is_sell_alert(response_text, json_data)
+            activity_payload["is_alert"] = is_alert
 
-            # Write decision to CosmosDB
-            dec_doc = cosmos.write_decision(
+            # Write activity to CosmosDB
+            dec_doc = cosmos.write_activity(
                 symbol=symbol,
                 agent_type=agent_type,
-                decision_data=decision_payload,
+                activity_data=activity_payload,
                 timestamp=analysis_ts,
             )
-            print(f"Logged decision")
+            print(f"Logged activity")
 
-            # Write signal if actionable
-            if is_signal:
-                signal_data = self._build_signal_data(full_symbol, json_data, analysis_ts)
-                cosmos.write_signal(
+            # Write alert if actionable
+            if is_alert:
+                alert_data = self._build_alert_data(full_symbol, json_data, analysis_ts)
+                cosmos.write_alert(
                     symbol=symbol,
                     agent_type=agent_type,
-                    signal_data=signal_data,
-                    decision_id=dec_doc["id"],
+                    alert_data=alert_data,
+                    activity_id=dec_doc["id"],
                     timestamp=analysis_ts,
                 )
-                print(f"⚠️ SELL SIGNAL logged for {full_symbol}")
+                print(f"⚠️ SELL ALERT logged for {full_symbol}")
 
         except Exception as e:
             logger.error(
@@ -375,15 +375,15 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
                 full_symbol, traceback.format_exc(),
             )
             print(f"Error analyzing {full_symbol}: {e}")
-            cosmos.write_decision(
+            cosmos.write_activity(
                 symbol=symbol,
                 agent_type=agent_type,
-                decision_data={
+                activity_data={
                     "error": str(e),
                     "symbol": symbol,
                     "exchange": exchange,
                     "timestamp": analysis_ts,
-                    "is_signal": False,
+                    "is_alert": False,
                 },
                 timestamp=analysis_ts,
             )
@@ -421,7 +421,7 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
         agent_type: str,
         cosmos: CosmosDBService,
         context_provider: ContextProvider,
-        max_decision_entries: int = 2,
+        max_activity_entries: int = 2,
         fetcher=None,
     ):
         """Run position monitor for a single open position.
@@ -435,7 +435,7 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
             agent_type: Agent type key (e.g. "open_call_monitor")
             cosmos: CosmosDBService instance
             context_provider: ContextProvider for history injection
-            max_decision_entries: Max recent decisions for context (0–5)
+            max_activity_entries: Max recent activities for context (0–5)
             fetcher: TradingViewFetcher instance (shared)
         """
         full_symbol = f"{exchange}-{symbol}" if exchange else symbol
@@ -456,7 +456,7 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
         try:
             # Context injection from CosmosDB (filtered by position)
             previous_context = context_provider.get_context(
-                symbol, agent_type, max_entries=max_decision_entries,
+                symbol, agent_type, max_entries=max_activity_entries,
                 position_id=position_id,
             )
 
@@ -483,11 +483,11 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
 
 === END OF DATA ===
 
-Previous monitor decisions for {symbol}:
+Previous monitor activities for {symbol}:
 {previous_context}
 
 Current timestamp: {analysis_ts}
-Analyze the position risk and output your decision in the required JSON format. Use the timestamp above in your JSON output; do NOT generate your own."""
+Analyze the position risk and output your activity in the required JSON format. Use the timestamp above in your JSON output; do NOT generate your own."""
 
             agent = ChatAgent(
                 chat_client=self.client,
@@ -508,61 +508,61 @@ Analyze the position risk and output your decision in the required JSON format. 
 
             print(f"Response: {response_text[:200]}...")
 
-            # Parse decision
-            decision_line, json_data = self._extract_decision_line(full_symbol, response_text)
+            # Parse activity
+            activity_line, json_data = self._extract_activity_line(full_symbol, response_text)
 
-            decision_payload: Dict = {}
+            activity_payload: Dict = {}
             if json_data is not None:
-                decision_payload = dict(json_data)
-                decision_payload["timestamp"] = analysis_ts
+                activity_payload = dict(json_data)
+                activity_payload["timestamp"] = analysis_ts
             else:
-                decision_payload = {
+                activity_payload = {
                     "symbol": symbol,
                     "exchange": exchange,
                     "current_strike": strike,
                     "current_expiration": expiration,
-                    "summary": decision_line,
+                    "summary": activity_line,
                     "timestamp": analysis_ts,
                 }
-            decision_payload["position_id"] = position_id
+            activity_payload["position_id"] = position_id
 
             # Normalize monitor-agent field names so templates/APIs
-            # can use standard names (strike, expiration, decision)
-            decision_payload.setdefault(
+            # can use standard names (strike, expiration, activity)
+            activity_payload.setdefault(
                 "strike",
-                decision_payload.get("new_strike")
-                or decision_payload.get("current_strike"),
+                activity_payload.get("new_strike")
+                or activity_payload.get("current_strike"),
             )
-            decision_payload.setdefault(
+            activity_payload.setdefault(
                 "expiration",
-                decision_payload.get("new_expiration")
-                or decision_payload.get("current_expiration"),
+                activity_payload.get("new_expiration")
+                or activity_payload.get("current_expiration"),
             )
-            if "action" in decision_payload and "decision" not in decision_payload:
-                decision_payload["decision"] = decision_payload["action"]
+            if "action" in activity_payload and "activity" not in activity_payload:
+                activity_payload["activity"] = activity_payload["action"]
 
-            # Determine if this is a roll/close signal
-            is_signal = self._is_roll_signal(response_text, json_data)
-            decision_payload["is_signal"] = is_signal
+            # Determine if this is a roll/close alert
+            is_alert = self._is_roll_alert(response_text, json_data)
+            activity_payload["is_alert"] = is_alert
 
-            dec_doc = cosmos.write_decision(
+            dec_doc = cosmos.write_activity(
                 symbol=symbol,
                 agent_type=agent_type,
-                decision_data=decision_payload,
+                activity_data=activity_payload,
                 timestamp=analysis_ts,
             )
-            print(f"Logged decision")
+            print(f"Logged activity")
 
-            if is_signal:
-                signal_data = self._build_roll_signal_data(full_symbol, json_data, analysis_ts)
-                cosmos.write_signal(
+            if is_alert:
+                alert_data = self._build_roll_alert_data(full_symbol, json_data, analysis_ts)
+                cosmos.write_alert(
                     symbol=symbol,
                     agent_type=agent_type,
-                    signal_data=signal_data,
-                    decision_id=dec_doc["id"],
+                    alert_data=alert_data,
+                    activity_id=dec_doc["id"],
                     timestamp=analysis_ts,
                 )
-                print(f"⚠️ ROLL SIGNAL logged for {full_symbol} ${strike} exp {expiration}")
+                print(f"⚠️ ROLL ALERT logged for {full_symbol} ${strike} exp {expiration}")
 
         except Exception as e:
             logger.error(
@@ -570,10 +570,10 @@ Analyze the position risk and output your decision in the required JSON format. 
                 full_symbol, strike, expiration, traceback.format_exc(),
             )
             print(f"Error monitoring {full_symbol} ${strike} exp {expiration}: {e}")
-            cosmos.write_decision(
+            cosmos.write_activity(
                 symbol=symbol,
                 agent_type=agent_type,
-                decision_data={
+                activity_data={
                     "error": str(e),
                     "symbol": symbol,
                     "exchange": exchange,
@@ -581,7 +581,7 @@ Analyze the position risk and output your decision in the required JSON format. 
                     "current_expiration": expiration,
                     "position_id": position_id,
                     "timestamp": analysis_ts,
-                    "is_signal": False,
+                    "is_alert": False,
                 },
                 timestamp=analysis_ts,
             )

@@ -63,7 +63,7 @@ Market data has been pre-fetched and included in your message. You will find fou
      - Strong analyst consensus (majority Buy) → institutional backing → favorable for put selling
      - Majority Sell ratings → risk of further decline → require deeper OTM strike or WAIT
    - **Investment Worthiness Gate** (critical for CSP):
-     - Use analyst consensus as institutional quality signal: majority Buy/Hold = institutional backing
+     - Use analyst consensus as institutional quality alert: majority Buy/Hold = institutional backing
      - Recent earnings history: consistent beats = quality company, repeated misses = red flag
      - Number of analysts: more coverage = more institutional interest = more stable
      - If analyst consensus is overwhelmingly negative (majority Sell) → WAIT regardless of premium
@@ -180,7 +180,7 @@ The agent synthesizes all gathered data into a comprehensive analysis:
       - Consensus downgrade trend → caution, potential for further decline
       - Analyst price targets: Low target vs strike price → if strike below low target, good margin of safety
       - Number of analysts: More coverage = more institutional interest = more stable
-    - **Limitations**: No dedicated insider trades, institutional ownership, news sentiment, or detailed fundamentals (P/E, EPS, revenue) in the pre-fetched data. Analyst consensus serves as the primary institutional quality signal.
+    - **Limitations**: No dedicated insider trades, institutional ownership, news sentiment, or detailed fundamentals (P/E, EPS, revenue) in the pre-fetched data. Analyst consensus serves as the primary institutional quality alert.
     - Note: If analyst consensus is strongly negative (majority Sell), apply extra margin of safety
 
 ### Important Notes on Data Availability
@@ -188,8 +188,8 @@ The agent synthesizes all gathered data into a comprehensive analysis:
 - **TradingView Pre-Fetched Data — Advantages:**
   - Pre-calculated technical indicators: RSI, MACD, Stochastic, CCI, ADX, all MAs (10-200), Ichimoku, VWMA, Hull MA — with Buy/Sell/Neutral signals already computed (no manual calculation!)
   - Pivot points: Classic, Fibonacci, Camarilla, Woodie, DM — with S1-S3 support levels — excellent for put strike selection
-  - Analyst consensus: Number of analysts + buy/sell/neutral breakdown + earnings data — serves as investment quality signal
-  - Pre-analyzed technical summary: "Strong Buy" to "Strong Sell" overall signal — no synthesis needed
+  - Analyst consensus: Number of analysts + buy/sell/neutral breakdown + earnings data — serves as investment quality alert
+  - Pre-analyzed technical summary: "Strong Buy" to "Strong Sell" overall alert — no synthesis needed
   - Oversold detection via pre-calculated RSI, Stochastic, Williams %R — no manual computation from raw price data
   - Options chain: Strikes, IV, bid/ask, volume, open interest, Greeks — pre-expanded for 30-45 DTE
   - Current price visible in page headers — no separate data needed
@@ -212,7 +212,7 @@ The agent synthesizes all gathered data into a comprehensive analysis:
   - TradingView provides **pre-analyzed technical signals** (Buy/Sell/Neutral summaries for oscillators, MAs, and overall) rather than raw data
   - The agent works from **analyzed signals** → synthesis, rather than raw data → calculation → synthesis
   - **Pivot points replace manual support identification**: S1-S3 levels replace scanning 1-year price history for local minima, consolidation zones, and Fibonacci retracement calculations
-  - **Investment worthiness gate uses analyst consensus**: Forecast analyst ratings, earnings history, and price targets provide the quality assessment signal
+  - **Investment worthiness gate uses analyst consensus**: Forecast analyst ratings, earnings history, and price targets provide the quality assessment indicator
   - Actual IV% from expanded options chain replaces proxy-based IV estimation
 
 - **When Data is Missing — Fallback Decision Tree:**
@@ -312,9 +312,9 @@ The agent synthesizes all gathered data into a comprehensive analysis:
   - If deep ITM before ex-div, assignor may exercise to get dividend
 - **Seasonal Patterns**: Be aware of sector seasonality
 
-## DECISION CRITERIA
+## ACTIVITY CRITERIA
 
-### SELL Signal Requirements (ALL must be met):
+### SELL Alert Requirements (ALL must be met):
 
 1. **Fundamental Quality** (CRITICAL - must pass):
    - Financial health: Profitable, manageable debt, stable/growing revenue
@@ -354,7 +354,7 @@ The agent synthesizes all gathered data into a comprehensive analysis:
    - Annualized return ≥ 18% if repeated monthly
    - Effective purchase price (strike - premium) attractive entry point
 
-### WAIT Signal Triggers (ANY triggers wait):
+### WAIT Alert Triggers (ANY triggers wait):
 
 1. **Fundamental Red Flags**:
    - Deteriorating financials (revenue decline, margin compression)
@@ -426,22 +426,22 @@ When SELL criteria are met, select strike using:
 4. **Verify premium**: Ensure selected strike offers premium ≥ 1.5% of strike price
 5. **Confirm support**: Ensure strike is AT or BELOW support level (never above)
 
-## INTERPRETING PREVIOUS DECISION LOG
+## INTERPRETING PREVIOUS ACTIVITY LOG
 
-You will receive decision log entries showing the agent's previous analyses. Entries may appear in **either** of two formats:
+You will receive activity log entries showing the agent's previous analyses. Entries may appear in **either** of two formats:
 
 **New format (JSON + SUMMARY):**
 ```json
-{"timestamp": "2024-01-15T14:30:00Z", "symbol": "NVDA", "agent": "cash_secured_put", "decision": "SELL", ...}
+{"timestamp": "2024-01-15T14:30:00Z", "symbol": "NVDA", "agent": "cash_secured_put", "activity": "SELL", ...}
 ```
 SUMMARY: NVDA | SELL cash-secured put | Strike $450 exp 2024-02-16 | IV 42% (Rank 68) | Premium $9.45 (2.1%)
 
 **Legacy format (pipe-delimited):**
 ```
-[TIMESTAMP] SYMBOL | DECISION: SELL/WAIT | Strike: $X | Exp: YYYY-MM-DD | IV: X% | Reason: brief why | Waiting for: what conditions remain
+[TIMESTAMP] SYMBOL | ACTIVITY: SELL/WAIT | Strike: $X | Exp: YYYY-MM-DD | IV: X% | Reason: brief why | Waiting for: what conditions remain
 ```
 
-When reading previous entries, extract the key fields (symbol, decision, strike, IV, reason) regardless of format.
+When reading previous entries, extract the key fields (symbol, activity, strike, IV, reason) regardless of format.
 
 **How to use this context:**
 
@@ -455,7 +455,7 @@ When reading previous entries, extract the key fields (symbol, decision, strike,
    - If support broke, reassess if lower support level exists
 
 3. **Premium Tracking**:
-   - Compare premium percentages across decisions
+   - Compare premium percentages across activities
    - If premiums declining = IV contracting = may need to wait
 
 4. **Assignment Outcomes**:
@@ -469,7 +469,7 @@ When reading previous entries, extract the key fields (symbol, decision, strike,
 
 ## OUTPUT FORMAT SPECIFICATION
 
-Output a **JSON decision block** inside a fenced code block, followed by a **SUMMARY** line. This enables machine parsing and human readability.
+Output a **JSON activity block** inside a fenced code block, followed by a **SUMMARY** line. This enables machine parsing and human readability.
 
 ### Unified Risk Flag Taxonomy
 
@@ -523,7 +523,7 @@ Use consistent risk flag names across all agents. Categories:
   "symbol": "TICKER",
   "exchange": "EXCHANGE",
   "agent": "cash_secured_put",
-  "decision": "SELL or WAIT",
+  "activity": "SELL or WAIT",
   "strike": 450.0,
   "expiration": "YYYY-MM-DD",
   "dte": 32,
@@ -548,22 +548,22 @@ SUMMARY: TICKER | SELL/WAIT cash-secured put | Strike $X exp YYYY-MM-DD | IV X% 
 
 **Rules:**
 - `timestamp`: Use the timestamp provided in prompt. If missing/malformed, use current time and add `"incomplete_data"` to `risk_flags`
-- For WAIT decisions, set `strike`, `expiration`, `dte`, `delta`, `premium`, `premium_pct`, `support_level` to `null`
+- For WAIT activitys, set `strike`, `expiration`, `dte`, `delta`, `premium`, `premium_pct`, `support_level` to `null`
 - For WAIT, set `waiting_for` to a string describing the conditions needed
-- `support_level`: nearest significant support price level (for SELL decisions); `null` for WAIT
+- `support_level`: nearest significant support price level (for SELL activitys); `null` for WAIT
 - `confidence`: "high" (strong conviction, all criteria met), "medium" (reasonable setup, minor concerns), "low" (borderline, significant concerns)
 - `risk_flags`: array of flag names from Unified Risk Flag Taxonomy, or `[]` if none
 
 **Examples:**
 
-Strong SELL decision (all criteria met, no risk flags):
+Strong SELL activity (all criteria met, no risk flags):
 ```json
 {
   "timestamp": "2024-01-15T14:30:00Z",
   "symbol": "NVDA",
   "exchange": "NASDAQ",
   "agent": "cash_secured_put",
-  "decision": "SELL",
+  "activity": "SELL",
   "strike": 450.0,
   "expiration": "2024-02-16",
   "dte": 32,
@@ -589,7 +589,7 @@ Quality setup SELL:
   "symbol": "MSFT",
   "exchange": "NASDAQ",
   "agent": "cash_secured_put",
-  "decision": "SELL",
+  "activity": "SELL",
   "strike": 360.0,
   "expiration": "2024-02-16",
   "dte": 32,
@@ -615,7 +615,7 @@ WAIT for fundamentals:
   "symbol": "SNAP",
   "exchange": "NYSE",
   "agent": "cash_secured_put",
-  "decision": "WAIT",
+  "activity": "WAIT",
   "strike": null,
   "expiration": null,
   "dte": null,
@@ -641,7 +641,7 @@ WAIT for earnings:
   "symbol": "TSLA",
   "exchange": "NASDAQ",
   "agent": "cash_secured_put",
-  "decision": "WAIT",
+  "activity": "WAIT",
   "strike": null,
   "expiration": null,
   "dte": null,
@@ -667,7 +667,7 @@ WAIT for support clarity:
   "symbol": "AMD",
   "exchange": "NASDAQ",
   "agent": "cash_secured_put",
-  "decision": "WAIT",
+  "activity": "WAIT",
   "strike": null,
   "expiration": null,
   "dte": null,
@@ -686,9 +686,9 @@ WAIT for support clarity:
 ```
 SUMMARY: AMD | WAIT | IV 48% (Rank 58) but support breaking | Waiting for: support at $130-135
 
-## CLEAR SELL SIGNAL CRITERIA
+## CLEAR SELL ALERT CRITERIA
 
-A **CLEAR SELL SIGNAL** should be flagged (for the sell signal log) when ALL of the following are met:
+A **CLEAR SELL ALERT** should be flagged (for the sell alert log) when ALL of the following are met:
 
 1. **Exceptional Premium**:
    - Premium ≥ 2.5% of strike price for 30-45 DTE
@@ -721,14 +721,14 @@ A **CLEAR SELL SIGNAL** should be flagged (for the sell signal log) when ALL of 
    - Pullback in bull market OR oversold bounce setup in bear market
    - Sector not in structural decline
 
-**Clear Sell Signal Output:**
-When all criteria are met, add this additional JSON block AFTER the standard decision output, with `"confidence": "high"` and `"risk_flags": []`:
+**Clear Sell Alert Output:**
+When all criteria are met, add this additional JSON block AFTER the standard activity output, with `"confidence": "high"` and `"risk_flags": []`:
 ```
-🔔 CLEAR SELL SIGNAL
+🔔 CLEAR SELL ALERT
 ```
 Also append this flag line after the SUMMARY for easy detection:
 ```
-🔔 CLEAR SELL SIGNAL: Exceptional setup with [key differentiator, e.g., "IV rank 76, premium 2.8%, strong support at $145, post-earnings opportunity"]
+🔔 CLEAR SELL ALERT: Exceptional setup with [key differentiator, e.g., "IV rank 76, premium 2.8%, strong support at $145, post-earnings opportunity"]
 ```
 
 ## RISK MANAGEMENT CONSIDERATIONS
@@ -780,10 +780,10 @@ Also append this flag line after the SUMMARY for easy detection:
 5. **Calendar Check** (earnings, catalysts, timing)
 6. **Greeks & Premium Analysis** (delta, theta, expected return)
 7. **Institutional/Insider Sentiment** (ownership trends, insider activity)
-8. **Decision Rationale** (why SELL or WAIT)
-9. **JSON Decision Block** (required structured format above)
+8. **Activity Rationale** (why SELL or WAIT)
+9. **JSON Activity Block** (required structured format above)
 10. **SUMMARY Line** (required human-readable line above)
-11. **Clear Sell Signal Flag** (if applicable)
+11. **Clear Sell Alert Flag** (if applicable)
 
 ---
 

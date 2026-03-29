@@ -93,15 +93,15 @@
                                 <div class="roll-msg" style="display:none; margin-top:0.5rem; padding:0.5rem 0.75rem; border-radius:6px; font-size:0.9rem;"></div>
                             </div>
                             {% if pos.source %}
-                            <h4 style="margin:0 0 0.75rem; color:var(--text-primary, #e0e0f0);">📊 Opened from signal</h4>
+                            <h4 style="margin:0 0 0.75rem; color:var(--text-primary, #e0e0f0);">📊 Opened from alert</h4>
                             <div class="detail-grid">
                                 <div class="detail-field">
                                     <div class="detail-label">Strategy</div>
                                     <div class="detail-value">{{ "Covered Call" if pos.source.agent_type == "covered_call" else ("Cash-Secured Put" if pos.source.agent_type == "cash_secured_put" else pos.source.agent_type) }}</div>
                                 </div>
                                 <div class="detail-field">
-                                    <div class="detail-label">Decision</div>
-                                    <div class="detail-value"><span class="badge badge-{{ (pos.source.decision or '') | lower }}">{{ pos.source.decision or "—" }}</span></div>
+                                    <div class="detail-label">Activity</div>
+                                    <div class="detail-value"><span class="badge badge-{{ (pos.source.activity or '') | lower }}">{{ pos.source.activity or "—" }}</span></div>
                                 </div>
                                 <div class="detail-field">
                                     <div class="detail-label">Confidence</div>
@@ -137,7 +137,7 @@
                                 {% endif %}
                                 {% if pos.source.timestamp %}
                                 <div class="detail-field">
-                                    <div class="detail-label">Signal Time</div>
+                                    <div class="detail-label">Alert Time</div>
                                     <div class="detail-value mono">{{ pos.source.timestamp[:19] if pos.source.timestamp else "—" }}</div>
                                 </div>
                                 {% endif %}
@@ -188,15 +188,15 @@
 
                             {% if pos.closing_source %}
                             <div style="margin-top:1rem; padding-top:0.75rem; border-top:1px dashed var(--border-color, #2a2a4a);">
-                                <h4 style="margin:0 0 0.75rem; color:var(--text-primary, #e0e0f0);">📉 Closed by signal</h4>
+                                <h4 style="margin:0 0 0.75rem; color:var(--text-primary, #e0e0f0);">📉 Closed by alert</h4>
                                 <div class="detail-grid">
                                     <div class="detail-field">
                                         <div class="detail-label">Strategy</div>
                                         <div class="detail-value">{{ "Open Call Monitor" if pos.closing_source.agent_type == "open_call_monitor" else ("Open Put Monitor" if pos.closing_source.agent_type == "open_put_monitor" else pos.closing_source.agent_type) }}</div>
                                     </div>
                                     <div class="detail-field">
-                                        <div class="detail-label">Decision</div>
-                                        <div class="detail-value"><span class="badge badge-{{ (pos.closing_source.decision or '') | lower }}">{{ pos.closing_source.decision or "—" }}</span></div>
+                                        <div class="detail-label">Activity</div>
+                                        <div class="detail-value"><span class="badge badge-{{ (pos.closing_source.activity or '') | lower }}">{{ pos.closing_source.activity or "—" }}</span></div>
                                     </div>
                                     <div class="detail-field">
                                         <div class="detail-label">Confidence</div>
@@ -232,7 +232,7 @@
                                     {% endif %}
                                     {% if pos.closing_source.timestamp %}
                                     <div class="detail-field">
-                                        <div class="detail-label">Signal Time</div>
+                                        <div class="detail-label">Alert Time</div>
                                         <div class="detail-value mono">{{ pos.closing_source.timestamp[:19] if pos.closing_source.timestamp else "—" }}</div>
                                     </div>
                                     {% endif %}
@@ -285,31 +285,31 @@
     </div>
 </div>
 
-<!-- Recent Decisions -->
+<!-- Recent Activities -->
 <div class="card">
     <div class="card-header">
-        <h2>Recent Decisions</h2>
-        <span class="card-badge">{{ decisions | length }}</span>
+        <h2>Recent Activities</h2>
+        <span class="card-badge">{{ activities | length }}</span>
     </div>
-    {% if decisions %}
+    {% if activities %}
     <div class="table-wrap">
         <table>
             <thead>
                 <tr>
                     <th>Timestamp</th>
                     <th>Agent</th>
-                    <th>Decision</th>
+                    <th>Activity</th>
                     <th>Underlying</th>
                     <th>Confidence</th>
                     <th>Reason</th>
                 </tr>
             </thead>
             <tbody>
-                {% for d in decisions %}
-                <tr class="clickable-row" data-href="/decisions/{{ d.id }}">
+                {% for d in activities %}
+                <tr class="clickable-row" data-href="/activities/{{ d.id }}">
                     <td class="mono">{{ d.timestamp[:19] }}</td>
                     <td>{{ d._agent_label }}</td>
-                    <td><span class="badge badge-{{ d.decision | lower }}">{{ d.decision }}</span>{% if d.is_signal %} ⚡{% endif %}</td>
+                    <td><span class="badge badge-{{ d.activity | lower }}">{{ d.activity }}</span>{% if d.is_alert %} ⚡{% endif %}</td>
                     <td class="mono">${{ d.underlying_price if d.underlying_price else "—" }}</td>
                     <td><span class="confidence confidence-{{ d.confidence or 'medium' }}">{{ d.confidence or "—" }}</span></td>
                     <td>{{ d.reason[:120] ~ ("…" if d.reason | length > 120 else "") if d.reason else "—" }}</td>
@@ -319,24 +319,24 @@
         </table>
     </div>
     {% else %}
-    <p class="empty-state">No decisions yet for this symbol.</p>
+    <p class="empty-state">No activities yet for this symbol.</p>
     {% endif %}
 </div>
 
-<!-- Recent Signals -->
+<!-- Recent Alerts -->
 <div class="card">
     <div class="card-header">
-        <h2>Recent Signals</h2>
-        <span class="card-badge">{{ signals | length }}</span>
+        <h2>Recent Alerts</h2>
+        <span class="card-badge">{{ alerts | length }}</span>
     </div>
-    {% if signals %}
+    {% if alerts %}
     <div class="table-wrap">
         <table>
             <thead>
                 <tr>
                     <th>Timestamp</th>
                     <th>Agent</th>
-                    <th>Decision</th>
+                    <th>Activity</th>
                     <th>Strike</th>
                     <th>Expiration</th>
                     <th>Confidence</th>
@@ -344,26 +344,26 @@
                 </tr>
             </thead>
             <tbody>
-                {% for sig in signals %}
-                <tr class="clickable-row" data-href="/decisions/{{ sig.decision_id }}">
-                    <td class="mono">{{ sig.timestamp[:19] }}</td>
-                    <td>{{ sig._agent_label }}</td>
-                    <td><span class="badge badge-{{ (sig.decision | default('UNKNOWN', true)) | lower }}">{{ sig.decision | default("—", true) }}</span></td>
+                {% for alt in alerts %}
+                <tr class="clickable-row" data-href="/activities/{{ alt.activity_id }}">
+                    <td class="mono">{{ alt.timestamp[:19] }}</td>
+                    <td>{{ alt._agent_label }}</td>
+                    <td><span class="badge badge-{{ (alt.activity | default('UNKNOWN', true)) | lower }}">{{ alt.activity | default("—", true) }}</span></td>
                     <td class="mono">
-                        {% if sig.strike %}${{ sig.strike }}{% else %}—{% endif %}
-                        {% if sig.new_strike and sig.current_strike %}
-                        <span style="color:var(--text-muted, #666); font-size:0.8rem;"> (from ${{ sig.current_strike }})</span>
+                        {% if alt.strike %}${{ alt.strike }}{% else %}—{% endif %}
+                        {% if alt.new_strike and alt.current_strike %}
+                        <span style="color:var(--text-muted, #666); font-size:0.8rem;"> (from ${{ alt.current_strike }})</span>
                         {% endif %}
                     </td>
                     <td class="mono">
-                        {{ sig.expiration or "—" }}
-                        {% if sig.new_expiration and sig.current_expiration %}
-                        <span style="color:var(--text-muted, #666); font-size:0.8rem;"> (from {{ sig.current_expiration }})</span>
+                        {{ alt.expiration or "—" }}
+                        {% if alt.new_expiration and alt.current_expiration %}
+                        <span style="color:var(--text-muted, #666); font-size:0.8rem;"> (from {{ alt.current_expiration }})</span>
                         {% endif %}
                     </td>
-                    <td><span class="confidence confidence-{{ sig.confidence or 'medium' }}">{{ sig.confidence or "—" }}</span></td>
+                    <td><span class="confidence confidence-{{ alt.confidence or 'medium' }}">{{ alt.confidence or "—" }}</span></td>
                     <td>
-                        {% for flag in (sig.risk_flags or []) %}
+                        {% for flag in (alt.risk_flags or []) %}
                         <span class="flag">{{ flag }}</span>
                         {% endfor %}
                     </td>
@@ -373,7 +373,7 @@
         </table>
     </div>
     {% else %}
-    <p class="empty-state">No signals yet for this symbol.</p>
+    <p class="empty-state">No alerts yet for this symbol.</p>
     {% endif %}
 </div>
 {% endblock %}

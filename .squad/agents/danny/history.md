@@ -73,3 +73,15 @@
 - **Session log:** `.squad/log/2026-03-28T1347-cosmosdb-refactor-implementation.md`
 
 **Status:** ✅ Architecture delivered and fully implemented
+
+## Learnings
+
+**2025-03-29: Domain Entity Rename (decision→activity, signal→alert)**
+- Completed exhaustive rename of two core domain concepts across agent instruction files and README
+- Changed "decision" → "activity" to reflect that these are agent outputs/actions, not decisions
+- Changed "signal" → "alert" to clarify these are actionable notifications, not trading signals
+- Updated JSON schema fields in all 4 instruction files (tv_covered_call, tv_cash_secured_put, tv_open_call, tv_open_put)
+- Updated all prose, examples, section headers, and documentation in README.md
+- Preserved context-specific uses: "FDA decision", "regulatory decision", "technical signals" remain unchanged
+- Used systematic sed replacements to ensure consistency across ~800+ lines of instruction text
+- Verified zero remaining incorrect references in owned files

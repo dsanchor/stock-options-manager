@@ -662,3 +662,35 @@ Linus completed frontend integration for the position-from-decision workflow:
 - Validates old position exists and is active before rolling. Generates new position ID using the standard `pos_{symbol}_{type}_{strike}_{exp}` format.
 - New API endpoint `POST /api/symbols/{symbol}/positions/roll-from-decision/{decision_id}` — mirrors the existing `from-decision` pattern but for monitor agents (`open_call_monitor` → call, `open_put_monitor` → put). Same snapshot format for source/closing_source.
 - Key difference from "Open Position": no watchlist disable, no cascade-delete. Monitor agents track open positions, not watchlist items.
+
+## Learnings
+
+### 2026-03-29: Domain Entity Rename (decision → activity, signal → alert)
+**Scope:** Comprehensive backend rename across all Python files
+
+Systematically renamed domain entities throughout the backend:
+- **Function names:** `write_decision()` → `write_activity()`, `write_signal()` → `write_alert()`, `get_recent_decisions()` → `get_recent_activities()`, etc.
+- **Variable names:** `decision` → `activity`, `signal` → `alert`, `decision_data` → `activity_data`, `is_signal` → `is_alert`, `_SIGNAL_FIELDS` → `_ALERT_FIELDS`, etc.
+- **Dictionary keys:** `"decision"` → `"activity"`, `"signal"` → `"alert"`, `"is_signal"` → `"is_alert"`, `"decision_id"` → `"activity_id"`
+- **CosmosDB doc_type values:** `"decision"` → `"activity"`, `"signal"` → `"alert"` (in documents and all query strings)
+- **Config keys:** `max_decision_entries` → `max_activity_entries`, `decision_ttl_days` → `activity_ttl_days`
+- **Comments/docstrings:** Updated all references to use new terminology
+
+**Files modified:**
+- `src/cosmos_db.py` — All CRUD operations, query strings, doc_type values
+- `src/agent_runner.py` — All agent execution logic, field constants, helper methods
+- `src/context.py` — Context injection provider
+- `src/config.py` — Config property names
+- `src/main.py` — (no changes needed, only OS signal handling)
+- `src/covered_call_agent.py` — Parameter passing
+- `src/cash_secured_put_agent.py` — Parameter passing
+- `src/open_call_monitor_agent.py` — Parameter passing
+- `src/open_put_monitor_agent.py` — Parameter passing
+- `config.yaml` — Config section keys and comments
+- `scripts/provision_cosmosdb.sh` — Indexing policy field reference
+
+**Database impact:** Database will be recreated from scratch — no backward compatibility needed. All references updated exhaustively.
+
+**Verification:** Zero remaining "decision" or "signal" references in backend files (except OS signal handling in main.py: `import signal`, `SIGINT`, `SIGTERM` — correctly preserved).
+
+**Key insight:** Used systematic sed scripts for bulk renames in large files (cosmos_db.py: 692 lines, agent_runner.py: 606 lines), followed by targeted manual edits for edge cases. Parallel grep verification ensured completeness.

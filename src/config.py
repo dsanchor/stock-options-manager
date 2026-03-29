@@ -100,11 +100,11 @@ class Config:
     # ── Context ────────────────────────────────────────────────────────
 
     @property
-    def max_decision_entries(self) -> int:
-        """Recent decisions for context injection (0=none, max 5). Default 2."""
-        val = self.config.get('context', {}).get('max_decision_entries', 2)
+    def max_activity_entries(self) -> int:
+        """Recent activities for context injection (0=none, max 5). Default 2."""
+        val = self.config.get('context', {}).get('max_activity_entries', 2)
         return max(0, min(5, val))
 
     @property
-    def decision_ttl_days(self) -> int:
-        return self.config.get('context', {}).get('decision_ttl_days', 90)
+    def activity_ttl_days(self) -> int:
+        return self.config.get('context', {}).get('activity_ttl_days', 90)

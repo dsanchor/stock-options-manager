@@ -1,16 +1,16 @@
 {% extends "base.html" %}
-{% block title %}Decision Detail — {{ symbol }} — Stock Options Manager{% endblock %}
+{% block title %}Activity Detail — {{ symbol }} — Stock Options Manager{% endblock %}
 
 {% block content %}
 <div class="page-header">
     <a href="/symbols/{{ symbol }}" class="back-link">← {{ display_name }}</a>
-    <h1>Decision Detail</h1>
-    {% if is_signal %}
-    <div class="signal-banner" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.5rem;">
-        <span>⚡ This decision triggered a signal</span>
-        {% if decision.agent_type in ['covered_call', 'cash_secured_put'] %}
+    <h1>Activity Detail</h1>
+    {% if is_alert %}
+    <div class="alert-banner" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.5rem;">
+        <span>⚡ This activity triggered an alert</span>
+        {% if activity.agent_type in ['covered_call', 'cash_secured_put'] %}
         <button class="btn btn-primary" id="btnOpenPosition" style="white-space:nowrap;">Open Position</button>
-        {% elif decision.agent_type in ['open_call_monitor', 'open_put_monitor'] %}
+        {% elif activity.agent_type in ['open_call_monitor', 'open_put_monitor'] %}
         <button class="btn btn-primary" id="btnRollPosition" style="white-space:nowrap;">Roll Position</button>
         {% endif %}
     </div>
@@ -18,23 +18,23 @@
     {% endif %}
 </div>
 
-<!-- Decision card -->
+<!-- Activity card -->
 <div class="card">
     <div class="card-header">
-        <h2>Decision</h2>
-        <span class="badge badge-{{ decision.decision | lower }}">{{ decision.decision }}</span>
+        <h2>Activity</h2>
+        <span class="badge badge-{{ activity.activity | lower }}">{{ activity.activity }}</span>
     </div>
 
-    {% if decision.reason %}
-    <div class="decision-entry">
-        <p class="decision-reason">{{ decision.reason }}</p>
+    {% if activity.reason %}
+    <div class="activity-entry">
+        <p class="activity-reason">{{ activity.reason }}</p>
     </div>
     {% endif %}
 
     <div class="detail-grid">
         <div class="detail-field">
             <div class="detail-label">Timestamp</div>
-            <div class="detail-value mono">{{ decision.timestamp or "—" }}</div>
+            <div class="detail-value mono">{{ activity.timestamp or "—" }}</div>
         </div>
         <div class="detail-field">
             <div class="detail-label">Agent</div>
@@ -45,21 +45,21 @@
             <div class="detail-value mono">{{ symbol }}</div>
         </div>
         <div class="detail-field">
-            <div class="detail-label">Decision</div>
-            <div class="detail-value"><span class="badge badge-{{ decision.decision | lower }}">{{ decision.decision }}</span></div>
+            <div class="detail-label">Activity</div>
+            <div class="detail-value"><span class="badge badge-{{ activity.activity | lower }}">{{ activity.activity }}</span></div>
         </div>
         <div class="detail-field">
             <div class="detail-label">Confidence</div>
-            <div class="detail-value"><span class="confidence confidence-{{ decision.confidence or 'medium' }}">{{ decision.confidence or "—" }}</span></div>
+            <div class="detail-value"><span class="confidence confidence-{{ activity.confidence or 'medium' }}">{{ activity.confidence or "—" }}</span></div>
         </div>
-        {% if decision.underlying_price is not none %}
+        {% if activity.underlying_price is not none %}
         <div class="detail-field">
             <div class="detail-label">Underlying Price</div>
-            <div class="detail-value mono">${{ decision.underlying_price }}</div>
+            <div class="detail-value mono">${{ activity.underlying_price }}</div>
         </div>
         {% endif %}
-        {% set d_strike = decision.strike if decision.strike is not none else (decision.new_strike if decision.new_strike is not none else decision.current_strike) %}
-        {% set d_expiration = decision.expiration or decision.new_expiration or decision.current_expiration %}
+        {% set d_strike = activity.strike if activity.strike is not none else (activity.new_strike if activity.new_strike is not none else activity.current_strike) %}
+        {% set d_expiration = activity.expiration or activity.new_expiration or activity.current_expiration %}
         {% if d_strike is not none %}
         <div class="detail-field">
             <div class="detail-label">Strike</div>
@@ -72,68 +72,68 @@
             <div class="detail-value mono">{{ d_expiration }}</div>
         </div>
         {% endif %}
-        {% if decision.current_strike is not none and decision.new_strike is not none %}
+        {% if activity.current_strike is not none and activity.new_strike is not none %}
         <div class="detail-field">
             <div class="detail-label">Current Strike</div>
-            <div class="detail-value mono">${{ decision.current_strike }}</div>
+            <div class="detail-value mono">${{ activity.current_strike }}</div>
         </div>
         <div class="detail-field">
             <div class="detail-label">New Strike</div>
-            <div class="detail-value mono">${{ decision.new_strike }}</div>
+            <div class="detail-value mono">${{ activity.new_strike }}</div>
         </div>
         {% endif %}
-        {% if decision.current_expiration and decision.new_expiration %}
+        {% if activity.current_expiration and activity.new_expiration %}
         <div class="detail-field">
             <div class="detail-label">Current Expiration</div>
-            <div class="detail-value mono">{{ decision.current_expiration }}</div>
+            <div class="detail-value mono">{{ activity.current_expiration }}</div>
         </div>
         <div class="detail-field">
             <div class="detail-label">New Expiration</div>
-            <div class="detail-value mono">{{ decision.new_expiration }}</div>
+            <div class="detail-value mono">{{ activity.new_expiration }}</div>
         </div>
         {% endif %}
-        {% if decision.premium is not none %}
+        {% if activity.premium is not none %}
         <div class="detail-field">
             <div class="detail-label">Premium</div>
-            <div class="detail-value mono">${{ decision.premium }}</div>
+            <div class="detail-value mono">${{ activity.premium }}</div>
         </div>
         {% endif %}
-        {% if decision.iv is not none %}
+        {% if activity.iv is not none %}
         <div class="detail-field">
             <div class="detail-label">IV</div>
-            <div class="detail-value mono">{{ decision.iv }}%</div>
+            <div class="detail-value mono">{{ activity.iv }}%</div>
         </div>
         {% endif %}
-        {% if decision.risk_flags %}
+        {% if activity.risk_flags %}
         <div class="detail-field">
             <div class="detail-label">Risk Flags</div>
             <div class="detail-value">
-                {% for flag in decision.risk_flags %}
+                {% for flag in activity.risk_flags %}
                 <span class="flag">{{ flag }}</span>
                 {% endfor %}
             </div>
         </div>
         {% endif %}
-        {% if decision.position_id %}
+        {% if activity.position_id %}
         <div class="detail-field">
             <div class="detail-label">Position ID</div>
-            <div class="detail-value mono">{{ decision.position_id }}</div>
+            <div class="detail-value mono">{{ activity.position_id }}</div>
         </div>
         {% endif %}
     </div>
 </div>
 
-<!-- Full decision JSON -->
+<!-- Full activity JSON -->
 <div class="card">
     <details>
         <summary style="cursor:pointer; padding:1rem; font-weight:600; color:var(--text-muted, #aaa);">Raw JSON</summary>
-        <pre class="json-block">{{ decision | json_pretty }}</pre>
+        <pre class="json-block">{{ activity | json_pretty }}</pre>
     </details>
 </div>
 {% endblock %}
 
 {% block scripts %}
-{% if is_signal %}
+{% if is_alert %}
 <script>
 (function() {
     var msgEl = document.getElementById('actionMsg');
@@ -154,12 +154,12 @@
     var btnOpen = document.getElementById('btnOpenPosition');
     if (btnOpen) {
         btnOpen.addEventListener('click', async function() {
-            if (!confirm('Open a position from this signal? This will disable the watchlist.')) return;
+            if (!confirm('Open a position from this alert? This will disable the watchlist.')) return;
             btnOpen.disabled = true;
             btnOpen.textContent = 'Opening…';
             msgEl.style.display = 'none';
             try {
-                var res = await fetch('/api/symbols/{{ symbol }}/positions/from-decision/{{ decision.id }}', { method: 'POST' });
+                var res = await fetch('/api/symbols/{{ symbol }}/positions/from-activity/{{ activity.id }}', { method: 'POST' });
                 var data = await res.json();
                 if (!res.ok) {
                     showMsg('error', data.error || 'Failed to open position.');
@@ -186,7 +186,7 @@
             btnRoll.textContent = 'Rolling…';
             msgEl.style.display = 'none';
             try {
-                var res = await fetch('/api/symbols/{{ symbol }}/positions/roll-from-decision/{{ decision.id }}', { method: 'POST' });
+                var res = await fetch('/api/symbols/{{ symbol }}/positions/roll-from-activity/{{ activity.id }}', { method: 'POST' });
                 var data = await res.json();
                 if (!res.ok) {
                     showMsg('error', data.error || 'Failed to roll position.');

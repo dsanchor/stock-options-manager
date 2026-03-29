@@ -13,7 +13,7 @@ async def run_cash_secured_put_analysis(config, runner: AgentRunner,
         config: Configuration object
         runner: Initialized AgentRunner instance
         cosmos: CosmosDBService instance
-        context_provider: ContextProvider for decision history
+        context_provider: ContextProvider for activity history
     """
     print(f"\n{'='*60}")
     print(f"Starting CashSecuredPutAgent analysis")
@@ -39,7 +39,7 @@ async def run_cash_secured_put_analysis(config, runner: AgentRunner,
                 agent_type="cash_secured_put",
                 cosmos=cosmos,
                 context_provider=context_provider,
-                max_decision_entries=config.max_decision_entries,
+                max_activity_entries=config.max_activity_entries,
                 fetcher=fetcher,
             )
 

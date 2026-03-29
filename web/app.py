@@ -254,12 +254,12 @@ async def api_update_symbol(request: Request, symbol: str):
         doc["updated_at"] = datetime.utcnow().isoformat() + "Z"
         updated = cosmos.container.replace_item(item=doc["id"], body=doc)
 
-        # Cascade-delete decisions & signals when a watchlist agent is toggled OFF
+        # Cascade-delete activities & alerts when a watchlist agent is toggled OFF
         sym = symbol.upper()
         if "covered_call" in body and not bool(body["covered_call"]):
-            cosmos.delete_decisions_by_agent_type(sym, "covered_call")
+            cosmos.delete_activities_by_agent_type(sym, "covered_call")
         if "cash_secured_put" in body and not bool(body["cash_secured_put"]):
-            cosmos.delete_decisions_by_agent_type(sym, "cash_secured_put")
+            cosmos.delete_activities_by_agent_type(sym, "cash_secured_put")
 
         return JSONResponse(_clean_doc(updated))
     except RuntimeError as e:
@@ -321,25 +321,25 @@ async def api_add_position(request: Request, symbol: str):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.post("/api/symbols/{symbol}/positions/from-decision/{decision_id}")
-async def api_add_position_from_decision(request: Request, symbol: str,
-                                         decision_id: str):
-    """Create a position from an existing decision, disable watchlist, and
-    cascade-delete related decisions/signals."""
+@app.post("/api/symbols/{symbol}/positions/from-activity/{activity_id}")
+async def api_add_position_from_activity(request: Request, symbol: str,
+                                         activity_id: str):
+    """Create a position from an existing activity, disable watchlist, and
+    cascade-delete related activities/alerts."""
     try:
         cosmos = _get_cosmos(request)
-        decision = cosmos.get_decision_by_id(decision_id)
-        if decision is None:
-            return JSONResponse({"error": f"Decision {decision_id} not found"},
+        activity = cosmos.get_activity_by_id(activity_id)
+        if activity is None:
+            return JSONResponse({"error": f"Activity {activity_id} not found"},
                                 status_code=404)
 
-        strike = decision.get("strike")
-        expiration = decision.get("expiration")
-        agent_type = decision.get("agent_type")
+        strike = activity.get("strike")
+        expiration = activity.get("expiration")
+        agent_type = activity.get("agent_type")
 
         if not strike or not expiration or not agent_type:
             return JSONResponse(
-                {"error": "Decision missing required fields (strike, expiration, agent_type)"},
+                {"error": "Activity missing required fields (strike, expiration, agent_type)"},
                 status_code=400,
             )
 
@@ -352,16 +352,16 @@ async def api_add_position_from_decision(request: Request, symbol: str,
             )
 
         source = {
-            "decision_id": decision["id"],
-            "agent_type": decision.get("agent_type"),
-            "decision": decision.get("decision"),
-            "confidence": decision.get("confidence"),
-            "reason": decision.get("reason"),
-            "underlying_price": decision.get("underlying_price"),
-            "premium": decision.get("premium"),
-            "iv": decision.get("iv"),
-            "risk_flags": decision.get("risk_flags", []),
-            "timestamp": decision.get("timestamp"),
+            "activity_id": activity["id"],
+            "agent_type": activity.get("agent_type"),
+            "activity": activity.get("activity"),
+            "confidence": activity.get("confidence"),
+            "reason": activity.get("reason"),
+            "underlying_price": activity.get("underlying_price"),
+            "premium": activity.get("premium"),
+            "iv": activity.get("iv"),
+            "risk_flags": activity.get("risk_flags", []),
+            "timestamp": activity.get("timestamp"),
         }
 
         doc = cosmos.add_position(
@@ -375,8 +375,8 @@ async def api_add_position_from_decision(request: Request, symbol: str,
             sym_doc["watchlist"][agent_type] = False
             sym_doc["updated_at"] = datetime.utcnow().isoformat() + "Z"
             cosmos.container.replace_item(item=sym_doc["id"], body=sym_doc)
-            # Cascade-delete decisions/signals for this agent type
-            cosmos.delete_decisions_by_agent_type(symbol.upper(), agent_type)
+            # Cascade-delete activities/alerts for this agent type
+            cosmos.delete_activities_by_agent_type(symbol.upper(), agent_type)
 
         return JSONResponse(_clean_doc(doc), status_code=201)
     except ValueError as e:
@@ -387,29 +387,29 @@ async def api_add_position_from_decision(request: Request, symbol: str,
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.post("/api/symbols/{symbol}/positions/roll-from-decision/{decision_id}")
-async def api_roll_position_from_decision(request: Request, symbol: str,
-                                          decision_id: str):
-    """Roll a position from a monitor-agent decision: close old + open new."""
+@app.post("/api/symbols/{symbol}/positions/roll-from-activity/{activity_id}")
+async def api_roll_position_from_activity(request: Request, symbol: str,
+                                          activity_id: str):
+    """Roll a position from a monitor-agent activity: close old + open new."""
     try:
         cosmos = _get_cosmos(request)
-        decision = cosmos.get_decision_by_id(decision_id)
-        if decision is None:
-            return JSONResponse({"error": f"Decision {decision_id} not found"},
+        activity = cosmos.get_activity_by_id(activity_id)
+        if activity is None:
+            return JSONResponse({"error": f"Activity {activity_id} not found"},
                                 status_code=404)
 
-        strike = (decision.get("strike")
-                  or decision.get("new_strike")
-                  or decision.get("current_strike"))
-        expiration = (decision.get("expiration")
-                      or decision.get("new_expiration")
-                      or decision.get("current_expiration"))
-        agent_type = decision.get("agent_type")
-        position_id = decision.get("position_id")
+        strike = (activity.get("strike")
+                  or activity.get("new_strike")
+                  or activity.get("current_strike"))
+        expiration = (activity.get("expiration")
+                      or activity.get("new_expiration")
+                      or activity.get("current_expiration"))
+        agent_type = activity.get("agent_type")
+        position_id = activity.get("position_id")
 
         if not strike or not expiration or not agent_type or not position_id:
             return JSONResponse(
-                {"error": "Decision missing required fields (strike, expiration, agent_type, position_id)"},
+                {"error": "Activity missing required fields (strike, expiration, agent_type, position_id)"},
                 status_code=400,
             )
 
@@ -422,16 +422,16 @@ async def api_roll_position_from_decision(request: Request, symbol: str,
             )
 
         snapshot = {
-            "decision_id": decision["id"],
-            "agent_type": decision.get("agent_type"),
-            "decision": decision.get("decision"),
-            "confidence": decision.get("confidence"),
-            "reason": decision.get("reason"),
-            "underlying_price": decision.get("underlying_price"),
-            "premium": decision.get("premium"),
-            "iv": decision.get("iv"),
-            "risk_flags": decision.get("risk_flags", []),
-            "timestamp": decision.get("timestamp"),
+            "activity_id": activity["id"],
+            "agent_type": activity.get("agent_type"),
+            "activity": activity.get("activity"),
+            "confidence": activity.get("confidence"),
+            "reason": activity.get("reason"),
+            "underlying_price": activity.get("underlying_price"),
+            "premium": activity.get("premium"),
+            "iv": activity.get("iv"),
+            "risk_flags": activity.get("risk_flags", []),
+            "timestamp": activity.get("timestamp"),
         }
 
         doc = cosmos.roll_position(
@@ -452,7 +452,7 @@ async def api_roll_position_from_decision(request: Request, symbol: str,
 @app.post("/api/symbols/{symbol}/positions/{position_id}/roll")
 async def api_manual_roll_position(request: Request, symbol: str,
                                    position_id: str):
-    """Manually roll a position to a new strike/expiration without a signal."""
+    """Manually roll a position to a new strike/expiration without an alert."""
     try:
         cosmos = _get_cosmos(request)
         body = await request.json()
@@ -530,12 +530,12 @@ async def api_delete_position(request: Request, symbol: str, position_id: str):
 # REST API — Data Views
 # ===========================================================================
 
-@app.get("/api/signals")
-async def api_signals(request: Request, agent_type: str = None,
-                      since: str = None, limit: int = 100):
+@app.get("/api/alerts")
+async def api_alerts(request: Request, agent_type: str = None,
+                     since: str = None, limit: int = 100):
     try:
         cosmos = _get_cosmos(request)
-        results = cosmos.get_all_signals(agent_type, since, limit)
+        results = cosmos.get_all_alerts(agent_type, since, limit)
         return JSONResponse([_clean_doc(r) for r in results])
     except RuntimeError as e:
         return JSONResponse({"error": str(e)}, status_code=503)
@@ -543,14 +543,14 @@ async def api_signals(request: Request, agent_type: str = None,
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.get("/api/decisions")
-async def api_decisions(request: Request, agent_type: str = None,
-                        symbol: str = None, since: str = None,
-                        limit: int = 100):
+@app.get("/api/activities")
+async def api_activities(request: Request, agent_type: str = None,
+                         symbol: str = None, since: str = None,
+                         limit: int = 100):
     try:
         cosmos = _get_cosmos(request)
         if symbol:
-            conditions = ["c.doc_type = 'decision'"]
+            conditions = ["c.doc_type = 'activity'"]
             params: List[dict] = []
             if agent_type:
                 conditions.append("c.agent_type = @agent_type")
@@ -569,7 +569,7 @@ async def api_decisions(request: Request, agent_type: str = None,
                 partition_key=symbol.upper(),
             ))
         else:
-            results = cosmos.get_all_decisions(agent_type, since, limit)
+            results = cosmos.get_all_activities(agent_type, since, limit)
         return JSONResponse([_clean_doc(r) for r in results])
     except RuntimeError as e:
         return JSONResponse({"error": str(e)}, status_code=503)
@@ -581,15 +581,15 @@ async def api_decisions(request: Request, agent_type: str = None,
 # Page Routes — Dashboard
 # ===========================================================================
 
-def _build_dashboard_tables(cosmos, all_symbols, all_signals, all_decisions):
+def _build_dashboard_tables(cosmos, all_symbols, all_alerts, all_activities):
     """Build per-agent table data for the dashboard from CosmosDB data."""
     agent_tables = []
     grand_totals = {"today": 0, "week": 0, "month": 0, "total": 0}
 
     for agent_key, agent_meta in AGENT_TYPES.items():
         is_pm = agent_meta["is_position_monitor"]
-        agent_signals = [s for s in all_signals
-                         if s.get("agent_type") == agent_key]
+        agent_alerts = [s for s in all_alerts
+                        if s.get("agent_type") == agent_key]
 
         groups: Dict[str, List[Dict]] = {}
         display_map: Dict[str, str] = {}
@@ -615,14 +615,14 @@ def _build_dashboard_tables(cosmos, all_symbols, all_signals, all_decisions):
                     display_map.setdefault(
                         sym, sym_cfg.get("display_name", sym))
 
-        # Layer signals onto groups
-        for sig in agent_signals:
-            sym = sig.get("symbol", "")
+        # Layer alerts onto groups
+        for alert in agent_alerts:
+            sym = alert.get("symbol", "")
             if is_pm:
-                strike = (sig.get("current_strike")
-                          or sig.get("strike", ""))
-                exp = (sig.get("current_expiration")
-                       or sig.get("expiration", ""))
+                strike = (alert.get("current_strike")
+                          or alert.get("strike", ""))
+                exp = (alert.get("current_expiration")
+                       or alert.get("expiration", ""))
                 key = f"{sym}_{strike}_{exp}" if strike and exp else sym
                 if key not in display_map:
                     display_map[key] = (
@@ -632,13 +632,13 @@ def _build_dashboard_tables(cosmos, all_symbols, all_signals, all_decisions):
             else:
                 key = sym
                 display_map.setdefault(key, sym)
-            groups.setdefault(key, []).append(sig)
+            groups.setdefault(key, []).append(alert)
 
-        # Latest decision per key — for health metrics and risk flags
-        agent_decs = [d for d in all_decisions
+        # Latest activity per key — for health metrics and risk flags
+        agent_acts = [d for d in all_activities
                       if d.get("agent_type") == agent_key]
         latest_by_key: Dict[str, Dict] = {}
-        for d in agent_decs:
+        for d in agent_acts:
             sym = d.get("symbol", "")
             if is_pm:
                 strike = (d.get("current_strike")
@@ -677,7 +677,7 @@ def _build_dashboard_tables(cosmos, all_symbols, all_signals, all_decisions):
                 row["delta"] = dec.get("delta")
             rows.append(row)
 
-        total_counts = _count_by_range(agent_signals)
+        total_counts = _count_by_range(agent_alerts)
         for k in grand_totals:
             grand_totals[k] += total_counts[k]
 
@@ -721,8 +721,8 @@ async def dashboard(request: Request):
 
     try:
         all_symbols = cosmos.list_symbols()
-        all_signals = cosmos.get_all_signals(limit=500)
-        all_decisions = cosmos.get_all_decisions(limit=50)
+        all_alerts = cosmos.get_all_alerts(limit=500)
+        all_activities = cosmos.get_all_activities(limit=50)
     except Exception as e:
         empty_ctx["error"] = f"CosmosDB query failed: {e}"
         return templates.TemplateResponse("dashboard.html", empty_ctx)
@@ -734,20 +734,20 @@ async def dashboard(request: Request):
             if pos.get("status") != "active":
                 closed_position_ids.add(pos["position_id"])
 
-    # Exclude decisions/signals linked to closed positions from dashboard
+    # Exclude activities/alerts linked to closed positions from dashboard
     if closed_position_ids:
-        closed_decision_ids = {
-            d["id"] for d in all_decisions
+        closed_activity_ids = {
+            d["id"] for d in all_activities
             if d.get("position_id") in closed_position_ids
         }
-        all_decisions = [
-            d for d in all_decisions
+        all_activities = [
+            d for d in all_activities
             if d.get("position_id") not in closed_position_ids
         ]
-        all_signals = [
-            s for s in all_signals
+        all_alerts = [
+            s for s in all_alerts
             if s.get("position_id") not in closed_position_ids
-            and s.get("decision_id") not in closed_decision_ids
+            and s.get("activity_id") not in closed_activity_ids
         ]
 
     symbol_count = len(all_symbols)
@@ -757,14 +757,14 @@ async def dashboard(request: Request):
     )
 
     agent_tables, grand_totals = _build_dashboard_tables(
-        cosmos, all_symbols, all_signals, all_decisions)
+        cosmos, all_symbols, all_alerts, all_activities)
 
     last_run = ""
-    if all_decisions:
-        last_run = all_decisions[0].get("timestamp", "")[:19]
+    if all_activities:
+        last_run = all_activities[0].get("timestamp", "")[:19]
 
     activity = []
-    for d in all_decisions[:10]:
+    for d in all_activities[:10]:
         agent_key = d.get("agent_type", "")
         d["_agent_label"] = AGENT_TYPES.get(agent_key, {}).get(
             "label", agent_key)
@@ -814,32 +814,32 @@ async def symbol_detail_page(request: Request, symbol: str):
     if not doc:
         return HTMLResponse(f"Symbol {symbol} not found", status_code=404)
 
-    # Gather recent decisions across all agent types
-    decisions: List[Dict] = []
+    # Gather recent activities across all agent types
+    activities: List[Dict] = []
     for agent_type, meta in AGENT_TYPES.items():
-        decs = cosmos.get_recent_decisions(
+        acts = cosmos.get_recent_activities(
             symbol.upper(), agent_type, max_entries=20)
-        for d in decs:
+        for d in acts:
             d["_agent_label"] = meta["label"]
-        decisions.extend(decs)
-    decisions.sort(key=lambda d: d.get("timestamp", ""), reverse=True)
-    decisions = decisions[:20]
+        activities.extend(acts)
+    activities.sort(key=lambda d: d.get("timestamp", ""), reverse=True)
+    activities = activities[:20]
 
-    # Gather recent signals
-    signals: List[Dict] = []
+    # Gather recent alerts
+    alerts: List[Dict] = []
     for agent_type, meta in AGENT_TYPES.items():
-        sigs = cosmos.get_recent_signals(
+        alts = cosmos.get_recent_alerts(
             symbol.upper(), agent_type, max_entries=10)
-        for s in sigs:
+        for s in alts:
             s["_agent_label"] = meta["label"]
-        signals.extend(sigs)
-    signals.sort(key=lambda s: s.get("timestamp", ""), reverse=True)
+        alerts.extend(alts)
+    alerts.sort(key=lambda s: s.get("timestamp", ""), reverse=True)
 
     return templates.TemplateResponse("symbol_detail.html", {
         "request": request,
         "symbol_doc": doc,
-        "decisions": decisions,
-        "signals": signals,
+        "activities": activities,
+        "alerts": alerts,
     })
 
 
@@ -906,38 +906,38 @@ async def api_fetch_preview(request: Request, symbol: str):
 
 
 # ===========================================================================
-# Page Routes — Decision Detail
+# Page Routes — Activity Detail
 # ===========================================================================
 
-@app.get("/decisions/{decision_id}", response_class=HTMLResponse)
-async def decision_detail_page(request: Request, decision_id: str):
+@app.get("/activities/{activity_id}", response_class=HTMLResponse)
+async def activity_detail_page(request: Request, activity_id: str):
     cosmos = getattr(request.app.state, "cosmos", None)
     if cosmos is None:
         error_detail = getattr(request.app.state, "cosmos_error", "unknown")
         return HTMLResponse(f"CosmosDB not available: {error_detail}",
                             status_code=503)
 
-    decision = cosmos.get_decision_by_id(decision_id)
-    if not decision:
-        return HTMLResponse("Decision not found", status_code=404)
+    activity = cosmos.get_activity_by_id(activity_id)
+    if not activity:
+        return HTMLResponse("Activity not found", status_code=404)
 
-    symbol = decision.get("symbol", "")
-    agent_type = decision.get("agent_type", "")
+    symbol = activity.get("symbol", "")
+    agent_type = activity.get("agent_type", "")
     agent_label = AGENT_TYPES.get(agent_type, {}).get("label", agent_type)
-    is_signal = decision.get("is_signal", False)
+    is_alert = activity.get("is_alert", False)
 
     # Build display_name from symbol config (for back link)
     sym_doc = cosmos.get_symbol(symbol)
     display_name = sym_doc["display_name"] if sym_doc else symbol
 
-    return templates.TemplateResponse("decision_detail.html", {
+    return templates.TemplateResponse("activity_detail.html", {
         "request": request,
-        "decision": decision,
+        "activity": activity,
         "symbol": symbol,
         "display_name": display_name,
         "agent_label": agent_label,
         "agent_type": agent_type,
-        "is_signal": is_signal,
+        "is_alert": is_alert,
     })
 
 
@@ -1111,36 +1111,36 @@ async def chat_api(request: Request):
     if cosmos:
         try:
             for agent_key, meta in AGENT_TYPES.items():
-                signals = cosmos.get_all_signals(
+                alerts = cosmos.get_all_alerts(
                     agent_type=agent_key, limit=20)
-                decisions = cosmos.get_all_decisions(
+                activities = cosmos.get_all_activities(
                     agent_type=agent_key, limit=20)
-                if not signals and not decisions:
+                if not alerts and not activities:
                     continue
 
                 context_parts.append(f"\n--- {meta['label']} ---")
 
                 # Group by symbol
                 sym_data: Dict[str, Dict[str, list]] = defaultdict(
-                    lambda: {"signals": [], "decisions": []})
-                for s in signals:
-                    sym_data[s.get("symbol", "?")]["signals"].append(s)
-                for d in decisions:
-                    sym_data[d.get("symbol", "?")]["decisions"].append(d)
+                    lambda: {"alerts": [], "activities": []})
+                for s in alerts:
+                    sym_data[s.get("symbol", "?")]["alerts"].append(s)
+                for d in activities:
+                    sym_data[d.get("symbol", "?")]["activities"].append(d)
 
                 for sym, data in sym_data.items():
                     context_parts.append(f"\n## {sym}")
-                    if data["signals"]:
+                    if data["alerts"]:
                         context_parts.append(
-                            f"Signals (last {len(data['signals'])}):")
-                        for s in data["signals"][:2]:
+                            f"Alerts (last {len(data['alerts'])}):")
+                        for s in data["alerts"][:2]:
                             context_parts.append(
                                 json.dumps(_clean_doc(s), indent=2,
                                            default=str))
-                    if data["decisions"]:
+                    if data["activities"]:
                         context_parts.append(
-                            f"Decisions (last {len(data['decisions'])}):")
-                        for d in data["decisions"][:4]:
+                            f"Activities (last {len(data['activities'])}):")
+                        for d in data["activities"][:4]:
                             context_parts.append(
                                 json.dumps(_clean_doc(d), indent=2,
                                            default=str))
@@ -1148,11 +1148,11 @@ async def chat_api(request: Request):
             context_parts.append("(Error loading context from CosmosDB)")
 
     context_text = ("\n".join(context_parts) if context_parts
-                    else "No recent decisions available.")
+                    else "No recent activities available.")
 
     system_prompt = (
         "You are a stock options manager advisor. You have access to recent "
-        "analysis decisions for the user's portfolio. Answer questions about "
+        "analysis activities for the user's portfolio. Answer questions about "
         "positions, risks, and recommended actions based on this data.\n\n"
         f"Recent analysis data:\n{context_text}"
     )
@@ -1247,25 +1247,25 @@ async def _build_symbol_context(symbol: str, cosmos) -> dict:
 
     if cosmos:
         try:
-            decisions: List[Dict] = []
+            activities: List[Dict] = []
             for agent_type, meta in AGENT_TYPES.items():
-                decs = cosmos.get_recent_decisions(
+                acts = cosmos.get_recent_activities(
                     symbol, agent_type, max_entries=5)
-                for d in decs:
+                for d in acts:
                     d["_agent_label"] = meta["label"]
-                decisions.extend(decs)
-            decisions.sort(key=lambda d: d.get("timestamp", ""),
-                           reverse=True)
-            decisions = decisions[:5]
+                activities.extend(acts)
+            activities.sort(key=lambda d: d.get("timestamp", ""),
+                            reverse=True)
+            activities = activities[:5]
 
-            if decisions:
-                context_parts.append("\n--- Recent Decisions ---")
-                for d in decisions:
+            if activities:
+                context_parts.append("\n--- Recent Activities ---")
+                for d in activities:
                     context_parts.append(json.dumps(
                         _clean_doc(d), indent=2, default=str))
         except Exception as exc:
-            logger.warning("symbol_chat: failed to load decisions: %s", exc)
-            context_parts.append("(Error loading decisions from CosmosDB)")
+            logger.warning("symbol_chat: failed to load activities: %s", exc)
+            context_parts.append("(Error loading activities from CosmosDB)")
 
     try:
         from src.tv_data_fetcher import TradingViewFetcher
@@ -1311,7 +1311,7 @@ def _build_symbol_system_prompt(symbol: str, exchange: str,
         f"You are a stock options advisor focused exclusively on "
         f"{symbol} ({exchange}:{symbol}).\n"
         f"You have access to:\n"
-        f"1. Recent analysis decisions for this symbol\n"
+        f"1. Recent analysis activities for this symbol\n"
         f"2. Live market data from TradingView "
         f"(overview, technicals, forecast, options chain)\n"
         f"3. Current positions and watchlist status\n\n"

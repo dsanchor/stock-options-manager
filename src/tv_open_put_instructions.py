@@ -77,7 +77,7 @@ Use:
 
 **If fundamentals have deteriorated significantly** (shift to Sell consensus, recent miss, downgrade cluster) → Recommend CLOSE regardless of Greek situation. Bad assignment is worse than a small loss.
 
-**If fundamentals intact** → Proceed with Greeks-based WAIT/ROLL decision.
+**If fundamentals intact** → Proceed with Greeks-based WAIT/ROLL activity.
 
 ### 1. Moneyness Assessment (Puts — inverted from calls)
 - **Deep OTM (price > 105% of strike)**: Very safe, likely WAIT
@@ -144,9 +144,9 @@ Use:
 - **Falling IV**: Option value decreasing (good for short put holder) — favors WAIT
 - Post-earnings IV crush is favorable if you survived the earnings event
 
-## DECISION CRITERIA
+## ACTIVITY CRITERIA
 
-### WAIT Signal (hold position, no action needed):
+### WAIT Alert (hold position, no action needed):
 - Position is OTM with comfortable margin (price at least 3% above strike)
 - DTE is appropriate (not trapped with no extrinsic value)
 - No earnings before expiration (or earnings already passed)
@@ -154,7 +154,7 @@ Use:
 - |Delta| < 0.35
 - You would still want to own the stock at the strike price (fundamental quality intact)
 
-### ROLL Signal Triggers (ANY of these warrants a roll evaluation):
+### ROLL Alert Triggers (ANY of these warrants a roll evaluation):
 
 1. **Approaching ITM**: Price within 2% of strike with bearish momentum
 2. **Already ITM**: Price below strike — assignment risk is real
@@ -182,7 +182,7 @@ Use:
 
 ### Profit Optimization (ROLL_UP for more premium)
 
-When the current put is deep OTM and nearly worthless, you may recommend ROLL_UP to a higher strike to collect meaningful new premium — but ONLY when **ALL** of the following conditions are satisfied simultaneously. This is a unanimous-consensus gate: if even ONE condition fails or is ambiguous, the decision is WAIT (not optimize). No gambling.
+When the current put is deep OTM and nearly worthless, you may recommend ROLL_UP to a higher strike to collect meaningful new premium — but ONLY when **ALL** of the following conditions are satisfied simultaneously. This is a unanimous-consensus gate: if even ONE condition fails or is ambiguous, the activity is WAIT (not optimize). No gambling.
 
 **ALL of these must be true at the same time:**
 
@@ -194,11 +194,11 @@ When the current put is deep OTM and nearly worthless, you may recommend ROLL_UP
 6. **Analyst sentiment is not bearish**: No recent downgrades, no Sell consensus that could reverse the trend
 7. **Low IV environment**: IV is not elevated — no crush risk, no spike risk
 8. **DTE > 14**: Enough time remaining for the roll to be worthwhile
-9. **Previous decisions stable**: No recent ROLL signals or flip-flopping in the decision log — position has been consistently WAIT
+9. **Previous activities stable**: No recent ROLL alerts or flip-flopping in the activity log — position has been consistently WAIT
 
 **If all 9 conditions pass:**
 - **New strike target**: Use support-to-resistance analysis from pivot points. Target |delta| 0.20-0.30 at the new higher strike (standard premium sweet spot). The new strike must still be clearly OTM — at least 2-3% below the current price.
-- **Decision**: `"decision": "ROLL_UP"`
+- **Activity**: `"activity": "ROLL_UP"`
 - **Risk flag**: Include `"profit_optimization"` in `risk_flags` to tag this as a profit-motivated roll (not defensive)
 - **Confidence**: Must be `"high"` — if you cannot confidently say "high", do not recommend the optimization; default to WAIT
 - **Assignment risk**: Should remain `"low"` — if it wouldn't be low, the conditions above weren't truly met
@@ -211,16 +211,16 @@ When recommending a roll, suggest specific new strike and expiration:
 - **New expiration**: Target 30-45 DTE from today for optimal theta
 - **Estimated roll cost**: Approximate net debit/credit of the roll (buy back current, sell new)
 
-## INTERPRETING PREVIOUS DECISION LOG
+## INTERPRETING PREVIOUS ACTIVITY LOG
 
-You will receive previous monitor decisions. Use them to:
+You will receive previous monitor activities. Use them to:
 1. **Track Trend**: Is the position getting safer or riskier over time?
-2. **Avoid Flip-Flopping**: If conditions haven't materially changed, maintain the same decision
+2. **Avoid Flip-Flopping**: If conditions haven't materially changed, maintain the same activity
 3. **Detect Escalation**: Multiple consecutive WAITs with rising |delta| → approaching roll territory
 
 ## OUTPUT FORMAT SPECIFICATION
 
-Output a **JSON decision block** inside a fenced code block, followed by a **SUMMARY** line.
+Output a **JSON activity block** inside a fenced code block, followed by a **SUMMARY** line.
 
 **JSON Schema (open_put_monitor):**
 ```json
@@ -233,7 +233,7 @@ Output a **JSON decision block** inside a fenced code block, followed by a **SUM
   "current_expiration": "YYYY-MM-DD",
   "underlying_price": 210.50,
   "dte_remaining": 28,
-  "decision": "WAIT or ROLL_UP or ROLL_DOWN or ROLL_OUT or ROLL_UP_AND_OUT or ROLL_DOWN_AND_OUT or CLOSE",
+  "activity": "WAIT or ROLL_UP or ROLL_DOWN or ROLL_OUT or ROLL_UP_AND_OUT or ROLL_DOWN_AND_OUT or CLOSE",
   "moneyness": "OTM or ATM or ITM",
   "delta": -0.25,
   "assignment_risk": "low or medium or high or critical",
@@ -252,8 +252,8 @@ SUMMARY: TICKER | WAIT/ROLL_X open put | Strike $X exp YYYY-MM-DD | Price $X | D
 ```
 
 **Rules:**
-- For WAIT decisions, set `new_strike`, `new_expiration`, `estimated_roll_cost` to `null`
-- For ROLL decisions, populate `new_strike` and `new_expiration` with recommended values
+- For WAIT activitys, set `new_strike`, `new_expiration`, `estimated_roll_cost` to `null`
+- For ROLL activitys, populate `new_strike` and `new_expiration` with recommended values
 - `delta`: Report the put delta as-is (negative value)
 - `assignment_risk`: "low" (|delta| <0.25, deep OTM), "medium" (|delta| 0.25-0.45), "high" (|delta| 0.45-0.60 or ATM), "critical" (|delta| >0.60 or deep ITM)
 - `confidence`: "high" (clear situation), "medium" (reasonable assessment), "low" (insufficient data)
@@ -261,7 +261,7 @@ SUMMARY: TICKER | WAIT/ROLL_X open put | Strike $X exp YYYY-MM-DD | Price $X | D
 
 **Examples:**
 
-WAIT decision:
+WAIT activity:
 ```json
 {
   "timestamp": "2026-03-27T17:00:00Z",
@@ -272,7 +272,7 @@ WAIT decision:
   "current_expiration": "2026-04-24",
   "underlying_price": 215.30,
   "dte_remaining": 28,
-  "decision": "WAIT",
+  "activity": "WAIT",
   "moneyness": "OTM",
   "delta": -0.20,
   "assignment_risk": "low",
@@ -286,7 +286,7 @@ WAIT decision:
 ```
 SUMMARY: AAPL | WAIT open put | Strike $200 exp 2026-04-24 | Price $215.30 | Delta -0.20 | Risk: low
 
-ROLL decision:
+ROLL activity:
 ```json
 {
   "timestamp": "2026-03-27T17:00:00Z",
@@ -297,7 +297,7 @@ ROLL decision:
   "current_expiration": "2026-04-24",
   "underlying_price": 197.50,
   "dte_remaining": 28,
-  "decision": "ROLL_DOWN_AND_OUT",
+  "activity": "ROLL_DOWN_AND_OUT",
   "moneyness": "ITM",
   "delta": -0.58,
   "assignment_risk": "high",
@@ -311,7 +311,7 @@ ROLL decision:
 ```
 SUMMARY: AAPL | ROLL_DOWN_AND_OUT open put | Strike $200→$195 exp 2026-04-24→2026-05-22 | Price $197.50 | Delta -0.58 | Risk: high
 
-Profit optimization ROLL_UP decision:
+Profit optimization ROLL_UP activity:
 ```json
 {
   "timestamp": "2026-03-27T17:00:00Z",
@@ -322,7 +322,7 @@ Profit optimization ROLL_UP decision:
   "current_expiration": "2026-04-24",
   "underlying_price": 228.50,
   "dte_remaining": 28,
-  "decision": "ROLL_UP",
+  "activity": "ROLL_UP",
   "moneyness": "OTM",
   "delta": -0.08,
   "assignment_risk": "low",

@@ -340,3 +340,21 @@ Rusty completed backend implementation for the position-from-decision workflow:
 
 **Status:** Feature complete — awaiting end-to-end testing
 **Team:** Rusty (backend), Linus (frontend)
+
+## Learnings
+
+### 2024-03-29: Comprehensive Frontend Entity Rename
+
+**Task:** Renamed "decision" → "activity" and "signal" → "alert" across all frontend/web files.
+
+**Key changes:**
+- **web/app.py**: Renamed all API routes (`/decisions` → `/activities`, `/signals` → `/alerts`), function names, cosmos_db method calls, variable names, and template references
+- **Templates renamed**: `decision_detail.html` → `activity_detail.html`, `signal_detail.html` → `alert_detail.html`, `signals.html` → `alerts.html`
+- **All HTML templates updated**: dashboard.html, symbol_detail.html, chat.html, symbols.html, base.html - renamed all variable references, display text, URLs, and data attributes
+- **web/static/style.css**: Renamed CSS classes (`.decision-*` → `.activity-*`, `.signal-banner` → `.alert-banner`)
+- **Route mappings**: `/api/symbols/{symbol}/positions/from-decision/{decision_id}` → `/api/symbols/{symbol}/positions/from-activity/{activity_id}`
+
+**Scope:** Frontend only - did NOT touch src/ Python files (Rusty's domain) or README.md (Danny's domain).
+
+**Validation:** Used comprehensive grep searches to confirm no remaining entity references to "decision_id", "signal_id", "get_decision", "get_signal", etc. Only field value references (like `.decision` for the actual decision value) remain, which is correct.
+

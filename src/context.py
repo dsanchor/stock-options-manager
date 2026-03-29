@@ -1,14 +1,14 @@
 """Context injection adapter for agent prompts.
 
 Replaces the file-based logger.py read functions with CosmosDB-backed
-equivalents.  Each decision is presented with its signal status so the
+equivalents.  Each activity is presented with its alert status so the
 agent knows whether it was actionable.
 
-Context format (oldest → newest, one block per decision):
+Context format (oldest → newest, one block per activity):
     [2026-03-28 14:30:00] WAIT
     Premium marginal at 0.8%...
 
-    [2026-03-28 16:30:00] SELL ⚡ SIGNAL
+    [2026-03-28 16:30:00] SELL ⚡ ALERT
     IV Rank 72, premium 2.1%...
 """
 
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 class ContextProvider:
-    """Provides per-symbol decision/signal context for agent prompts."""
+    """Provides per-symbol activity/alert context for agent prompts."""
 
     def __init__(self, cosmos: CosmosDBService) -> None:
         self.cosmos = cosmos
@@ -36,14 +36,14 @@ class ContextProvider:
     ) -> str:
         """Return formatted context string for prompt injection.
 
-        Fetches the last *max_entries* decisions for the given symbol and
-        agent type.  Each decision includes its signal status (actionable
+        Fetches the last *max_entries* activities for the given symbol and
+        agent type.  Each activity includes its alert status (actionable
         or not).  Returned oldest-first for natural chronological reading.
 
         Args:
             symbol: Ticker symbol.
             agent_type: Agent type key.
-            max_entries: Number of recent decisions (0–5, default 2).
+            max_entries: Number of recent activities (0–5, default 2).
             position_id: Optional position filter for monitor agents.
 
         Returns:
@@ -52,21 +52,21 @@ class ContextProvider:
         if max_entries <= 0:
             return "Context injection disabled."
 
-        decisions = self.cosmos.get_recent_decisions(
+        activities = self.cosmos.get_recent_activities(
             symbol, agent_type, max_entries, position_id
         )
-        if not decisions:
-            return "No previous decisions recorded."
+        if not activities:
+            return "No previous activities recorded."
 
         blocks: list[str] = []
-        for d in reversed(decisions):  # newest-first → oldest-first
+        for d in reversed(activities):  # newest-first → oldest-first
             ts = d.get("timestamp", "?")
-            decision = d.get("decision", "?")
-            is_signal = d.get("is_signal", False)
+            activity = d.get("activity", "?")
+            is_alert = d.get("is_alert", False)
 
-            header = f"[{ts}] {decision}"
-            if is_signal:
-                header += " ⚡ SIGNAL"
+            header = f"[{ts}] {activity}"
+            if is_alert:
+                header += " ⚡ ALERT"
 
             reason = d.get("reason", "")
             if not reason:

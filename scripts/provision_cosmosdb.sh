@@ -161,7 +161,7 @@ az cosmosdb sql container update \
       {"path": "/watchlist/covered_call/?"},
       {"path": "/watchlist/cash_secured_put/?"},
       {"path": "/agent_type/?"},
-      {"path": "/decision/?"}
+      {"path": "/activity/?"}
     ],
     "excludedPaths": [
       {"path": "/reason/*"},

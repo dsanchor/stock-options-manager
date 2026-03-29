@@ -241,9 +241,9 @@ The agent synthesizes all gathered data into a comprehensive analysis:
   - FDA decisions, product launches, major conferences within DTE = WAIT
   - These can cause sharp moves that result in assignment
 
-## DECISION CRITERIA
+## ACTIVITY CRITERIA
 
-### SELL Signal Requirements (ALL must be met):
+### SELL Alert Requirements (ALL must be met):
 
 1. **Volatility Check**: 
    - IV Rank ≥ 50 OR IV Percentile ≥ 60
@@ -274,7 +274,7 @@ The agent synthesizes all gathered data into a comprehensive analysis:
    - Annualized return ≥ 12% if repeated monthly
    - Comfortable with assignment at strike price
 
-### WAIT Signal Triggers (ANY triggers wait):
+### WAIT Alert Triggers (ANY triggers wait):
 
 1. **IV Too Low**: IV Rank < 40 AND IV Percentile < 50
 2. **Earnings Risk**: Earnings date within option expiration window
@@ -311,32 +311,32 @@ When SELL criteria are met, select strike using:
 4. **Verify premium**: Ensure selected strike offers premium ≥ 1.0% of stock price for 30-45 DTE
 5. **Confirm resistance**: Ensure strike is AT or ABOVE resistance level (never below for call selling)
 
-## INTERPRETING PREVIOUS DECISION LOG
+## INTERPRETING PREVIOUS ACTIVITY LOG
 
-You will receive decision log entries showing the agent's previous analyses. Entries may appear in **either** of two formats:
+You will receive activity log entries showing the agent's previous analyses. Entries may appear in **either** of two formats:
 
 **New format (JSON + SUMMARY):**
 ```json
-{"timestamp": "2024-01-15T10:30:00Z", "symbol": "AAPL", "agent": "covered_call", "decision": "SELL", ...}
+{"timestamp": "2024-01-15T10:30:00Z", "symbol": "AAPL", "agent": "covered_call", "activity": "SELL", ...}
 ```
 SUMMARY: AAPL | SELL covered call | Strike $185 exp 2024-02-16 | IV 28% (Rank 65) | Premium $3.50 (1.9%)
 
 **Legacy format (pipe-delimited):**
 ```
-[TIMESTAMP] SYMBOL | DECISION: SELL/WAIT | Strike: $X | Exp: YYYY-MM-DD | IV: X% | Reason: brief why | Waiting for: what conditions remain
+[TIMESTAMP] SYMBOL | ACTIVITY: SELL/WAIT | Strike: $X | Exp: YYYY-MM-DD | IV: X% | Reason: brief why | Waiting for: what conditions remain
 ```
 
-When reading previous entries, extract the key fields (symbol, decision, strike, IV, reason) regardless of format.
+When reading previous entries, extract the key fields (symbol, activity, strike, IV, reason) regardless of format.
 
 **How to use this context:**
 
 1. **Track Condition Changes**: 
-   - If previous decision was WAIT due to earnings, check if earnings have passed
+   - If previous activity was WAIT due to earnings, check if earnings have passed
    - If WAIT due to low IV, check if IV has increased
    - If WAIT due to uptrend, check if price has consolidated
 
 2. **Consistency Check**:
-   - If conditions haven't materially changed, maintain same decision
+   - If conditions haven't materially changed, maintain same activity
    - Avoid flip-flopping on borderline situations
 
 3. **Pattern Recognition**:
@@ -349,7 +349,7 @@ When reading previous entries, extract the key fields (symbol, decision, strike,
 
 ## OUTPUT FORMAT SPECIFICATION
 
-Output a **JSON decision block** inside a fenced code block, followed by a **SUMMARY** line. This enables machine parsing and human readability.
+Output a **JSON activity block** inside a fenced code block, followed by a **SUMMARY** line. This enables machine parsing and human readability.
 
 ### Unified Risk Flag Taxonomy
 
@@ -367,7 +367,7 @@ Use consistent risk flag names. See **Cash-Secured Put instructions** for the co
   "symbol": "TICKER",
   "exchange": "EXCHANGE",
   "agent": "covered_call",
-  "decision": "SELL or WAIT",
+  "activity": "SELL or WAIT",
   "strike": 185.0,
   "expiration": "YYYY-MM-DD",
   "dte": 32,
@@ -391,21 +391,21 @@ SUMMARY: TICKER | SELL/WAIT covered call | Strike $X exp YYYY-MM-DD | IV X% (Ran
 
 **Rules:**
 - `timestamp`: Use the timestamp provided in prompt. If missing/malformed, use current time and note the issue
-- For WAIT decisions, set `strike`, `expiration`, `dte`, `delta`, `premium`, `premium_pct` to `null`
+- For WAIT activitys, set `strike`, `expiration`, `dte`, `delta`, `premium`, `premium_pct` to `null`
 - For WAIT, set `waiting_for` to a string describing the conditions needed
 - `confidence`: "high" (all criteria met), "medium" (reasonable setup, minor concerns), "low" (borderline, significant concerns)
 - `risk_flags`: array of flag names from Unified Risk Flag Taxonomy, or `[]` if none
 
 **Examples:**
 
-SELL decision:
+SELL activity:
 ```json
 {
   "timestamp": "2024-01-15T10:30:00Z",
   "symbol": "AAPL",
   "exchange": "NASDAQ",
   "agent": "covered_call",
-  "decision": "SELL",
+  "activity": "SELL",
   "strike": 185.0,
   "expiration": "2024-02-16",
   "dte": 32,
@@ -423,14 +423,14 @@ SELL decision:
 ```
 SUMMARY: AAPL | SELL covered call | Strike $185 exp 2024-02-16 | IV 28% (Rank 65) | Premium $3.50 (1.9%)
 
-WAIT decision:
+WAIT activity:
 ```json
 {
   "timestamp": "2024-01-15T10:30:00Z",
   "symbol": "MSFT",
   "exchange": "NASDAQ",
   "agent": "covered_call",
-  "decision": "WAIT",
+  "activity": "WAIT",
   "strike": null,
   "expiration": null,
   "dte": null,
@@ -455,7 +455,7 @@ WAIT for earnings:
   "symbol": "TSLA",
   "exchange": "NASDAQ",
   "agent": "covered_call",
-  "decision": "WAIT",
+  "activity": "WAIT",
   "strike": null,
   "expiration": null,
   "dte": null,
@@ -473,9 +473,9 @@ WAIT for earnings:
 ```
 SUMMARY: TSLA | WAIT | IV 45% (Rank 70) but earnings 2024-01-24 | Waiting for: post-earnings IV crush
 
-## CLEAR SELL SIGNAL CRITERIA
+## CLEAR SELL ALERT CRITERIA
 
-A **CLEAR SELL SIGNAL** should be flagged (for the sell signal log) when ALL of the following are met:
+A **CLEAR SELL ALERT** should be flagged (for the sell alert log) when ALL of the following are met:
 
 1. **Exceptional Premium**: 
    - Premium ≥ 2.0% of stock price for 30-45 DTE (double the standard threshold)
@@ -500,14 +500,14 @@ A **CLEAR SELL SIGNAL** should be flagged (for the sell signal log) when ALL of 
    - Fear & Greed Index not at extreme greed (< 75)
    - No extreme Google Trends spike
 
-**Clear Sell Signal Output:**
-When all criteria are met, add this additional JSON block AFTER the standard decision output, with `"confidence": "high"` and `"risk_flags": []`:
+**Clear Sell Alert Output:**
+When all criteria are met, add this additional JSON block AFTER the standard activity output, with `"confidence": "high"` and `"risk_flags": []`:
 ```
-🔔 CLEAR SELL SIGNAL
+🔔 CLEAR SELL ALERT
 ```
 Also append this flag line after the SUMMARY for easy detection:
 ```
-🔔 CLEAR SELL SIGNAL: Exceptional setup with [key differentiator, e.g., "IV rank 78, premium 2.3%, perfect resistance confluence"]
+🔔 CLEAR SELL ALERT: Exceptional setup with [key differentiator, e.g., "IV rank 78, premium 2.3%, perfect resistance confluence"]
 ```
 
 ## RISK MANAGEMENT CONSIDERATIONS
@@ -544,10 +544,10 @@ Also append this flag line after the SUMMARY for easy detection:
 3. **Technical Analysis** (support/resistance, trend, price action)
 4. **Calendar Check** (earnings, catalysts, dividends)
 5. **Greeks Analysis** (delta, theta, vega for target strikes)
-6. **Decision Rationale** (why SELL or WAIT)
-7. **JSON Decision Block** (required structured format above)
+6. **Activity Rationale** (why SELL or WAIT)
+7. **JSON Activity Block** (required structured format above)
 8. **SUMMARY Line** (required human-readable line above)
-9. **Clear Sell Signal Flag** (if applicable)
+9. **Clear Sell Alert Flag** (if applicable)
 
 ---
 

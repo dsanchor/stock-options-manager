@@ -12,7 +12,7 @@ async def run_open_call_monitor(config, runner: AgentRunner,
         config: Configuration object
         runner: Initialized AgentRunner instance
         cosmos: CosmosDBService instance
-        context_provider: ContextProvider for decision history
+        context_provider: ContextProvider for activity history
     """
     from .tv_open_call_instructions import TV_OPEN_CALL_INSTRUCTIONS
 
@@ -42,7 +42,7 @@ async def run_open_call_monitor(config, runner: AgentRunner,
                     agent_type="open_call_monitor",
                     cosmos=cosmos,
                     context_provider=context_provider,
-                    max_decision_entries=config.max_decision_entries,
+                    max_activity_entries=config.max_activity_entries,
                     fetcher=fetcher,
                 )
 
