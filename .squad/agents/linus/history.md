@@ -9,6 +9,17 @@
 
 ## Learnings
 
+### Telegram Settings UI (2026-03-29)
+- Added Telegram configuration endpoints to `web/app.py`:
+  - `GET /settings` — Returns current config with token masked
+  - `POST /settings` — Persists Telegram settings to config.yaml, reloads notifier
+  - `POST /api/settings/test-telegram` — Sends test message to configured channel
+- Updated `web/templates/settings.html` with Telegram card:
+  - Enable/disable checkbox, bot token input (type="password"), channel ID input
+  - Test button, Save/Cancel buttons, status message area
+  - JavaScript handlers for form interaction and API calls with inline feedback
+- Commit: 4e1c16c (merged with Danny's work).
+
 ### Manual Roll Button + Signal Display Fix (symbol_detail)
 - Added "Roll" button to positions table actions column (active positions only), next to Close.
 - Roll form is an inline expandable panel inside the `pos-detail-row`, hidden by default. Contains: new strike (pre-filled), new expiration (pre-filled), optional notes, confirm/cancel buttons, and a message area.

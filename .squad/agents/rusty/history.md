@@ -9,6 +9,14 @@
 
 ## Learnings
 
+### Telegram Alert Notifications (2026-03-29)
+- Created `src/telegram_notifier.py` with `TelegramNotifier` class — sends formatted decision and alert messages to Telegram channel.
+- Config properties: `telegram_bot_token`, `telegram_channel_id`, `telegram_enabled` in config.py. Configured via `telegram.bot_token` and `telegram.channel_id` env vars in config.yaml.
+- Integrated into `agent_runner.py`: notifier initialized in `PeriodicAgentRunner.__init__()`, called after each decision/alert in `run()` method.
+- Message formatting uses URL-safe markdown for Telegram, graceful fallback to console logging if notifier disabled or channel not configured.
+- Dependencies: `python-telegram-bot>=20.0`.
+- Commit: e522f29.
+
 ### Manual Roll Endpoint (2025-07)
 - Made `source` and `closing_source` optional (`None` default) in `roll_position()`, plus added `notes` param (default `""`). Signal-based rolls still pass both explicitly — no behavioral change for existing callers.
 - New endpoint `POST /api/symbols/{symbol}/positions/{position_id}/roll` accepts `new_strike`, `new_expiration`, and optional `notes`. Infers position type (call/put) from the existing position doc rather than requiring the caller to specify it.

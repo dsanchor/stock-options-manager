@@ -9,6 +9,14 @@
 
 ## Learnings
 
+### Telegram Documentation (2026-03-29)
+- Updated `README.md` with:
+  - **Telegram Alerts section** — Feature overview (real-time decision/alert notifications)
+  - **Setup Instructions** — Step-by-step: BotFather, channel ID, env vars/config.yaml, test via /settings
+  - **Configuration Reference** — Schema: `telegram.bot_token`, `telegram.channel_id`, `enabled`
+  - **Project Structure** — Added `src/telegram_notifier.py`, `.squad/orchestration-log/`, `.squad/log/` references
+- Commit: 4e1c16c.
+
 ### 2026-03-27: Model Configuration Updated to gpt-5.1
 
 **User Directive (dsanchor):** Updated model from gpt-5.4-mini to gpt-5.1 in config/team.md
