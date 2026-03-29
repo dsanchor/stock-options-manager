@@ -26,8 +26,6 @@ class Config:
             result = obj
             for var_name in matches:
                 env_value = os.environ.get(var_name, '')
-                if not env_value:
-                    raise ValueError(f"Environment variable {var_name} not set")
                 result = result.replace(f'${{{var_name}}}', env_value)
             return result
         else:
@@ -52,7 +50,7 @@ class Config:
                         f"Missing required config: {'.'.join(path + [field])}"
                     )
                 obj = obj[key]
-            if field not in obj:
+            if field not in obj or not obj[field]:
                 raise ValueError(
                     f"Missing required config: {'.'.join(path + [field])}"
                 )
@@ -108,3 +106,17 @@ class Config:
     @property
     def activity_ttl_days(self) -> int:
         return self.config.get('context', {}).get('activity_ttl_days', 90)
+
+    # ── Telegram ──────────────────────────────────────────────────────
+
+    @property
+    def telegram_enabled(self) -> bool:
+        return self.config.get('telegram', {}).get('enabled', False)
+
+    @property
+    def telegram_bot_token(self) -> str:
+        return self.config.get('telegram', {}).get('bot_token', '')
+
+    @property
+    def telegram_chat_id(self) -> str:
+        return self.config.get('telegram', {}).get('chat_id', '')

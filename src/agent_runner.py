@@ -40,19 +40,22 @@ logger.addHandler(_console_handler)
 class AgentRunner:
     """Manages agent execution using Microsoft Agent Framework with TradingView pre-fetch."""
     
-    def __init__(self, project_endpoint: str, model: str, api_key: str):
+    def __init__(self, project_endpoint: str, model: str, api_key: str,
+                 telegram_notifier=None):
         """Initialize the agent runner.
         
         Args:
             project_endpoint: Azure AI Foundry project endpoint URL
             model: Model deployment name
             api_key: Azure OpenAI API key
+            telegram_notifier: Optional TelegramNotifier for alert notifications
         """
         self.client = AzureOpenAIChatClient(
             endpoint=project_endpoint,
             deployment_name=model,
             api_key=api_key,
         )
+        self.telegram_notifier = telegram_notifier
     
     # ── JSON / SUMMARY extraction ──────────────────────────────────────
 
@@ -368,6 +371,11 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
                     timestamp=analysis_ts,
                 )
                 print(f"⚠️ SELL ALERT logged for {full_symbol}")
+                if self.telegram_notifier:
+                    self.telegram_notifier.send_alert(
+                        symbol=symbol, agent_type=agent_type,
+                        alert_data=alert_data, is_roll=False,
+                    )
 
         except Exception as e:
             logger.error(
@@ -563,6 +571,11 @@ Analyze the position risk and output your activity in the required JSON format. 
                     timestamp=analysis_ts,
                 )
                 print(f"⚠️ ROLL ALERT logged for {full_symbol} ${strike} exp {expiration}")
+                if self.telegram_notifier:
+                    self.telegram_notifier.send_alert(
+                        symbol=symbol, agent_type=agent_type,
+                        alert_data=alert_data, is_roll=True,
+                    )
 
         except Exception as e:
             logger.error(

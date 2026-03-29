@@ -18,3 +18,8 @@ scheduler:
 web:
   host: "0.0.0.0"
   port: 8000
+
+telegram:
+  enabled: false
+  bot_token: "${TELEGRAM_BOT_TOKEN}"
+  chat_id: "${TELEGRAM_CHAT_ID}"

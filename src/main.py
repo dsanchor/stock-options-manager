@@ -45,11 +45,22 @@ class OptionsAgentScheduler:
         )
         self.context_provider = ContextProvider(self.cosmos)
 
+        telegram_notifier = None
+        if self.config.telegram_enabled and self.config.telegram_bot_token and self.config.telegram_chat_id:
+            from .telegram_notifier import TelegramNotifier
+            telegram_notifier = TelegramNotifier(
+                bot_token=self.config.telegram_bot_token,
+                chat_id=self.config.telegram_chat_id,
+                enabled=True,
+            )
+            print("Telegram notifications enabled")
+
         print("Initializing Agent Framework Runner...")
         self.runner = AgentRunner(
             project_endpoint=self.config.azure_endpoint,
             model=self.config.model_deployment,
             api_key=self.config.api_key,
+            telegram_notifier=telegram_notifier,
         )
         
         print(f"Scheduler configured with cron: {self.config.cron_expression}")
