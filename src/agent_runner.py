@@ -526,6 +526,21 @@ Analyze the position risk and output your decision in the required JSON format. 
                 }
             decision_payload["position_id"] = position_id
 
+            # Normalize monitor-agent field names so templates/APIs
+            # can use standard names (strike, expiration, decision)
+            decision_payload.setdefault(
+                "strike",
+                decision_payload.get("new_strike")
+                or decision_payload.get("current_strike"),
+            )
+            decision_payload.setdefault(
+                "expiration",
+                decision_payload.get("new_expiration")
+                or decision_payload.get("current_expiration"),
+            )
+            if "action" in decision_payload and "decision" not in decision_payload:
+                decision_payload["decision"] = decision_payload["action"]
+
             # Determine if this is a roll/close signal
             is_signal = self._is_roll_signal(response_text, json_data)
             decision_payload["is_signal"] = is_signal

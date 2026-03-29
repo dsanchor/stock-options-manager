@@ -58,16 +58,38 @@
             <div class="detail-value mono">${{ decision.underlying_price }}</div>
         </div>
         {% endif %}
-        {% if decision.strike is not none %}
+        {% set d_strike = decision.strike if decision.strike is not none else (decision.new_strike if decision.new_strike is not none else decision.current_strike) %}
+        {% set d_expiration = decision.expiration or decision.new_expiration or decision.current_expiration %}
+        {% if d_strike is not none %}
         <div class="detail-field">
             <div class="detail-label">Strike</div>
-            <div class="detail-value mono">${{ decision.strike }}</div>
+            <div class="detail-value mono">${{ d_strike }}</div>
         </div>
         {% endif %}
-        {% if decision.expiration %}
+        {% if d_expiration %}
         <div class="detail-field">
             <div class="detail-label">Expiration</div>
-            <div class="detail-value mono">{{ decision.expiration }}</div>
+            <div class="detail-value mono">{{ d_expiration }}</div>
+        </div>
+        {% endif %}
+        {% if decision.current_strike is not none and decision.new_strike is not none %}
+        <div class="detail-field">
+            <div class="detail-label">Current Strike</div>
+            <div class="detail-value mono">${{ decision.current_strike }}</div>
+        </div>
+        <div class="detail-field">
+            <div class="detail-label">New Strike</div>
+            <div class="detail-value mono">${{ decision.new_strike }}</div>
+        </div>
+        {% endif %}
+        {% if decision.current_expiration and decision.new_expiration %}
+        <div class="detail-field">
+            <div class="detail-label">Current Expiration</div>
+            <div class="detail-value mono">{{ decision.current_expiration }}</div>
+        </div>
+        <div class="detail-field">
+            <div class="detail-label">New Expiration</div>
+            <div class="detail-value mono">{{ decision.new_expiration }}</div>
         </div>
         {% endif %}
         {% if decision.premium is not none %}

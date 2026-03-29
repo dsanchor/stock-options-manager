@@ -398,8 +398,12 @@ async def api_roll_position_from_decision(request: Request, symbol: str,
             return JSONResponse({"error": f"Decision {decision_id} not found"},
                                 status_code=404)
 
-        strike = decision.get("strike")
-        expiration = decision.get("expiration")
+        strike = (decision.get("strike")
+                  or decision.get("new_strike")
+                  or decision.get("current_strike"))
+        expiration = (decision.get("expiration")
+                      or decision.get("new_expiration")
+                      or decision.get("current_expiration"))
         agent_type = decision.get("agent_type")
         position_id = decision.get("position_id")
 

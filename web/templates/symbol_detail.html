@@ -423,11 +423,12 @@
 
     // Close position
     document.querySelectorAll('[data-close-pos]').forEach(function(btn) {
-        btn.addEventListener('click', async function() {
+        btn.addEventListener('click', async function(e) {
+            e.stopPropagation();
             var posId = this.dataset.closePos;
             if (!confirm('Close this position?')) return;
             try {
-                var res = await fetch('/api/symbols/' + SYMBOL + '/positions/' + posId + '/close', { method: 'PUT' });
+                var res = await fetch('/api/symbols/' + SYMBOL + '/positions/' + encodeURIComponent(posId) + '/close', { method: 'PUT' });
                 if (res.ok) {
                     window.location.reload();
                 } else {
@@ -484,11 +485,12 @@
 
     // Delete position
     document.querySelectorAll('[data-delete-pos]').forEach(function(btn) {
-        btn.addEventListener('click', async function() {
+        btn.addEventListener('click', async function(e) {
+            e.stopPropagation();
             var posId = this.dataset.deletePos;
             if (!confirm('Delete this position permanently?')) return;
             try {
-                var res = await fetch('/api/symbols/' + SYMBOL + '/positions/' + posId, { method: 'DELETE' });
+                var res = await fetch('/api/symbols/' + SYMBOL + '/positions/' + encodeURIComponent(posId), { method: 'DELETE' });
                 if (res.ok) {
                     window.location.reload();
                 } else {
