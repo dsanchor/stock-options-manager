@@ -13,10 +13,10 @@
 </div>
 {% endif %}
 
-<!-- Runtime Stats (Last 30 Days) -->
+<!-- Runtime Stats -->
 <div class="card settings-card">
     <div class="card-header">
-        <h2>📊 Runtime Stats (Last 30 Days)</h2>
+        <h2>📊 Runtime Stats</h2>
     </div>
     {% if telemetry_stats and (telemetry_stats.get('tv_fetch') or telemetry_stats.get('agent_run')) %}
     <div style="padding: 0.75rem 1.25rem;">
@@ -26,17 +26,26 @@
             <thead>
                 <tr>
                     <th>Resource</th>
-                    <th>Avg Duration</th>
-                    <th>Avg Response Size</th>
+                    <th>Today (Avg)</th>
+                    <th>7 Days (Avg)</th>
+                    <th>30 Days (Avg)</th>
                 </tr>
             </thead>
             <tbody>
                 {% for resource in ['overview', 'technicals', 'forecast', 'options_chain'] %}
                 {% if resource in telemetry_stats['tv_fetch'] %}
+                {% set rs = telemetry_stats['tv_fetch'][resource] %}
                 <tr>
                     <td>{{ resource | replace('_', ' ') | title }}</td>
-                    <td class="mono">{{ telemetry_stats['tv_fetch'][resource]['avg_duration'] }}s</td>
-                    <td class="mono">{{ "{:,.0f}".format(telemetry_stats['tv_fetch'][resource]['avg_size']) }} chars</td>
+                    {% for period in ['today', '7d', '30d'] %}
+                    <td class="mono">
+                        {% if rs.get(period, {}).get('count', 0) > 0 %}
+                        {{ rs[period]['avg_duration'] }}s / {{ "{:,.0f}".format(rs[period]['avg_size']) }}
+                        {% else %}
+                        —
+                        {% endif %}
+                    </td>
+                    {% endfor %}
                 </tr>
                 {% endif %}
                 {% endfor %}
@@ -50,17 +59,26 @@
             <thead>
                 <tr>
                     <th>Agent Type</th>
-                    <th>Avg Duration</th>
-                    <th>Runs</th>
+                    <th>Today</th>
+                    <th>7 Days</th>
+                    <th>30 Days</th>
                 </tr>
             </thead>
             <tbody>
                 {% for agent_type in ['covered_call', 'cash_secured_put', 'open_call_monitor', 'open_put_monitor'] %}
                 {% if agent_type in telemetry_stats['agent_run'] %}
+                {% set ag = telemetry_stats['agent_run'][agent_type] %}
                 <tr>
                     <td>{{ agent_type | replace('_', ' ') | title }}</td>
-                    <td class="mono">{{ telemetry_stats['agent_run'][agent_type]['avg_duration'] }}s</td>
-                    <td class="mono">{{ telemetry_stats['agent_run'][agent_type]['count'] }}</td>
+                    {% for period in ['today', '7d', '30d'] %}
+                    <td class="mono">
+                        {% if ag.get(period, {}).get('count', 0) > 0 %}
+                        {{ ag[period]['avg_duration'] }}s ({{ ag[period]['count'] }} runs)
+                        {% else %}
+                        —
+                        {% endif %}
+                    </td>
+                    {% endfor %}
                 </tr>
                 {% endif %}
                 {% endfor %}

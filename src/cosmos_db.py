@@ -534,18 +534,32 @@ class CosmosDBService:
             logger.warning("Telemetry write failed (%s): %s", metric_type, exc)
 
     def get_telemetry_stats(self) -> dict:
-        """Aggregate telemetry stats for the last 30 days.
+        """Aggregate telemetry stats bucketed by today / 7 days / 30 days.
 
         Returns:
             {
-              "tv_fetch": {resource: {"avg_duration": ..., "avg_size": ...}},
-              "agent_run": {agent_type: {"avg_duration": ..., "count": ...}},
+              "tv_fetch": {resource: {"today": {...}, "7d": {...}, "30d": {...}}},
+              "agent_run": {agent_type: {"today": {...}, "7d": {...}, "30d": {...}}},
             }
         """
         if self.telemetry_container is None:
             return {}
 
-        since = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        now = datetime.now(timezone.utc)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        cutoffs = {
+            "today": today_start.isoformat(),
+            "7d": (now - timedelta(days=7)).isoformat(),
+            "30d": (now - timedelta(days=30)).isoformat(),
+        }
+        since = cutoffs["30d"]
+
+        def _empty_tv_buckets() -> dict:
+            return {k: {"total_duration": 0.0, "total_size": 0, "count": 0}
+                    for k in cutoffs}
+
+        def _empty_ar_buckets() -> dict:
+            return {k: {"total_duration": 0.0, "count": 0} for k in cutoffs}
 
         try:
             # ── TV fetch stats ────────────────────────────────────────
@@ -562,20 +576,27 @@ class CosmosDBService:
             tv_agg: dict[str, dict] = {}
             for doc in tv_docs:
                 res = doc.get("resource", "unknown")
-                bucket = tv_agg.setdefault(
-                    res, {"total_duration": 0.0, "total_size": 0, "count": 0},
-                )
-                bucket["total_duration"] += doc.get("duration_seconds", 0)
-                bucket["total_size"] += doc.get("response_size_chars", 0)
-                bucket["count"] += 1
+                agg = tv_agg.setdefault(res, _empty_tv_buckets())
+                ts = doc.get("timestamp", "")
+                dur = doc.get("duration_seconds", 0)
+                size = doc.get("response_size_chars", 0)
+                for period, cutoff in cutoffs.items():
+                    if ts >= cutoff:
+                        b = agg[period]
+                        b["total_duration"] += dur
+                        b["total_size"] += size
+                        b["count"] += 1
 
-            tv_stats = {}
-            for res, b in tv_agg.items():
-                c = b["count"] or 1
-                tv_stats[res] = {
-                    "avg_duration": round(b["total_duration"] / c, 1),
-                    "avg_size": round(b["total_size"] / c),
-                }
+            tv_stats: dict[str, dict] = {}
+            for res, periods in tv_agg.items():
+                tv_stats[res] = {}
+                for period, b in periods.items():
+                    c = b["count"] or 1
+                    tv_stats[res][period] = {
+                        "avg_duration": round(b["total_duration"] / c, 1),
+                        "avg_size": round(b["total_size"] / c),
+                        "count": b["count"],
+                    }
 
             # ── Agent run stats ───────────────────────────────────────
             ar_query = (
@@ -591,19 +612,24 @@ class CosmosDBService:
             ar_agg: dict[str, dict] = {}
             for doc in ar_docs:
                 at = doc.get("agent_type", "unknown")
-                bucket = ar_agg.setdefault(
-                    at, {"total_duration": 0.0, "count": 0},
-                )
-                bucket["total_duration"] += doc.get("duration_seconds", 0)
-                bucket["count"] += 1
+                agg = ar_agg.setdefault(at, _empty_ar_buckets())
+                ts = doc.get("timestamp", "")
+                dur = doc.get("duration_seconds", 0)
+                for period, cutoff in cutoffs.items():
+                    if ts >= cutoff:
+                        b = agg[period]
+                        b["total_duration"] += dur
+                        b["count"] += 1
 
-            ar_stats = {}
-            for at, b in ar_agg.items():
-                c = b["count"] or 1
-                ar_stats[at] = {
-                    "avg_duration": round(b["total_duration"] / c, 1),
-                    "count": b["count"],
-                }
+            ar_stats: dict[str, dict] = {}
+            for at, periods in ar_agg.items():
+                ar_stats[at] = {}
+                for period, b in periods.items():
+                    c = b["count"] or 1
+                    ar_stats[at][period] = {
+                        "avg_duration": round(b["total_duration"] / c, 1),
+                        "count": b["count"],
+                    }
 
             return {"tv_fetch": tv_stats, "agent_run": ar_stats}
 
