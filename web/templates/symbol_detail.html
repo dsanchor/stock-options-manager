@@ -23,15 +23,6 @@
     </div>
 </div>
 
-<!-- Price Chart -->
-<div class="card">
-    <div class="card-header">
-        <h2>Price Chart</h2>
-        <span class="card-badge">3 months</span>
-    </div>
-    <div id="priceChart" style="height: 350px;"></div>
-</div>
-
 <!-- Positions -->
 <div class="card">
     <div class="card-header">
@@ -179,74 +170,6 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
-<script>
-(function() {
-    var chartContainer = document.getElementById('priceChart');
-    var chart = LightweightCharts.createChart(chartContainer, {
-        layout: {
-            background: { type: 'solid', color: '#1a1a2e' },
-            textColor: '#e0e0f0',
-        },
-        grid: {
-            vertLines: { color: '#2a2a4a' },
-            horzLines: { color: '#2a2a4a' },
-        },
-        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-        rightPriceScale: { borderColor: '#2a2a4a' },
-        timeScale: { borderColor: '#2a2a4a', timeVisible: false },
-    });
-
-    var candleSeries = chart.addCandlestickSeries({
-        upColor: '#22c55e',
-        downColor: '#ef4444',
-        borderUpColor: '#22c55e',
-        borderDownColor: '#ef4444',
-        wickUpColor: '#22c55e',
-        wickDownColor: '#ef4444',
-    });
-
-    // Store markers for click navigation
-    var chartMarkers = [];
-
-    fetch('/api/symbols/{{ symbol_doc.symbol }}/chart-data')
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            if (data.candles && data.candles.length) {
-                candleSeries.setData(data.candles);
-                if (data.markers && data.markers.length) {
-                    chartMarkers = data.markers;
-                    candleSeries.setMarkers(data.markers.map(function(m) {
-                        return { time: m.time, position: m.position, color: m.color, shape: m.shape, text: m.text };
-                    }));
-                }
-                chart.timeScale().fitContent();
-            } else {
-                chartContainer.innerHTML = '<p style="text-align:center;padding:2rem;color:#8888aa;">No price data available</p>';
-            }
-        })
-        .catch(function() {
-            chartContainer.innerHTML = '<p style="text-align:center;padding:2rem;color:#8888aa;">Failed to load chart data</p>';
-        });
-
-    // Navigate to decision detail on marker click
-    chart.subscribeClick(function(param) {
-        if (!param.time || !chartMarkers.length) return;
-        var clickedTime = param.time;
-        // Find markers matching clicked time
-        var matching = chartMarkers.filter(function(m) { return m.time === clickedTime; });
-        if (matching.length > 0 && matching[0].id) {
-            window.location.href = '/decisions/' + matching[0].id;
-        }
-    });
-
-    // Responsive resize
-    new ResizeObserver(function(entries) {
-        var rect = entries[0].contentRect;
-        chart.applyOptions({ width: rect.width, height: rect.height });
-    }).observe(chartContainer);
-})();
-</script>
 <script>
 (function() {
     var SYMBOL = '{{ symbol_doc.symbol }}';
