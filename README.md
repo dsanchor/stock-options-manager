@@ -109,7 +109,7 @@ Active positions in the Symbol Detail page have a Roll button in the positions t
   "status": "active",
   "notes": "",
   "source": {
-    "decision_id": "dec_...",
+    "activity_id": "dec_...",
     "agent_type": "covered_call",
     "timestamp": "2025-03-15T10:00:00Z"
   },
