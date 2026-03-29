@@ -4,8 +4,8 @@
 {% block content %}
 <div class="page-header">
     <a href="/symbols" class="back-link">← Symbols</a>
-    <h1>{{ symbol_doc.display_name }} <a href="/symbols/{{ symbol_doc.symbol }}/chat" class="btn btn-sm" style="font-size:0.5em; vertical-align:middle;">💬 Chat</a> <a href="/symbols/{{ symbol_doc.symbol }}/fetch-preview" class="btn btn-sm" style="font-size:0.5em; vertical-align:middle;">🔍 Raw Data</a></h1>
-    <div class="watchlist-toggles" style="display:flex; gap:1.5rem; align-items:center; margin-top:0.5rem;">
+    <h1>{{ symbol_doc.display_name }}</h1>
+    <div class="watchlist-toggles" style="display:flex; gap:1.5rem; align-items:center; margin-top:0.5rem; flex-wrap:wrap;">
         <span style="display:flex; align-items:center; gap:0.4rem;">
             <label class="switch">
                 <input type="checkbox" id="toggle-cc" {% if symbol_doc.watchlist.covered_call %}checked{% endif %}>
@@ -19,6 +19,12 @@
                 <span class="slider"></span>
             </label>
             <span>Put Watchlist</span>
+        </span>
+        <span style="display:flex; align-items:center; gap:0.4rem;">
+            <a href="/symbols/{{ symbol_doc.symbol }}/chat" class="switch-link" style="display:inline-flex; align-items:center; gap:0.4rem; text-decoration:none; color:inherit; padding:0.2rem 0.6rem; border-radius:16px; background:rgba(255,255,255,0.06); border:1px solid var(--border-color, #2a2a4a); transition:background 0.2s;">
+                <span style="font-size:0.9rem;">💬</span>
+                <span>Chat</span>
+            </a>
         </span>
     </div>
 </div>
