@@ -82,6 +82,41 @@ Positions are managed via the web dashboard or API. Each position is stored with
 - **ROLL_UP_AND_OUT** / **ROLL_DOWN_AND_OUT** — Combined strike + expiration adjustment
 - **CLOSE** — Buy back without re-selling (exit the position entirely)
 
+### Position Lifecycle
+
+**Open Position from Signal:**
+When a sell-side agent (covered_call, cash_secured_put) generates a SELL signal, the decision detail page displays an "Open Position" button. Clicking it creates a position from the signal data (strike, expiration, type), storing a `source` snapshot of the original signal for full traceability. The watchlist flag is disabled for that symbol, and related decisions/signals are cascade-deleted.
+
+**Roll Position from Signal:**
+When a monitor agent (open_call_monitor, open_put_monitor) generates a ROLL signal, the decision detail page shows a "Roll Position" button. Clicking it atomically closes the old position and creates a new one. The old position is marked `status: "closed"` with a `closing_source` snapshot (the signal) and `rolled_to` pointing to the new position ID. The new position carries a `source` snapshot and `rolled_from` pointing to the old position ID, creating an auditable chain.
+
+**Manual Roll:**
+Active positions in the Symbol Detail page have a Roll button in the positions table. Clicking it opens an inline form to specify new strike, new expiration, and optional notes. The same `rolled_to`/`rolled_from` chain is created without signal snapshots.
+
+**Position Actions:**
+- **Close** — Marks position as closed (status: "closed") with the timestamp
+- **Roll** — Atomically closes current position and opens a new one, maintaining traceability chain
+- **Delete** — Permanently removes the position and cascade-deletes all linked decisions/signals
+
+**Position Model Example:**
+```json
+{
+  "position_id": "pos_MO_call_60.0_20250620",
+  "type": "call",
+  "strike": 60.0,
+  "expiration": "2025-06-20",
+  "opened_at": "2025-03-15T10:00:00Z",
+  "status": "active",
+  "notes": "",
+  "source": {
+    "decision_id": "dec_...",
+    "agent_type": "covered_call",
+    "timestamp": "2025-03-15T10:00:00Z"
+  },
+  "rolled_from": "pos_MO_call_55.0_20250520"
+}
+```
+
 ### Pre-fetch Architecture (TradingView)
 
 LLMs don't reliably make multi-step browser tool calls. When given Playwright tools directly, they skip pages, fabricate navigation errors, and ignore sequencing instructions.
@@ -212,10 +247,10 @@ stock-options-manager/
 - **Dashboard** (`/`) — Signals overview by agent type with time-range counts, scheduler status, recent activity feed, and position summary. Auto-refresh toggle (60s).
 - **Signal Details** (`/signals/{agent}/{symbol}`) — All signals for a specific symbol, newest first, with decision badges and risk flags.
 - **Signal + Decisions** (`/signals/{agent}/{symbol}/{index}`) — Full signal JSON and backing decisions from the same time window.
-- **Symbol Detail** (`/symbols/{symbol}`) — Full detail page for a symbol: positions, decisions, signals, per-symbol chat.
+- **Symbol Detail** (`/symbols/{symbol}`) — Full detail page for a symbol: expandable positions with source traceability, Close/Roll/Delete actions, decisions, signals, and "Open Position from Signal" / "Roll Position from Signal" buttons on decision detail; per-symbol chat.
 - **Fetch Preview** (`/symbols/{symbol}/fetch-preview`) — Debug page showing raw TradingView data for each resource (overview, technicals, forecast, options chain) with fetch timing and size.
-- **Settings** (`/settings`) — Scheduler config, runtime stats (today/7d/30d telemetry), and a Debug TradingView Fetch tool for testing data fetching per symbol.
 - **Chat** (`/chat`) — Ask questions about your portfolio. Uses the same Azure OpenAI model with recent decisions as context.
+- **Settings** (`/settings`) — Scheduler config, runtime stats (today/7d/30d telemetry), and a Debug TradingView Fetch tool for testing data fetching per symbol.
 
 ---
 

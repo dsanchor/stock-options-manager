@@ -12,8 +12,8 @@
         <div class="nav-links">
             <a href="/dashboard" class="{% if request.url.path in ('/', '/dashboard') %}active{% endif %}">Dashboard</a>
             <a href="/symbols" class="{% if request.url.path.startswith('/symbols') %}active{% endif %}">Symbols</a>
-            <a href="/settings" class="{% if request.url.path == '/settings' %}active{% endif %}">Settings</a>
             <a href="/chat" class="{% if request.url.path == '/chat' %}active{% endif %}">Chat</a>
+            <a href="/settings" class="{% if request.url.path == '/settings' %}active{% endif %}">Settings</a>
         </div>
     </nav>
     <main class="container">
