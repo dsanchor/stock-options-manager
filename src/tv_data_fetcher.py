@@ -6,6 +6,7 @@ analyze without needing any browser tools.
 """
 
 import asyncio
+import json
 import logging
 import re
 import time
@@ -120,74 +121,153 @@ class TradingViewFetcher:
             logger.error("Failed to fetch forecast for %s: %s", full_symbol, e)
             return f"[ERROR: {e}]"
 
-    async def fetch_options_chain(self, full_symbol: str) -> str:
-        """Fetch options chain: navigate, click best DTE row, extract text.
+    # Keywords in URLs that likely carry options/chain data
+    _OPTIONS_URL_KEYWORDS = [
+        "option", "chain", "derivatives", "scanner", "symbol",
+        "quote", "instrument", "contract", "expir",
+    ]
 
-        Loads the options chain page, finds the best expiration row
-        (30-45 DTE), clicks to expand it, then extracts the page text.
+    # Field names that indicate options-related JSON payloads
+    _OPTIONS_JSON_FIELDS = [
+        "strike", "expiry", "expiration", "bid", "ask", "iv",
+        "delta", "gamma", "theta", "vega", "volume", "open_interest",
+        "openInterest", "impliedVolatility", "lastPrice", "put", "call",
+    ]
+
+    async def fetch_options_chain(self, full_symbol: str) -> str:
+        """Fetch options chain by intercepting TradingView API responses.
+
+        Opens the options chain page and captures all relevant XHR / API
+        responses during initial page load — no clicking required.  Falls
+        back to DOM innerText if no API data is captured.
         """
         url = f"https://www.tradingview.com/symbols/{full_symbol}/options-chain/"
         page = await self._browser.new_page()
 
-        try:
-            await page.goto(url, wait_until="networkidle", timeout=30000)
-            await page.wait_for_timeout(2000)
+        captured_responses: list[dict] = []
 
-            # Get visible text to find DTE rows
-            page_text = await page.evaluate(
-                '(() => { const m = document.querySelector("main") || document.body; return m.innerText; })()'
-            ) or ""
+        async def _on_response(response):
+            resp_url = response.url
+            url_lower = resp_url.lower()
 
-            if not page_text:
-                return "[ERROR: Empty options chain page]"
+            # Decide whether this response is worth capturing
+            url_match = any(
+                kw in url_lower for kw in self._OPTIONS_URL_KEYWORDS
+            )
 
-            # Find expiration rows by looking for DTE patterns in the page text
-            # Lines look like: "Apr 24\n29 DTE" or similar
-            dte_pattern = r'(\d+)\s+DTE'
-            dte_matches = re.findall(dte_pattern, page_text)
+            content_type = (response.headers.get("content-type") or "").lower()
+            json_content = (
+                "application/json" in content_type
+                or "text/plain" in content_type
+            )
 
-            if not dte_matches:
-                logger.warning("No DTE rows found in options chain for %s", full_symbol)
-                return f"OPTIONS CHAIN (collapsed, no expandable rows found):\n{page_text}"
+            if not response.ok:
+                return
+            if not (url_match or json_content):
+                return
 
-            # Find closest to 30-45 DTE range
-            best_dte = None
-            best_score = float("inf")
-            for dte_str in dte_matches:
-                dte = int(dte_str)
-                if 30 <= dte <= 45:
-                    score = 0
-                else:
-                    score = min(abs(dte - 30), abs(dte - 45))
-                if score < best_score:
-                    best_score = score
-                    best_dte = dte
-
-            if best_dte is None:
-                return f"OPTIONS CHAIN (no suitable DTE found):\n{page_text}"
-
-            logger.info("Clicking expiration row with %d DTE for %s", best_dte, full_symbol)
-
-            # Click the row containing the best DTE
-            dte_locator = page.get_by_text(re.compile(rf"\b{best_dte}\s+DTE\b"))
             try:
-                await dte_locator.first.click(timeout=5000)
-                await page.wait_for_timeout(2000)
-            except Exception as click_err:
-                logger.warning("Could not click DTE row: %s", click_err)
-                return f"OPTIONS CHAIN (click failed, showing collapsed):\n{page_text}"
+                body = await response.text()
+            except Exception:
+                return
 
-            # Extract expanded text
-            expanded_text = await page.evaluate(
-                '(() => { const m = document.querySelector("main") || document.body; return m.innerText; })()'
+            if len(body) <= 100:
+                return
+
+            # If neither the URL nor content-type matched strongly, inspect
+            # the body for options-related field names as a last filter.
+            if not url_match and not json_content:
+                return
+
+            # Extra heuristic: when content-type is JSON but URL is generic,
+            # keep it only if the body contains options-related terms.
+            if not url_match:
+                body_lower = body[:5000].lower()
+                if not any(f in body_lower for f in self._OPTIONS_JSON_FIELDS):
+                    return
+
+            captured_responses.append({
+                "url": resp_url,
+                "size": len(body),
+                "body": body,
+            })
+
+        page.on("response", _on_response)
+
+        try:
+            await page.goto(url, wait_until="networkidle", timeout=45000)
+
+            # Dismiss cookie / consent / login banners that may block rendering
+            for selector in [
+                '[class*="cookie"] button',
+                '[class*="consent"] button',
+                'button:has-text("Accept")',
+                'button:has-text("OK")',
+                'button:has-text("Got it")',
+                'button:has-text("I agree")',
+            ]:
+                try:
+                    btn = page.locator(selector).first
+                    if await btn.is_visible(timeout=1000):
+                        await btn.click()
+                except Exception:
+                    pass
+
+            # Extra wait for any async data loads after initial networkidle
+            await page.wait_for_timeout(3000)
+
+            # -------------------------------------------------------
+            # Build result from captured API responses
+            # -------------------------------------------------------
+            if captured_responses:
+                parts: list[str] = [
+                    f"OPTIONS CHAIN DATA (API intercepted, "
+                    f"{len(captured_responses)} responses captured):\n"
+                ]
+
+                for idx, resp in enumerate(captured_responses, 1):
+                    parts.append(
+                        f"=== Response {idx}: {resp['url']} "
+                        f"({resp['size']} bytes) ==="
+                    )
+                    # Pretty-print JSON when possible
+                    try:
+                        parsed = json.loads(resp["body"])
+                        parts.append(json.dumps(parsed, indent=2))
+                    except (json.JSONDecodeError, ValueError):
+                        parts.append(resp["body"])
+                    parts.append("")  # blank separator
+
+                logger.info(
+                    "Captured %d API responses for options chain of %s",
+                    len(captured_responses),
+                    full_symbol,
+                )
+                return "\n".join(parts)
+
+            # -------------------------------------------------------
+            # Fallback: DOM innerText (old approach)
+            # -------------------------------------------------------
+            logger.warning(
+                "No API responses captured for %s; falling back to DOM text",
+                full_symbol,
+            )
+            page_text = await page.evaluate(
+                '(() => { const m = document.querySelector("main") '
+                '|| document.body; return m.innerText; })()'
             ) or ""
 
-            if expanded_text:
-                return expanded_text
-            return f"OPTIONS CHAIN (click succeeded but page empty):\n{page_text}"
+            if page_text:
+                return (
+                    "OPTIONS CHAIN DATA (FALLBACK — DOM innerText, "
+                    "no API responses intercepted):\n" + page_text
+                )
+            return "[ERROR: No options chain data captured or rendered]"
 
         except Exception as e:
-            logger.error("Failed to fetch options chain for %s: %s", full_symbol, e)
+            logger.error(
+                "Failed to fetch options chain for %s: %s", full_symbol, e,
+            )
             return f"[ERROR: {e}]"
         finally:
             await page.close()
