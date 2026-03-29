@@ -13,6 +13,68 @@
 </div>
 {% endif %}
 
+<!-- Runtime Stats (Last 30 Days) -->
+<div class="card settings-card">
+    <div class="card-header">
+        <h2>📊 Runtime Stats (Last 30 Days)</h2>
+    </div>
+    {% if telemetry_stats and (telemetry_stats.get('tv_fetch') or telemetry_stats.get('agent_run')) %}
+    <div style="padding: 0.75rem 1.25rem;">
+        {% if telemetry_stats.get('tv_fetch') %}
+        <h3 style="margin: 0.5rem 0; font-size: 0.95rem; color: var(--text-muted, #888);">TradingView Fetch Stats</h3>
+        <table class="table" style="margin-bottom: 1.25rem;">
+            <thead>
+                <tr>
+                    <th>Resource</th>
+                    <th>Avg Duration</th>
+                    <th>Avg Response Size</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for resource in ['overview', 'technicals', 'forecast', 'options_chain'] %}
+                {% if resource in telemetry_stats['tv_fetch'] %}
+                <tr>
+                    <td>{{ resource | replace('_', ' ') | title }}</td>
+                    <td class="mono">{{ telemetry_stats['tv_fetch'][resource]['avg_duration'] }}s</td>
+                    <td class="mono">{{ "{:,.0f}".format(telemetry_stats['tv_fetch'][resource]['avg_size']) }} chars</td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        {% if telemetry_stats.get('agent_run') %}
+        <h3 style="margin: 0.5rem 0; font-size: 0.95rem; color: var(--text-muted, #888);">Agent Run Stats</h3>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Agent Type</th>
+                    <th>Avg Duration</th>
+                    <th>Runs</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for agent_type in ['covered_call', 'cash_secured_put', 'open_call_monitor', 'open_put_monitor'] %}
+                {% if agent_type in telemetry_stats['agent_run'] %}
+                <tr>
+                    <td>{{ agent_type | replace('_', ' ') | title }}</td>
+                    <td class="mono">{{ telemetry_stats['agent_run'][agent_type]['avg_duration'] }}s</td>
+                    <td class="mono">{{ telemetry_stats['agent_run'][agent_type]['count'] }}</td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+    {% else %}
+    <div style="padding: 0.75rem 1.25rem; color: var(--text-muted, #888);">
+        No telemetry data yet. Stats will appear after agent runs.
+    </div>
+    {% endif %}
+</div>
+
 <form method="POST" action="/settings">
     <div class="card settings-card">
         <div class="card-header">

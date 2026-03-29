@@ -8,6 +8,7 @@ analyze without needing any browser tools.
 import asyncio
 import logging
 import re
+import time
 
 from playwright.async_api import async_playwright
 
@@ -199,31 +200,49 @@ class TradingViewFetcher:
         """Fetch all data for a symbol.
 
         Returns dict with keys: overview, technicals, forecast, options_chain.
+        Timing stats are stored in ``self.last_fetch_stats``.
         """
         # Convert NYSE-MO → NYSE:MO for TradingView URLs
         full_symbol = symbol.replace("-", ":")
 
         logger.info("Pre-fetching TradingView data for %s", symbol)
 
-        options_chain = await self._with_retry(
+        self.last_fetch_stats: dict[str, dict] = {}
+
+        # Helper that wraps a single fetch with timing
+        async def _timed_fetch(resource: str, factory, label: str) -> str:
+            start = time.time()
+            result = await self._with_retry(factory, label)
+            duration = time.time() - start
+            self.last_fetch_stats[resource] = {
+                "duration": round(duration, 2),
+                "size": len(result),
+            }
+            return result
+
+        options_chain = await _timed_fetch(
+            "options_chain",
             lambda fs=full_symbol: self.fetch_options_chain(fs),
             f"options_chain({symbol})",
         )
         logger.info("Options chain fetched: %d chars", len(options_chain))
 
-        overview = await self._with_retry(
+        overview = await _timed_fetch(
+            "overview",
             lambda fs=full_symbol: self.fetch_overview(fs),
             f"overview({symbol})",
         )
         logger.info("Overview fetched: %d chars", len(overview))
 
-        technicals = await self._with_retry(
+        technicals = await _timed_fetch(
+            "technicals",
             lambda fs=full_symbol: self.fetch_technicals(fs),
             f"technicals({symbol})",
         )
         logger.info("Technicals fetched: %d chars", len(technicals))
 
-        forecast = await self._with_retry(
+        forecast = await _timed_fetch(
+            "forecast",
             lambda fs=full_symbol: self.fetch_forecast(fs),
             f"forecast({symbol})",
         )

@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import time
 import traceback
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -269,6 +270,7 @@ class AgentRunner:
         logger.info("Starting pre-fetch + agent.run() for symbol=%s", full_symbol)
 
         analysis_ts = datetime.now().strftime(TIMESTAMP_FORMAT)
+        run_start = time.time()
 
         try:
             # Context injection from CosmosDB
@@ -382,6 +384,25 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
                 timestamp=analysis_ts,
             )
 
+        # ── Telemetry (best-effort, never blocks) ─────────────────
+        try:
+            total_duration = round(time.time() - run_start, 2)
+            fetch_stats = getattr(fetcher, "last_fetch_stats", {})
+            for resource, stats in fetch_stats.items():
+                cosmos.write_telemetry("tv_fetch", {
+                    "symbol": symbol,
+                    "resource": resource,
+                    "duration_seconds": stats["duration"],
+                    "response_size_chars": stats["size"],
+                })
+            cosmos.write_telemetry("agent_run", {
+                "symbol": symbol,
+                "agent_type": agent_type,
+                "duration_seconds": total_duration,
+            })
+        except Exception:
+            logger.debug("Telemetry write skipped for %s", full_symbol)
+
     # ------------------------------------------------------------------
     # Position Monitor (single position, CosmosDB-backed)
     # ------------------------------------------------------------------
@@ -426,6 +447,7 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
         )
 
         analysis_ts = datetime.now().strftime(TIMESTAMP_FORMAT)
+        run_start = time.time()
 
         try:
             # Context injection from CosmosDB (filtered by position)
@@ -544,3 +566,22 @@ Analyze the position risk and output your decision in the required JSON format. 
                 },
                 timestamp=analysis_ts,
             )
+
+        # ── Telemetry (best-effort, never blocks) ─────────────────
+        try:
+            total_duration = round(time.time() - run_start, 2)
+            fetch_stats = getattr(fetcher, "last_fetch_stats", {})
+            for resource, stats in fetch_stats.items():
+                cosmos.write_telemetry("tv_fetch", {
+                    "symbol": symbol,
+                    "resource": resource,
+                    "duration_seconds": stats["duration"],
+                    "response_size_chars": stats["size"],
+                })
+            cosmos.write_telemetry("agent_run", {
+                "symbol": symbol,
+                "agent_type": agent_type,
+                "duration_seconds": total_duration,
+            })
+        except Exception:
+            logger.debug("Telemetry write skipped for %s", full_symbol)

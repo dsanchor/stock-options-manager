@@ -10,7 +10,8 @@ document model (symbol_config, decision, signal doc types).
 from azure.cosmos import CosmosClient, PartitionKey
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 import logging
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,20 @@ class CosmosDBService:
         self.client = CosmosClient(endpoint, credential=key)
         self.database = self.client.get_database_client(database_name)
         self.container = self.database.get_container_client("symbols")
+
+        # Telemetry container — best-effort; never blocks if missing
+        try:
+            self.telemetry_container = self.database.get_container_client(
+                "telemetry"
+            )
+            # Probe to confirm the container exists
+            self.telemetry_container.read()
+        except Exception:
+            logger.warning(
+                "Telemetry container not found — telemetry writes disabled. "
+                "Run scripts/provision_cosmosdb.sh to create it."
+            )
+            self.telemetry_container = None
 
     # ── Symbol Config CRUD ─────────────────────────────────────────────
 
@@ -499,3 +514,99 @@ class CosmosDBService:
             enable_cross_partition_query=True,
         ))
         return {r["symbol"]: r["count"] for r in results}
+
+    # ── Telemetry ──────────────────────────────────────────────────────
+
+    def write_telemetry(self, metric_type: str, data: dict) -> None:
+        """Write a telemetry document (best-effort, never raises)."""
+        if self.telemetry_container is None:
+            return
+        try:
+            doc = {
+                "id": str(uuid4()),
+                "metric_type": metric_type,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "ttl": 2592000,  # 30 days
+                **data,
+            }
+            self.telemetry_container.create_item(doc)
+        except Exception as exc:
+            logger.warning("Telemetry write failed (%s): %s", metric_type, exc)
+
+    def get_telemetry_stats(self) -> dict:
+        """Aggregate telemetry stats for the last 30 days.
+
+        Returns:
+            {
+              "tv_fetch": {resource: {"avg_duration": ..., "avg_size": ...}},
+              "agent_run": {agent_type: {"avg_duration": ..., "count": ...}},
+            }
+        """
+        if self.telemetry_container is None:
+            return {}
+
+        since = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+
+        try:
+            # ── TV fetch stats ────────────────────────────────────────
+            tv_query = (
+                "SELECT * FROM c "
+                "WHERE c.metric_type = 'tv_fetch' AND c.timestamp >= @since"
+            )
+            tv_docs = list(self.telemetry_container.query_items(
+                query=tv_query,
+                parameters=[{"name": "@since", "value": since}],
+                enable_cross_partition_query=True,
+            ))
+
+            tv_agg: dict[str, dict] = {}
+            for doc in tv_docs:
+                res = doc.get("resource", "unknown")
+                bucket = tv_agg.setdefault(
+                    res, {"total_duration": 0.0, "total_size": 0, "count": 0},
+                )
+                bucket["total_duration"] += doc.get("duration_seconds", 0)
+                bucket["total_size"] += doc.get("response_size_chars", 0)
+                bucket["count"] += 1
+
+            tv_stats = {}
+            for res, b in tv_agg.items():
+                c = b["count"] or 1
+                tv_stats[res] = {
+                    "avg_duration": round(b["total_duration"] / c, 1),
+                    "avg_size": round(b["total_size"] / c),
+                }
+
+            # ── Agent run stats ───────────────────────────────────────
+            ar_query = (
+                "SELECT * FROM c "
+                "WHERE c.metric_type = 'agent_run' AND c.timestamp >= @since"
+            )
+            ar_docs = list(self.telemetry_container.query_items(
+                query=ar_query,
+                parameters=[{"name": "@since", "value": since}],
+                enable_cross_partition_query=True,
+            ))
+
+            ar_agg: dict[str, dict] = {}
+            for doc in ar_docs:
+                at = doc.get("agent_type", "unknown")
+                bucket = ar_agg.setdefault(
+                    at, {"total_duration": 0.0, "count": 0},
+                )
+                bucket["total_duration"] += doc.get("duration_seconds", 0)
+                bucket["count"] += 1
+
+            ar_stats = {}
+            for at, b in ar_agg.items():
+                c = b["count"] or 1
+                ar_stats[at] = {
+                    "avg_duration": round(b["total_duration"] / c, 1),
+                    "count": b["count"],
+                }
+
+            return {"tv_fetch": tv_stats, "agent_run": ar_stats}
+
+        except Exception as exc:
+            logger.warning("Telemetry stats query failed: %s", exc)
+            return {}

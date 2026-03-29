@@ -14,7 +14,7 @@ The first two agents (sell-side) decide whether to **open** new positions. The l
 
 Both sell-side agents use the Microsoft Agent Framework (`agent-framework`) with TradingView as the data source. Market data is pre-fetched deterministically via [Playwright](https://playwright.dev/python/) (headless Chromium) and passed to the LLM for analysis — the LLM never touches the browser directly.
 
-**Storage backend:** Azure CosmosDB with a single `symbols` container. Each symbol is a partition key containing three document types: `symbol_config` (watchlist flags + positions), `decision` (full audit trail), and `signal` (actionable alerts). See the [Azure CosmosDB Setup](#azure-cosmosdb-setup) section for provisioning.
+**Storage backend:** Azure CosmosDB with two containers: `symbols` (watchlists, positions, decisions, signals) and `telemetry` (runtime performance stats with 30-day TTL). Each symbol is a partition key in the symbols container containing three document types: `symbol_config` (watchlist flags + positions), `decision` (full audit trail), and `signal` (actionable alerts). The telemetry container tracks TradingView fetch durations and agent run times, displayed on the Settings page. See the [Azure CosmosDB Setup](#azure-cosmosdb-setup) section for provisioning.
 
 ## How It Works
 
@@ -110,13 +110,24 @@ context:
 
 ### CosmosDB Document Model
 
-All data is stored in Azure CosmosDB using three document types within a single `symbols` container, partitioned by `/symbol`:
+All data is stored in Azure CosmosDB across two containers:
+
+**`symbols` container** (partition key: `/symbol`) — three document types:
 
 | Document Type | Purpose | Growth |
 |---|---|---|
 | `symbol_config` | One per symbol — watchlist flags, positions, metadata | Static (updated, not appended) |
 | `decision` | One per symbol per agent run — full analysis output | ~20/day per symbol |
 | `signal` | One per actionable decision (SELL, ROLL, CLOSE) | ~1-5/week per symbol |
+
+**`telemetry` container** (partition key: `/metric_type`) — runtime performance stats with 30-day TTL:
+
+| Metric Type | Purpose | Fields |
+|---|---|---|
+| `tv_fetch` | TradingView page fetch timing | resource, duration_seconds, response_size_chars |
+| `agent_run` | End-to-end agent execution timing | agent_type, duration_seconds |
+
+Telemetry stats are displayed on the Settings page and auto-expire after 30 days.
 
 Decisions older than 90 days can be configured for TTL-based cleanup. Signals are kept indefinitely for audit.
 
@@ -434,6 +445,17 @@ az cosmosdb sql container create \
   --partition-key-version 2 \
   -o none
 
+# Create telemetry container (partition key /metric_type, per-document TTL enabled)
+az cosmosdb sql container create \
+  --account-name "$COSMOSDB_ACCOUNT" \
+  --resource-group "$RESOURCE_GROUP" \
+  --database-name "$DATABASE_NAME" \
+  --name "telemetry" \
+  --partition-key-path "/metric_type" \
+  --partition-key-version 2 \
+  --default-ttl -1 \
+  -o none
+
 # Apply custom indexing policy
 az cosmosdb sql container update \
   --account-name "$COSMOSDB_ACCOUNT" \
@@ -559,7 +581,7 @@ Make sure you've exported the environment variable with your Azure AI Foundry pr
 
 ### CosmosDB Connection Errors
 - Verify `COSMOSDB_ENDPOINT` and `COSMOSDB_KEY` are set correctly
-- Ensure the CosmosDB account, database (`stock-options-manager`), and container (`symbols`) exist
+- Ensure the CosmosDB account, database (`stock-options-manager`), and containers (`symbols`, `telemetry`) exist
 - Run `bash scripts/provision_cosmosdb.sh` to create missing resources
 
 ### Playwright / Chromium Issues

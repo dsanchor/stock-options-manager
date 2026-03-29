@@ -9,6 +9,14 @@
 
 ## Learnings
 
+### Runtime Telemetry Infrastructure (2025-07)
+- Added a second CosmosDB container `telemetry` (partition key `/metric_type`) alongside the existing `symbols` container. Initialization is best-effort — if the container doesn't exist, `self.telemetry_container` is set to `None` and all writes silently skip.
+- `write_telemetry()` writes documents with 30-day TTL (`ttl: 2592000`). Requires the container to have `defaultTtl` set to `-1` (per-doc TTL enabled without a container default). Provisioning script updated with `--default-ttl -1`.
+- `TradingViewFetcher.fetch_all()` now wraps each resource fetch with `time.time()` and stores per-resource `duration`/`size` in `self.last_fetch_stats`. The fetcher itself doesn't touch CosmosDB — the caller (AgentRunner) reads `fetcher.last_fetch_stats` after completion.
+- Both `run_symbol_agent()` and `run_position_monitor()` write telemetry in a dedicated `try/except` block AFTER the main try/except — so telemetry failures never block agent execution or mask the real error.
+- `get_telemetry_stats()` queries all docs in the last 30 days and aggregates in Python (CosmosDB's aggregation isn't rich enough for avg + group by on different fields). Returns nested dict for both `tv_fetch` and `agent_run` metric types.
+- Settings page now shows a "Runtime Stats (Last 30 Days)" card above the scheduler card, using the same `card settings-card` styling. Template iterates over a fixed resource/agent_type order for consistent display.
+
 ### Phase 3 — Web Dashboard CosmosDB Refactor (2025-07)
 - Rewrote `web/app.py` to eliminate all file-based data access (JSONL reads, txt symbol lists). All data now flows through `CosmosDBService` initialized at startup via `@app.on_event("startup")`.
 - Added full REST API: symbol CRUD (`/api/symbols`), position management (`/api/symbols/{symbol}/positions`), data views (`/api/signals`, `/api/decisions`). All `/api/*` endpoints return JSON with proper HTTP status codes.
@@ -587,3 +595,19 @@ This 3-phase CosmosDB refactor directly impacts:
 - Toggles use the same `PUT /api/symbols/{symbol}` endpoint with `{covered_call: bool}` / `{cash_secured_put: bool}` payloads — same pattern as the list page.
 - The `.switch` / `.slider` CSS classes from `web/static/style.css` are available globally via the base template — no extra imports needed.
 - Toggle JS uses element IDs (`toggle-cc`, `toggle-csp`) rather than class-based selectors since there's only one instance on the detail page.
+
+### Chat Context Preload Pattern (2025-07)
+- Per-symbol chat (`/api/symbols/{symbol}/chat`) was re-fetching CosmosDB + TradingView data on every message (~5-10s latency).
+- Extracted `_build_symbol_context()` helper and `_build_symbol_system_prompt()` to DRY up context assembly.
+- New `POST /api/symbols/{symbol}/chat/context` endpoint does the heavy lifting once; frontend caches `context` in a JS variable.
+- Chat endpoint accepts optional `context` field in request body — skips all fetching when present, falls back to full fetch when absent.
+- Frontend disables input/send until context loads, shows "Loading market data..." state, gracefully degrades on fetch failure.
+- Key files: `web/app.py` (lines ~953-1095), `web/templates/symbol_chat.html`, `web/templates/symbol_detail.html`.
+- Chat icon moved inline with `<h1>` on symbol detail page using `btn-sm` + `font-size:0.5em; vertical-align:middle`.
+
+### Watchlist Toggle Cascade Delete (2025-07)
+- When a watchlist toggle (covered_call or cash_secured_put) is set to False via the PUT /api/symbols/{symbol} endpoint, all decisions and linked signals for that agent type on that symbol are now cascade-deleted.
+- New method `CosmosDBService.delete_decisions_by_agent_type(symbol, agent_type)` follows the same pattern as `delete_position()`: query decisions → collect IDs → query linked signals → delete signals → delete decisions.
+- The cascade runs AFTER the watchlist flag is persisted, so the DB state is consistent even if the cascade fails mid-way (flag is already off, stale data gets cleaned next time).
+- Only triggers on explicit `False` — absent fields or `True` values do not trigger deletion.
+- Uses parameterized query for `agent_type` but builds a literal IN list for decision IDs (same as `delete_position` — CosmosDB doesn't support parameterized IN).

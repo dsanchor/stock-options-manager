@@ -113,6 +113,37 @@ az cosmosdb sql container create \
 
 echo "  ✓ Container ready"
 
+# ── 4b. Create Telemetry Container ───────────────────────────────────────────
+TELEMETRY_CONTAINER="telemetry"
+echo "▶ Creating container '$TELEMETRY_CONTAINER' (partition key: /metric_type, TTL enabled)..."
+
+# Serverless container with per-document TTL enabled
+az cosmosdb sql container create \
+  --account-name "$COSMOSDB_ACCOUNT" \
+  --resource-group "$RESOURCE_GROUP" \
+  --database-name "$DATABASE_NAME" \
+  --name "$TELEMETRY_CONTAINER" \
+  --partition-key-path "/metric_type" \
+  --partition-key-version 2 \
+  --default-ttl -1 \
+  --only-show-errors \
+  -o none
+
+# Provisioned container with autoscale + TTL (uncomment if using Option B above)
+# az cosmosdb sql container create \
+#   --account-name "$COSMOSDB_ACCOUNT" \
+#   --resource-group "$RESOURCE_GROUP" \
+#   --database-name "$DATABASE_NAME" \
+#   --name "$TELEMETRY_CONTAINER" \
+#   --partition-key-path "/metric_type" \
+#   --partition-key-version 2 \
+#   --default-ttl -1 \
+#   --max-throughput 4000 \
+#   --only-show-errors \
+#   -o none
+
+echo "  ✓ Telemetry container ready"
+
 # ── 5. Apply Custom Indexing Policy ──────────────────────────────────────────
 echo "▶ Applying custom indexing policy..."
 az cosmosdb sql container update \

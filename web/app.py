@@ -794,6 +794,14 @@ async def settings_page(request: Request):
                      else "Not connected")
     cosmos_error = getattr(request.app.state, "cosmos_error", None)
 
+    telemetry_stats = {}
+    cosmos = getattr(request.app.state, "cosmos", None)
+    if cosmos:
+        try:
+            telemetry_stats = cosmos.get_telemetry_stats()
+        except Exception:
+            pass
+
     return templates.TemplateResponse("settings.html", {
         "request": request,
         "cron_expr": cron_expr,
@@ -801,6 +809,7 @@ async def settings_page(request: Request):
         "cosmos_database": cosmos_database,
         "cosmos_status": cosmos_status,
         "cosmos_error": cosmos_error,
+        "telemetry_stats": telemetry_stats,
     })
 
 
@@ -835,6 +844,14 @@ async def settings_save(request: Request):
                      else "Not connected")
     cosmos_error = getattr(request.app.state, "cosmos_error", None)
 
+    telemetry_stats = {}
+    cosmos = getattr(request.app.state, "cosmos", None)
+    if cosmos:
+        try:
+            telemetry_stats = cosmos.get_telemetry_stats()
+        except Exception:
+            pass
+
     return templates.TemplateResponse("settings.html", {
         "request": request,
         "cron_expr": cron_expr,
@@ -843,6 +860,7 @@ async def settings_save(request: Request):
         "cosmos_database": cosmos_database,
         "cosmos_status": cosmos_status,
         "cosmos_error": cosmos_error,
+        "telemetry_stats": telemetry_stats,
     })
 
 
