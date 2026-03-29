@@ -9,6 +9,12 @@
 
 ## Learnings
 
+### Manual Roll Endpoint (2025-07)
+- Made `source` and `closing_source` optional (`None` default) in `roll_position()`, plus added `notes` param (default `""`). Signal-based rolls still pass both explicitly — no behavioral change for existing callers.
+- New endpoint `POST /api/symbols/{symbol}/positions/{position_id}/roll` accepts `new_strike`, `new_expiration`, and optional `notes`. Infers position type (call/put) from the existing position doc rather than requiring the caller to specify it.
+- `rolled_to`/`rolled_from` links are always set regardless of whether source snapshots are provided — traceability is maintained for manual rolls too.
+- Manual rolls produce no `source`/`closing_source` fields on the position docs, which is the distinguishing signal that a roll was user-initiated vs. agent-initiated.
+
 ### Runtime Telemetry Infrastructure (2025-07)
 - Added a second CosmosDB container `telemetry` (partition key `/metric_type`) alongside the existing `symbols` container. Initialization is best-effort — if the container doesn't exist, `self.telemetry_container` is set to `None` and all writes silently skip.
 - `write_telemetry()` writes documents with 30-day TTL (`ttl: 2592000`). Requires the container to have `defaultTtl` set to `-1` (per-doc TTL enabled without a container default). Provisioning script updated with `--default-ttl -1`.

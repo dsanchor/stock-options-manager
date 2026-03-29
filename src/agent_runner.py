@@ -202,6 +202,10 @@ class AgentRunner:
                     base[key] = json_data[key]
         for key in self._ROLL_SIGNAL_FIELDS:
             base.setdefault(key, None)
+        # Normalize field names so templates/APIs can use standard names
+        base["decision"] = base["action"]
+        base["strike"] = base.get("new_strike") or base.get("current_strike")
+        base["expiration"] = base.get("new_expiration") or base.get("current_expiration")
         return base
 
     def _build_signal_data(self, symbol: str, json_data: Optional[Dict],

@@ -208,7 +208,9 @@ class CosmosDBService:
 
     def roll_position(self, symbol: str, old_position_id: str,
                       new_type: str, new_strike: float, new_expiration: str,
-                      source: dict, closing_source: dict) -> dict:
+                      source: dict | None = None,
+                      closing_source: dict | None = None,
+                      notes: str = "") -> dict:
         """Roll a position: close old + create new with full traceability."""
         doc = self.get_symbol(symbol)
         if doc is None:
@@ -233,7 +235,8 @@ class CosmosDBService:
         now = datetime.utcnow().isoformat() + "Z"
         old_pos["status"] = "closed"
         old_pos["closed_at"] = now
-        old_pos["closing_source"] = closing_source
+        if closing_source is not None:
+            old_pos["closing_source"] = closing_source
         old_pos["rolled_to"] = new_position_id
 
         # Create new position
@@ -244,10 +247,11 @@ class CosmosDBService:
             "expiration": new_expiration,
             "opened_at": now,
             "status": "active",
-            "notes": "",
-            "source": source,
+            "notes": notes,
             "rolled_from": old_position_id,
         }
+        if source is not None:
+            new_pos["source"] = source
         doc["positions"].append(new_pos)
 
         doc["updated_at"] = now

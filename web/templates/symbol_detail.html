@@ -64,6 +64,7 @@
                     <td>
                         {% if pos.status == 'active' %}
                         <button class="btn-sm" data-close-pos="{{ pos.position_id }}">Close</button>
+                        <button class="btn-sm" data-roll-pos="{{ pos.position_id }}" data-pos-idx="{{ loop.index0 }}">Roll</button>
                         {% endif %}
                         <button class="btn-sm btn-danger" data-delete-pos="{{ pos.position_id }}">Delete</button>
                     </td>
@@ -71,6 +72,26 @@
                 <tr class="pos-detail-row" data-pos-idx="{{ loop.index0 }}" style="display:none;">
                     <td colspan="8" style="padding:0; border-top:none;">
                         <div style="padding:1rem 1.5rem; background:var(--bg-card, #1a1a2e); border-top:1px dashed var(--border-color, #2a2a4a);">
+                            <div class="roll-form" data-roll-form-idx="{{ loop.index0 }}" style="display:none; margin-bottom:1rem; padding:1rem; background:rgba(255,255,255,0.04); border-radius:8px; border:1px solid var(--border-color, #2a2a4a);">
+                                <h4 style="margin:0 0 0.75rem; color:var(--text-primary, #e0e0f0);">🔄 Roll Position</h4>
+                                <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:end;">
+                                    <div>
+                                        <label style="font-size:0.75rem; color:var(--text-muted, #888); display:block; margin-bottom:0.25rem;">New Strike</label>
+                                        <input type="number" class="input-field roll-strike" step="0.5" value="{{ pos.strike }}" style="width:120px;">
+                                    </div>
+                                    <div>
+                                        <label style="font-size:0.75rem; color:var(--text-muted, #888); display:block; margin-bottom:0.25rem;">New Expiration</label>
+                                        <input type="date" class="input-field roll-expiration" value="{{ pos.expiration }}" style="width:160px;">
+                                    </div>
+                                    <div style="flex:1;">
+                                        <label style="font-size:0.75rem; color:var(--text-muted, #888); display:block; margin-bottom:0.25rem;">Notes (optional)</label>
+                                        <input type="text" class="input-field roll-notes" placeholder="e.g. Rolling up for better premium" style="width:100%;">
+                                    </div>
+                                    <button class="btn btn-primary roll-confirm" data-roll-id="{{ pos.position_id }}">Confirm Roll</button>
+                                    <button class="btn-sm roll-cancel" style="color:var(--text-muted, #888);">Cancel</button>
+                                </div>
+                                <div class="roll-msg" style="display:none; margin-top:0.5rem; padding:0.5rem 0.75rem; border-radius:6px; font-size:0.9rem;"></div>
+                            </div>
                             {% if pos.source %}
                             <h4 style="margin:0 0 0.75rem; color:var(--text-primary, #e0e0f0);">📊 Opened from signal</h4>
                             <div class="detail-grid">
@@ -328,8 +349,18 @@
                     <td class="mono">{{ sig.timestamp[:19] }}</td>
                     <td>{{ sig._agent_label }}</td>
                     <td><span class="badge badge-{{ (sig.decision | default('UNKNOWN', true)) | lower }}">{{ sig.decision | default("—", true) }}</span></td>
-                    <td class="mono">{% if sig.strike %}${{ sig.strike }}{% else %}—{% endif %}</td>
-                    <td class="mono">{{ sig.expiration or "—" }}</td>
+                    <td class="mono">
+                        {% if sig.strike %}${{ sig.strike }}{% else %}—{% endif %}
+                        {% if sig.new_strike and sig.current_strike %}
+                        <span style="color:var(--text-muted, #666); font-size:0.8rem;"> (from ${{ sig.current_strike }})</span>
+                        {% endif %}
+                    </td>
+                    <td class="mono">
+                        {{ sig.expiration or "—" }}
+                        {% if sig.new_expiration and sig.current_expiration %}
+                        <span style="color:var(--text-muted, #666); font-size:0.8rem;"> (from {{ sig.current_expiration }})</span>
+                        {% endif %}
+                    </td>
                     <td><span class="confidence confidence-{{ sig.confidence or 'medium' }}">{{ sig.confidence or "—" }}</span></td>
                     <td>
                         {% for flag in (sig.risk_flags or []) %}
@@ -436,7 +467,7 @@
     document.querySelectorAll('tr.pos-row').forEach(function(row) {
         row.addEventListener('click', function(e) {
             // Don't toggle when clicking action buttons
-            if (e.target.closest('[data-close-pos], [data-delete-pos]')) return;
+            if (e.target.closest('[data-close-pos], [data-delete-pos], [data-roll-pos], .roll-form')) return;
             var idx = this.dataset.posIdx;
             var detailRow = document.querySelector('tr.pos-detail-row[data-pos-idx="' + idx + '"]');
             var chevron = this.querySelector('.pos-chevron');
@@ -469,6 +500,86 @@
             }
         });
     });
+
+    // Roll button — expand detail + show form
+    document.querySelectorAll('[data-roll-pos]').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var posId = this.dataset.rollPos;
+            var idx = this.dataset.posIdx;
+            var detailRow = document.querySelector('tr.pos-detail-row[data-pos-idx="' + idx + '"]');
+            var chevron = document.querySelector('tr.pos-row[data-pos-idx="' + idx + '"] .pos-chevron');
+            if (detailRow) {
+                detailRow.style.display = 'table-row';
+                if (chevron) chevron.textContent = '▾';
+            }
+            var form = document.querySelector('[data-roll-form-idx="' + idx + '"]');
+            if (form) form.style.display = 'block';
+        });
+    });
+
+    // Roll cancel
+    document.querySelectorAll('.roll-cancel').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            this.closest('.roll-form').style.display = 'none';
+        });
+    });
+
+    // Roll confirm — call API
+    document.querySelectorAll('.roll-confirm').forEach(function(btn) {
+        btn.addEventListener('click', async function(e) {
+            e.stopPropagation();
+            var form = this.closest('.roll-form');
+            var posId = this.dataset.rollId;
+            var newStrike = form.querySelector('.roll-strike').value;
+            var newExp = form.querySelector('.roll-expiration').value;
+            var notes = form.querySelector('.roll-notes').value.trim();
+            var msgEl = form.querySelector('.roll-msg');
+
+            if (!newStrike || !newExp) {
+                msgEl.style.display = 'block';
+                msgEl.style.background = 'rgba(255,80,80,0.15)';
+                msgEl.style.color = '#ff6b6b';
+                msgEl.textContent = 'Strike and expiration are required.';
+                return;
+            }
+
+            this.disabled = true;
+            this.textContent = 'Rolling…';
+
+            try {
+                var res = await fetch('/api/symbols/' + SYMBOL + '/positions/' + posId + '/roll', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ new_strike: parseFloat(newStrike), new_expiration: newExp, notes: notes })
+                });
+                var data = await res.json();
+                if (!res.ok) {
+                    msgEl.style.display = 'block';
+                    msgEl.style.background = 'rgba(255,80,80,0.15)';
+                    msgEl.style.color = '#ff6b6b';
+                    msgEl.textContent = data.error || 'Failed to roll position.';
+                    this.disabled = false;
+                    this.textContent = 'Confirm Roll';
+                } else {
+                    msgEl.style.display = 'block';
+                    msgEl.style.background = 'rgba(80,255,120,0.15)';
+                    msgEl.style.color = '#50ff78';
+                    msgEl.textContent = '✓ Position rolled!';
+                    setTimeout(function() { window.location.reload(); }, 800);
+                }
+            } catch(err) {
+                msgEl.style.display = 'block';
+                msgEl.style.background = 'rgba(255,80,80,0.15)';
+                msgEl.style.color = '#ff6b6b';
+                msgEl.textContent = 'Network error: ' + err.message;
+                this.disabled = false;
+                this.textContent = 'Confirm Roll';
+            }
+        });
+    });
+
 })();
 </script>
 {% endblock %}

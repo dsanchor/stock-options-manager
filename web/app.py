@@ -445,6 +445,55 @@ async def api_roll_position_from_decision(request: Request, symbol: str,
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.post("/api/symbols/{symbol}/positions/{position_id}/roll")
+async def api_manual_roll_position(request: Request, symbol: str,
+                                   position_id: str):
+    """Manually roll a position to a new strike/expiration without a signal."""
+    try:
+        cosmos = _get_cosmos(request)
+        body = await request.json()
+
+        new_strike = body.get("new_strike")
+        new_expiration = body.get("new_expiration")
+        if new_strike is None or not new_expiration:
+            return JSONResponse(
+                {"error": "new_strike and new_expiration are required"},
+                status_code=400,
+            )
+
+        # Determine position type from existing position
+        sym_doc = cosmos.get_symbol(symbol.upper())
+        if sym_doc is None:
+            return JSONResponse({"error": f"Symbol {symbol} not found"},
+                                status_code=404)
+        pos = None
+        for p in sym_doc.get("positions", []):
+            if p["position_id"] == position_id:
+                pos = p
+                break
+        if pos is None:
+            return JSONResponse(
+                {"error": f"Position {position_id} not found"},
+                status_code=404,
+            )
+
+        notes = body.get("notes", "")
+
+        doc = cosmos.roll_position(
+            symbol.upper(), position_id, pos["type"],
+            float(new_strike), new_expiration,
+            notes=notes,
+        )
+
+        return JSONResponse(_clean_doc(doc), status_code=201)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.put("/api/symbols/{symbol}/positions/{position_id}/close")
 async def api_close_position(request: Request, symbol: str, position_id: str):
     try:
