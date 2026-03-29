@@ -611,3 +611,4 @@ This 3-phase CosmosDB refactor directly impacts:
 - The cascade runs AFTER the watchlist flag is persisted, so the DB state is consistent even if the cascade fails mid-way (flag is already off, stale data gets cleaned next time).
 - Only triggers on explicit `False` — absent fields or `True` values do not trigger deletion.
 - Uses parameterized query for `agent_type` but builds a literal IN list for decision IDs (same as `delete_position` — CosmosDB doesn't support parameterized IN).
+- Settings page "Debug: TradingView Fetch" symbol dropdown was empty because `settings_page()` in `web/app.py` called `cosmos.get_symbols()` — a method that doesn't exist. The correct method is `cosmos.list_symbols()`. The bare `except Exception: pass` swallowed the AttributeError silently, leaving `symbols` as `[]`.

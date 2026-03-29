@@ -790,7 +790,7 @@ async def settings_page(request: Request):
         except Exception:
             pass
         try:
-            symbols = cosmos.get_symbols()
+            symbols = cosmos.list_symbols()
         except Exception:
             pass
 
