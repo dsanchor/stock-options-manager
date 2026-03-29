@@ -8,9 +8,13 @@
     {% if is_signal %}
     <div class="signal-banner" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.5rem;">
         <span>⚡ This decision triggered a signal</span>
+        {% if decision.agent_type in ['covered_call', 'cash_secured_put'] %}
         <button class="btn btn-primary" id="btnOpenPosition" style="white-space:nowrap;">Open Position</button>
+        {% elif decision.agent_type in ['open_call_monitor', 'open_put_monitor'] %}
+        <button class="btn btn-primary" id="btnRollPosition" style="white-space:nowrap;">Roll Position</button>
+        {% endif %}
     </div>
-    <div id="openPosMsg" style="display:none; margin-top:0.5rem; padding:0.5rem 1rem; border-radius:6px; font-size:0.9rem;"></div>
+    <div id="actionMsg" style="display:none; margin-top:0.5rem; padding:0.5rem 1rem; border-radius:6px; font-size:0.9rem;"></div>
     {% endif %}
 </div>
 
@@ -110,40 +114,73 @@
 {% if is_signal %}
 <script>
 (function() {
-    var btn = document.getElementById('btnOpenPosition');
-    if (!btn) return;
-    btn.addEventListener('click', async function() {
-        if (!confirm('Open a position from this signal? This will disable the watchlist.')) return;
-        btn.disabled = true;
-        btn.textContent = 'Opening…';
-        var msgEl = document.getElementById('openPosMsg');
-        msgEl.style.display = 'none';
-        try {
-            var res = await fetch('/api/symbols/{{ symbol }}/positions/from-decision/{{ decision.id }}', { method: 'POST' });
-            var data = await res.json();
-            if (!res.ok) {
-                msgEl.style.display = 'block';
-                msgEl.style.background = 'rgba(255,80,80,0.15)';
-                msgEl.style.color = '#ff6b6b';
-                msgEl.textContent = data.error || 'Failed to open position.';
-                btn.disabled = false;
-                btn.textContent = 'Open Position';
-            } else {
-                msgEl.style.display = 'block';
-                msgEl.style.background = 'rgba(80,255,120,0.15)';
-                msgEl.style.color = '#50ff78';
-                msgEl.textContent = '✓ Position opened! Redirecting…';
-                setTimeout(function() { window.location.href = '/symbols/{{ symbol }}'; }, 1000);
-            }
-        } catch(e) {
-            msgEl.style.display = 'block';
+    var msgEl = document.getElementById('actionMsg');
+
+    function showMsg(type, text) {
+        msgEl.style.display = 'block';
+        if (type === 'error') {
             msgEl.style.background = 'rgba(255,80,80,0.15)';
             msgEl.style.color = '#ff6b6b';
-            msgEl.textContent = 'Network error: ' + e.message;
-            btn.disabled = false;
-            btn.textContent = 'Open Position';
+        } else {
+            msgEl.style.background = 'rgba(80,255,120,0.15)';
+            msgEl.style.color = '#50ff78';
         }
-    });
+        msgEl.textContent = text;
+    }
+
+    // Open Position handler (watch agents)
+    var btnOpen = document.getElementById('btnOpenPosition');
+    if (btnOpen) {
+        btnOpen.addEventListener('click', async function() {
+            if (!confirm('Open a position from this signal? This will disable the watchlist.')) return;
+            btnOpen.disabled = true;
+            btnOpen.textContent = 'Opening…';
+            msgEl.style.display = 'none';
+            try {
+                var res = await fetch('/api/symbols/{{ symbol }}/positions/from-decision/{{ decision.id }}', { method: 'POST' });
+                var data = await res.json();
+                if (!res.ok) {
+                    showMsg('error', data.error || 'Failed to open position.');
+                    btnOpen.disabled = false;
+                    btnOpen.textContent = 'Open Position';
+                } else {
+                    showMsg('success', '✓ Position opened! Redirecting…');
+                    setTimeout(function() { window.location.href = '/symbols/{{ symbol }}'; }, 1000);
+                }
+            } catch(e) {
+                showMsg('error', 'Network error: ' + e.message);
+                btnOpen.disabled = false;
+                btnOpen.textContent = 'Open Position';
+            }
+        });
+    }
+
+    // Roll Position handler (monitor agents)
+    var btnRoll = document.getElementById('btnRollPosition');
+    if (btnRoll) {
+        btnRoll.addEventListener('click', async function() {
+            if (!confirm('Roll this position? The current position will be closed and a new one opened.')) return;
+            btnRoll.disabled = true;
+            btnRoll.textContent = 'Rolling…';
+            msgEl.style.display = 'none';
+            try {
+                var res = await fetch('/api/symbols/{{ symbol }}/positions/roll-from-decision/{{ decision.id }}', { method: 'POST' });
+                var data = await res.json();
+                if (!res.ok) {
+                    showMsg('error', data.error || 'Failed to roll position.');
+                    btnRoll.disabled = false;
+                    btnRoll.textContent = 'Roll Position';
+                } else {
+                    showMsg('success', '✓ Position rolled! Redirecting…');
+                    setTimeout(function() { window.location.href = '/symbols/{{ symbol }}'; }, 1000);
+                }
+            } catch(e) {
+                showMsg('error', 'Network error: ' + e.message);
+                btnRoll.disabled = false;
+                btnRoll.textContent = 'Roll Position';
+            }
+        });
+    }
 })();
 </script>
 {% endif %}

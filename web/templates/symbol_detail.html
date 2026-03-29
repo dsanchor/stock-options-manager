@@ -164,6 +164,77 @@
                                 {% endif %}
                             </div>
                             {% endif %}
+
+                            {% if pos.closing_source %}
+                            <div style="margin-top:1rem; padding-top:0.75rem; border-top:1px dashed var(--border-color, #2a2a4a);">
+                                <h4 style="margin:0 0 0.75rem; color:var(--text-primary, #e0e0f0);">📉 Closed by signal</h4>
+                                <div class="detail-grid">
+                                    <div class="detail-field">
+                                        <div class="detail-label">Strategy</div>
+                                        <div class="detail-value">{{ "Open Call Monitor" if pos.closing_source.agent_type == "open_call_monitor" else ("Open Put Monitor" if pos.closing_source.agent_type == "open_put_monitor" else pos.closing_source.agent_type) }}</div>
+                                    </div>
+                                    <div class="detail-field">
+                                        <div class="detail-label">Decision</div>
+                                        <div class="detail-value"><span class="badge badge-{{ (pos.closing_source.decision or '') | lower }}">{{ pos.closing_source.decision or "—" }}</span></div>
+                                    </div>
+                                    <div class="detail-field">
+                                        <div class="detail-label">Confidence</div>
+                                        <div class="detail-value"><span class="confidence confidence-{{ pos.closing_source.confidence or 'medium' }}">{{ pos.closing_source.confidence or "—" }}</span></div>
+                                    </div>
+                                    {% if pos.closing_source.underlying_price is not none %}
+                                    <div class="detail-field">
+                                        <div class="detail-label">Underlying Price</div>
+                                        <div class="detail-value mono">${{ pos.closing_source.underlying_price }}</div>
+                                    </div>
+                                    {% endif %}
+                                    {% if pos.closing_source.premium is not none %}
+                                    <div class="detail-field">
+                                        <div class="detail-label">Premium</div>
+                                        <div class="detail-value mono">${{ pos.closing_source.premium }}</div>
+                                    </div>
+                                    {% endif %}
+                                    {% if pos.closing_source.iv is not none %}
+                                    <div class="detail-field">
+                                        <div class="detail-label">IV</div>
+                                        <div class="detail-value mono">{{ pos.closing_source.iv }}%</div>
+                                    </div>
+                                    {% endif %}
+                                    {% if pos.closing_source.risk_flags %}
+                                    <div class="detail-field">
+                                        <div class="detail-label">Risk Flags</div>
+                                        <div class="detail-value">
+                                            {% for flag in pos.closing_source.risk_flags %}
+                                            <span class="flag">{{ flag }}</span>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                    {% endif %}
+                                    {% if pos.closing_source.timestamp %}
+                                    <div class="detail-field">
+                                        <div class="detail-label">Signal Time</div>
+                                        <div class="detail-value mono">{{ pos.closing_source.timestamp[:19] if pos.closing_source.timestamp else "—" }}</div>
+                                    </div>
+                                    {% endif %}
+                                </div>
+                                {% if pos.closing_source.reason %}
+                                <div style="margin-top:0.75rem; padding:0.75rem; background:rgba(255,255,255,0.03); border-radius:6px; border-left:3px solid var(--accent-orange, #e0a040);">
+                                    <div style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted, #888); margin-bottom:0.3rem;">Closing Reason</div>
+                                    <div style="color:var(--text-primary, #e0e0f0); line-height:1.5;">{{ pos.closing_source.reason }}</div>
+                                </div>
+                                {% endif %}
+                            </div>
+                            {% endif %}
+
+                            {% if pos.rolled_to or pos.rolled_from %}
+                            <div style="margin-top:0.75rem; padding:0.5rem 0.75rem; background:rgba(255,255,255,0.04); border-radius:6px; display:flex; gap:1rem; flex-wrap:wrap;">
+                                {% if pos.rolled_from %}
+                                <span style="color:var(--text-muted, #888); font-size:0.85rem;">⬅ Rolled from: <span class="mono" style="color:var(--text-primary, #e0e0f0);">{{ pos.rolled_from }}</span></span>
+                                {% endif %}
+                                {% if pos.rolled_to %}
+                                <span style="color:var(--text-muted, #888); font-size:0.85rem;">➡ Rolled to: <span class="mono" style="color:var(--text-primary, #e0e0f0);">{{ pos.rolled_to }}</span></span>
+                                {% endif %}
+                            </div>
+                            {% endif %}
                         </div>
                     </td>
                 </tr>
