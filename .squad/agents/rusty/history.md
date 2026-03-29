@@ -650,3 +650,9 @@ Linus completed frontend integration for the position-from-decision workflow:
 
 **Status:** Feature complete — awaiting end-to-end testing
 **Team:** Rusty (backend), Linus (frontend)
+
+### Roll Position Backend (2025-07)
+- Added `roll_position()` to `CosmosDBService` — atomic close-old + create-new in a single `replace_item` call. Old position gets `closed_at`, `closing_source`, and `rolled_to`; new position gets `source`, `rolled_from`. Both linked by position IDs for full traceability.
+- Validates old position exists and is active before rolling. Generates new position ID using the standard `pos_{symbol}_{type}_{strike}_{exp}` format.
+- New API endpoint `POST /api/symbols/{symbol}/positions/roll-from-decision/{decision_id}` — mirrors the existing `from-decision` pattern but for monitor agents (`open_call_monitor` → call, `open_put_monitor` → put). Same snapshot format for source/closing_source.
+- Key difference from "Open Position": no watchlist disable, no cascade-delete. Monitor agents track open positions, not watchlist items.

@@ -387,6 +387,64 @@ async def api_add_position_from_decision(request: Request, symbol: str,
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.post("/api/symbols/{symbol}/positions/roll-from-decision/{decision_id}")
+async def api_roll_position_from_decision(request: Request, symbol: str,
+                                          decision_id: str):
+    """Roll a position from a monitor-agent decision: close old + open new."""
+    try:
+        cosmos = _get_cosmos(request)
+        decision = cosmos.get_decision_by_id(decision_id)
+        if decision is None:
+            return JSONResponse({"error": f"Decision {decision_id} not found"},
+                                status_code=404)
+
+        strike = decision.get("strike")
+        expiration = decision.get("expiration")
+        agent_type = decision.get("agent_type")
+        position_id = decision.get("position_id")
+
+        if not strike or not expiration or not agent_type or not position_id:
+            return JSONResponse(
+                {"error": "Decision missing required fields (strike, expiration, agent_type, position_id)"},
+                status_code=400,
+            )
+
+        monitor_type_map = {"open_call_monitor": "call", "open_put_monitor": "put"}
+        position_type = monitor_type_map.get(agent_type)
+        if position_type is None:
+            return JSONResponse(
+                {"error": f"Unsupported monitor agent_type '{agent_type}'"},
+                status_code=400,
+            )
+
+        snapshot = {
+            "decision_id": decision["id"],
+            "agent_type": decision.get("agent_type"),
+            "decision": decision.get("decision"),
+            "confidence": decision.get("confidence"),
+            "reason": decision.get("reason"),
+            "underlying_price": decision.get("underlying_price"),
+            "premium": decision.get("premium"),
+            "iv": decision.get("iv"),
+            "risk_flags": decision.get("risk_flags", []),
+            "timestamp": decision.get("timestamp"),
+        }
+
+        doc = cosmos.roll_position(
+            symbol.upper(), position_id, position_type,
+            float(strike), expiration,
+            source=snapshot, closing_source=snapshot,
+        )
+
+        return JSONResponse(_clean_doc(doc), status_code=201)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.put("/api/symbols/{symbol}/positions/{position_id}/close")
 async def api_close_position(request: Request, symbol: str, position_id: str):
     try:

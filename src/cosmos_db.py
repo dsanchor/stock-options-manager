@@ -206,6 +206,53 @@ class CosmosDBService:
         doc["updated_at"] = datetime.utcnow().isoformat() + "Z"
         return self.container.replace_item(item=doc["id"], body=doc)
 
+    def roll_position(self, symbol: str, old_position_id: str,
+                      new_type: str, new_strike: float, new_expiration: str,
+                      source: dict, closing_source: dict) -> dict:
+        """Roll a position: close old + create new with full traceability."""
+        doc = self.get_symbol(symbol)
+        if doc is None:
+            raise ValueError(f"Symbol {symbol} not found")
+
+        # Find and validate old position
+        old_pos = None
+        for pos in doc.get("positions", []):
+            if pos["position_id"] == old_position_id:
+                old_pos = pos
+                break
+        if old_pos is None:
+            raise ValueError(f"Position {old_position_id} not found")
+        if old_pos.get("status") != "active":
+            raise ValueError(f"Position {old_position_id} is not active")
+
+        # Generate new position ID
+        exp_compact = new_expiration.replace("-", "")
+        new_position_id = f"pos_{symbol}_{new_type}_{new_strike}_{exp_compact}"
+
+        # Close old position
+        now = datetime.utcnow().isoformat() + "Z"
+        old_pos["status"] = "closed"
+        old_pos["closed_at"] = now
+        old_pos["closing_source"] = closing_source
+        old_pos["rolled_to"] = new_position_id
+
+        # Create new position
+        new_pos = {
+            "position_id": new_position_id,
+            "type": new_type,
+            "strike": new_strike,
+            "expiration": new_expiration,
+            "opened_at": now,
+            "status": "active",
+            "notes": "",
+            "source": source,
+            "rolled_from": old_position_id,
+        }
+        doc["positions"].append(new_pos)
+
+        doc["updated_at"] = now
+        return self.container.replace_item(item=doc["id"], body=doc)
+
     def close_position(self, symbol: str, position_id: str) -> dict:
         """Mark a position as closed."""
         doc = self.get_symbol(symbol)
