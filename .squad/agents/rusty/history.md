@@ -612,3 +612,9 @@ This 3-phase CosmosDB refactor directly impacts:
 - Only triggers on explicit `False` — absent fields or `True` values do not trigger deletion.
 - Uses parameterized query for `agent_type` but builds a literal IN list for decision IDs (same as `delete_position` — CosmosDB doesn't support parameterized IN).
 - Settings page "Debug: TradingView Fetch" symbol dropdown was empty because `settings_page()` in `web/app.py` called `cosmos.get_symbols()` — a method that doesn't exist. The correct method is `cosmos.list_symbols()`. The bare `except Exception: pass` swallowed the AttributeError silently, leaving `symbols` as `[]`.
+
+### README Documentation Update for Data Fetching Methods (2025-07)
+- Updated four sections of README.md to reflect current `tv_data_fetcher.py` implementation.
+- Overview page: changed from generic `innerText` to targeted `getElementById` extracting 5 specific div sections (`upcoming-earnings`, `key-stats-id`, `employees-section`, `company-info-id`, `financials-overview-id`).
+- Options chain: changed from `page.goto` + `click` + `innerText` (DOM scraping) to `page.on("response")` API interception capturing structured JSON from TradingView scanner endpoints, with DOM fallback.
+- Added `symbol_detail.html` and `fetch_preview.html` to file tree; added Symbol Detail, Fetch Preview, and updated Settings entries to Web Dashboard section.

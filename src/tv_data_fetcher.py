@@ -42,13 +42,15 @@ class TradingViewFetcher:
     # ------------------------------------------------------------------
 
     async def _fetch_page_text(self, url: str) -> str:
-        """Navigate to *url* and return the ``<main>`` (or ``<body>``) innerText."""
+        """Navigate to *url* and return the ``#tv-content`` innerText."""
         page = await self._browser.new_page()
         try:
             await page.goto(url, wait_until="networkidle", timeout=30000)
             await page.wait_for_timeout(2000)
             text = await page.evaluate(
-                '(() => { const m = document.querySelector("main") || document.body; return m.innerText; })()'
+                '(() => { const el = document.getElementById("tv-content")'
+                ' || document.querySelector("main") || document.body;'
+                ' return el.innerText; })()'
             )
             return text or ""
         finally:
@@ -91,44 +93,18 @@ class TradingViewFetcher:
     # Page fetchers
     # ------------------------------------------------------------------
 
-    _OVERVIEW_DIV_IDS = [
-        "upcoming-earnings",
-        "key-stats-id",
-        "employees-section",
-        "company-info-id",
-        "financials-overview-id",
-    ]
-
     async def fetch_overview(self, full_symbol: str) -> str:
-        """Fetch targeted overview sections by div ID."""
+        """Fetch overview page content from #tv-content."""
         url = f"https://www.tradingview.com/symbols/{full_symbol}/"
-        page = await self._browser.new_page()
         try:
-            await page.goto(url, wait_until="networkidle", timeout=30000)
-            await page.wait_for_timeout(2000)
-
-            js = """
-            (ids) => {
-                const sections = [];
-                for (const id of ids) {
-                    const el = document.getElementById(id);
-                    if (el) {
-                        sections.push("=== " + id + " ===\\n" + el.innerText.trim());
-                    }
-                }
-                return sections.join("\\n\\n");
-            }
-            """
-            text = await page.evaluate(js, self._OVERVIEW_DIV_IDS)
-            return text or "[ERROR: No overview sections found]"
+            text = await self._fetch_page_text(url)
+            return text or "[ERROR: No text content in overview response]"
         except Exception as e:
             logger.error("Failed to fetch overview for %s: %s", full_symbol, e)
             return f"[ERROR: {e}]"
-        finally:
-            await page.close()
 
     async def fetch_technicals(self, full_symbol: str) -> str:
-        """Fetch technicals page innerText (~3 K chars)."""
+        """Fetch technicals page content from #tv-content."""
         url = f"https://www.tradingview.com/symbols/{full_symbol}/technicals/"
         try:
             text = await self._fetch_page_text(url)
@@ -138,7 +114,7 @@ class TradingViewFetcher:
             return f"[ERROR: {e}]"
 
     async def fetch_forecast(self, full_symbol: str) -> str:
-        """Fetch forecast page innerText (~2.5 K chars)."""
+        """Fetch forecast page content from #tv-content."""
         url = f"https://www.tradingview.com/symbols/{full_symbol}/forecast/"
         try:
             text = await self._fetch_page_text(url)
