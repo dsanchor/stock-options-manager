@@ -8,7 +8,7 @@
     {% if is_signal %}
     <div class="signal-banner" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.5rem;">
         <span>⚡ This decision triggered a signal</span>
-        <button class="btn btn-primary" id="btnOpenPosition" style="white-space:nowrap;">📂 Open Position</button>
+        <button class="btn btn-primary" id="btnOpenPosition" style="white-space:nowrap;">Open Position</button>
     </div>
     <div id="openPosMsg" style="display:none; margin-top:0.5rem; padding:0.5rem 1rem; border-radius:6px; font-size:0.9rem;"></div>
     {% endif %}
@@ -127,7 +127,7 @@
                 msgEl.style.color = '#ff6b6b';
                 msgEl.textContent = data.error || 'Failed to open position.';
                 btn.disabled = false;
-                btn.textContent = '📂 Open Position';
+                btn.textContent = 'Open Position';
             } else {
                 msgEl.style.display = 'block';
                 msgEl.style.background = 'rgba(80,255,120,0.15)';
@@ -141,7 +141,7 @@
             msgEl.style.color = '#ff6b6b';
             msgEl.textContent = 'Network error: ' + e.message;
             btn.disabled = false;
-            btn.textContent = '📂 Open Position';
+            btn.textContent = 'Open Position';
         }
     });
 })();
