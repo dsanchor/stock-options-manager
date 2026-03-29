@@ -9,6 +9,15 @@
 
 ## Learnings
 
+### Open Position from Decision + Expandable Positions (frontend)
+- `decision_detail.html`: "Open Position" button conditionally rendered when `is_signal` is true; POSTs to `/api/symbols/{sym}/positions/from-decision/{id}`, shows success/error inline, redirects to symbol page after 1s. Confirmation dialog warns about watchlist disable.
+- `symbol_detail.html`: Positions table now expandable — each row has a ▸/▾ chevron toggling a detail `<tr>` with `colspan="8"`. Detail panel shows `pos.source` signal data (strategy, decision, confidence, underlying price, premium, IV, risk flags, reason) using existing `detail-grid` CSS class, or "Created manually" for positions without source.
+- Event propagation: Close/Delete button clicks use `e.target.closest()` guard to prevent row expand/collapse from firing on button clicks.
+- Colspan is 8 (added chevron column to positions table header).
+- Agent type formatting: `covered_call` → "Covered Call", `cash_secured_put` → "Cash-Secured Put" via inline Jinja ternary.
+- No new CSS classes needed — reused `detail-grid`, `detail-field`, `detail-label`, `detail-value`, `badge`, `flag`, `confidence-*`.
+- Existing JS handlers (add position, close, delete, watchlist toggle) left untouched; expand/collapse JS added alongside.
+
 ### Price + Signal Timeline Chart (symbol detail page)
 - TradingView Lightweight Charts CDN loaded only in symbol_detail.html (not base.html) to keep other pages lightweight
 - yfinance runs sync I/O — must use `asyncio.to_thread()` in FastAPI async routes to avoid blocking the event loop
@@ -289,3 +298,33 @@ This large refactor (file-based → CosmosDB across entire system) has **zero im
 **Status:** Notification only — no action required
 **Team:** Rusty (implementation), Danny (architecture), Basher (provisioning)
 
+
+### Position-from-Decision Feature — Frontend Integration (2026-03-29)
+- Added "Open Position" button to `web/templates/decision_detail.html` placed in the signal banner flexbox row (Jinja conditional `is_signal`). Button launches the position-opening flow.
+- Implemented expandable position rows in `web/templates/symbol_detail.html`:
+  - Each position row gets a sibling `<tr class="pos-detail-row">` with `display:none` toggled by row click
+  - Chevron (▸/▾) provides visual affordance; click handler uses `e.target.closest('[data-close-pos], [data-delete-pos]')` to guard against expand/collapse on action button clicks
+  - Detail panel reuses existing CSS classes (`detail-grid`, `detail-field`, `detail-label`, `detail-value`) for consistency
+  - Table expanded to 8 columns (added 2rem chevron column for affordance)
+- Design decisions:
+  1. Button in signal banner (keeps signal indicator and CTA paired)
+  2. `<tr>` expansion (maintains table semantics vs. accordion/details elements)
+  3. Propagation guard with `closest()` (more robust than `stopPropagation()`)
+  4. Reused CSS (visual consistency)
+  5. Colspan=8 (supports expanded detail rows)
+- Trade-offs: Inline styles for detail panel (acceptable one-off); agent type formatting via inline Jinja ternary (would benefit from custom filter if more types added)
+- Backend API endpoint `POST /api/symbols/{symbol}/positions/from-decision/{decision_id}` implemented by Rusty (Agent Dev)
+- **Status:** ✅ Complete and ready for end-to-end testing
+
+## Cross-Agent Impact
+
+### 2026-03-29: Position-from-Decision Feature (Backend Implementation by Rusty)
+**From:** Rusty (Agent Dev)
+
+Rusty completed backend implementation for the position-from-decision workflow:
+- Extended `cosmos_db.py` `add_position()` with `source` parameter to track position origin
+- Implemented `POST /api/symbols/{symbol}/positions/from-decision/{decision_id}` endpoint with inline watchlist disable and cascade-delete
+- Source snapshot captures full decision provenance (decision_id, agent_type, confidence, reason, underlying_price, premium, iv, risk_flags, timestamp)
+
+**Status:** Feature complete — awaiting end-to-end testing
+**Team:** Rusty (backend), Linus (frontend)

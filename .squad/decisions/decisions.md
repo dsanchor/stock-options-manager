@@ -190,3 +190,47 @@ All log timestamps now set in Python BEFORE agent execution using `TIMESTAMP_FOR
 **Impact for team:**
 - **Linus (Quant Dev):** Instruction schemas still include `timestamp` but as "auto-set by system"
 - **Basher (Test/Ops):** All log entries now have consistent `YYYY-MM-DD HH:MM:SS` format
+
+---
+
+## User-Facing Features
+
+### Position-from-Decision Endpoint: Inline Watchlist Disable + Cascade Delete
+**Date:** 2026-03-29  
+**Author:** Rusty (Agent Dev)  
+**Status:** ✅ Implemented  
+**Impact:** API endpoint, data model, decision lifecycle
+
+Implemented `POST /api/symbols/{symbol}/positions/from-decision/{decision_id}` endpoint to open positions directly from decision intelligence. Extended `cosmos_db.py` `add_position()` with `source` parameter to track position origin (decision vs. watchlist).
+
+**Design Decision:** Endpoint performs watchlist disable and cascade-delete inline rather than extracting shared logic with `api_update_symbol`. This keeps flows independent and avoids coupling user-initiated "open position" action with general symbol updates. Trade-off: watchlist-disable logic must be maintained in two places if it changes.
+
+**Files Modified:**
+- `src/cosmos_db.py` — `add_position()` source parameter
+- `web/app.py` — New endpoint with inline watchlist/cascade logic
+
+---
+
+### Expandable Position Rows + Open Position Button
+**Date:** 2026-03-29  
+**Author:** Linus (Quant Dev)  
+**Status:** ✅ Implemented  
+**Impact:** Web dashboard UX
+
+Added "Open Position" button to decision detail view (signal banner, Jinja conditional). Implemented expandable position rows in symbol detail via hidden `<tr class="pos-detail-row">` elements toggled by row click. Event propagation guard prevents expand/collapse when clicking action buttons. Reused existing CSS (`detail-grid`, `detail-field`) for visual consistency. Table now 8 columns (added chevron affordance column).
+
+**Design Decisions:**
+1. Button placed in signal banner flexbox (keeps signal indicator and CTA visually paired)
+2. `<tr>` expansion with `display:none` toggle (maintains table semantics)
+3. `e.target.closest()` guard for action buttons (more robust than `stopPropagation()`)
+4. Reused existing CSS classes (ensures visual consistency)
+5. Colspan = 8 (added chevron column)
+
+**Trade-offs:**
+- Inline styles for detail panel (border, padding) instead of new CSS classes
+- Agent type formatting via inline Jinja ternary (would benefit from custom filter if more agent types added)
+
+**Files Modified:**
+- `web/templates/decision_detail.html` — Open Position button + scripts
+- `web/templates/symbol_detail.html` — Expandable position rows + expand/collapse logic
+

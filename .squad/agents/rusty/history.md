@@ -618,3 +618,35 @@ This 3-phase CosmosDB refactor directly impacts:
 - Overview page: changed from generic `innerText` to targeted `getElementById` extracting 5 specific div sections (`upcoming-earnings`, `key-stats-id`, `employees-section`, `company-info-id`, `financials-overview-id`).
 - Options chain: changed from `page.goto` + `click` + `innerText` (DOM scraping) to `page.on("response")` API interception capturing structured JSON from TradingView scanner endpoints, with DOM fallback.
 - Added `symbol_detail.html` and `fetch_preview.html` to file tree; added Symbol Detail, Fetch Preview, and updated Settings entries to Web Dashboard section.
+
+### Position-from-Decision Feature (2025-07)
+- Extended `add_position()` in `src/cosmos_db.py` with optional `source: dict | None = None` param. When provided, the source snapshot (decision metadata) is embedded in the position document.
+- New endpoint `POST /api/symbols/{symbol}/positions/from-decision/{decision_id}` in `web/app.py` (line ~324). Fetches decision via `cosmos.get_decision_by_id()`, maps agent_type → position type (covered_call→call, cash_secured_put→put), builds source snapshot, creates position, then disables watchlist and cascade-deletes related decisions/signals.
+- Pattern: endpoint does watchlist disable + cascade delete inline (same as `api_update_symbol` does) rather than factoring into a shared helper — keeps it explicit and avoids coupling.
+- Source snapshot captures: decision_id, agent_type, decision, confidence, reason, underlying_price, premium, iv, risk_flags, timestamp — full provenance for the position.
+
+### Position-from-Decision Feature — Backend Integration (2026-03-29)
+- Extended `add_position()` in `src/cosmos_db.py` with optional `source: dict | None = None` parameter to track position origin.
+- Implemented new endpoint `POST /api/symbols/{symbol}/positions/from-decision/{decision_id}` in `web/app.py` that:
+  - Fetches decision via `cosmos.get_decision_by_id(decision_id)`
+  - Maps agent_type to position type (covered_call→call, cash_secured_put→put)
+  - Builds source snapshot with full provenance (decision_id, agent_type, decision, confidence, reason, underlying_price, premium, iv, risk_flags, timestamp)
+  - Creates position with source metadata
+  - Performs inline watchlist disable and cascade-delete (same pattern as `api_update_symbol`)
+- Design decision: Inline watchlist/cascade logic rather than shared helper keeps flows independent and avoids coupling user action with general symbol updates. Trade-off: logic must be maintained in two places if requirements change.
+- Coordinated with Linus (Quant Dev) for frontend button and route integration
+- **Status:** ✅ Complete and ready for end-to-end testing
+
+## Cross-Agent Impact
+
+### 2026-03-29: Position-from-Decision Feature (Frontend Integration by Linus)
+**From:** Linus (Quant Dev)
+
+Linus completed frontend integration for the position-from-decision workflow:
+- Added "Open Position" button to decision_detail.html (signal banner, Jinja conditional for `is_signal`)
+- Implemented expandable position rows in symbol_detail.html via hidden `<tr class="pos-detail-row">` with chevron affordance
+- Event propagation guard prevents expand/collapse when clicking Close/Delete buttons
+- Reused existing CSS classes for visual consistency; added chevron column (8 columns total, colspan=8)
+
+**Status:** Feature complete — awaiting end-to-end testing
+**Team:** Rusty (backend), Linus (frontend)
