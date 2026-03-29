@@ -949,6 +949,15 @@ async def activity_detail_page(request: Request, activity_id: str):
 async def settings_page(request: Request):
     config = _load_config()
     cron_expr = config.get("scheduler", {}).get("cron", "0 14-21/2 * * 1-5")
+    telegram_cfg = config.get("telegram", {})
+    telegram_enabled = telegram_cfg.get("enabled", False)
+    telegram_bot_token = telegram_cfg.get("bot_token", "")
+    telegram_chat_id = telegram_cfg.get("chat_id", "")
+    # Mask env var placeholders for display
+    if telegram_bot_token.startswith("${"):
+        telegram_bot_token = _resolve_env(telegram_bot_token)
+    if telegram_chat_id.startswith("${"):
+        telegram_chat_id = _resolve_env(telegram_chat_id)
     cosmos_endpoint = _resolve_env(
         config.get("cosmosdb", {}).get("endpoint", ""))
     cosmos_database = config.get("cosmosdb", {}).get(
@@ -974,6 +983,9 @@ async def settings_page(request: Request):
     return templates.TemplateResponse("settings.html", {
         "request": request,
         "cron_expr": cron_expr,
+        "telegram_enabled": telegram_enabled,
+        "telegram_bot_token": telegram_bot_token,
+        "telegram_chat_id": telegram_chat_id,
         "cosmos_endpoint": cosmos_endpoint,
         "cosmos_database": cosmos_database,
         "cosmos_status": cosmos_status,
@@ -1003,8 +1015,31 @@ async def settings_save(request: Request):
         except (ValueError, KeyError):
             pass
 
+    # Telegram settings
+    telegram_enabled = form.get("telegram_enabled") == "true"
+    telegram_bot_token = str(form.get("telegram_bot_token", "")).strip()
+    telegram_chat_id = str(form.get("telegram_chat_id", "")).strip()
+
+    config = _load_config()
+    config.setdefault("telegram", {})
+    config["telegram"]["enabled"] = telegram_enabled
+    if telegram_bot_token:
+        config["telegram"]["bot_token"] = telegram_bot_token
+    if telegram_chat_id:
+        config["telegram"]["chat_id"] = telegram_chat_id
+    _write_config(config)
+    saved.append("Telegram settings")
+
     config = _load_config()
     cron_expr = config.get("scheduler", {}).get("cron", "0 14-21/2 * * 1-5")
+    telegram_cfg = config.get("telegram", {})
+    tg_enabled = telegram_cfg.get("enabled", False)
+    tg_bot_token = telegram_cfg.get("bot_token", "")
+    tg_chat_id = telegram_cfg.get("chat_id", "")
+    if tg_bot_token.startswith("${"):
+        tg_bot_token = _resolve_env(tg_bot_token)
+    if tg_chat_id.startswith("${"):
+        tg_chat_id = _resolve_env(tg_chat_id)
     cosmos_endpoint = _resolve_env(
         config.get("cosmosdb", {}).get("endpoint", ""))
     cosmos_database = config.get("cosmosdb", {}).get(
@@ -1026,12 +1061,48 @@ async def settings_save(request: Request):
         "request": request,
         "cron_expr": cron_expr,
         "saved": saved,
+        "telegram_enabled": tg_enabled,
+        "telegram_bot_token": tg_bot_token,
+        "telegram_chat_id": tg_chat_id,
         "cosmos_endpoint": cosmos_endpoint,
         "cosmos_database": cosmos_database,
         "cosmos_status": cosmos_status,
         "cosmos_error": cosmos_error,
         "telemetry_stats": telemetry_stats,
     })
+
+
+# ===========================================================================
+# Telegram Test
+# ===========================================================================
+
+@app.post("/api/telegram/test")
+async def telegram_test(request: Request):
+    """Send a test message via Telegram."""
+    config = _load_config()
+    telegram_cfg = config.get("telegram", {})
+    if not telegram_cfg.get("enabled"):
+        return JSONResponse({"ok": False, "error": "Telegram not enabled"})
+
+    bot_token = _resolve_env(telegram_cfg.get("bot_token", ""))
+    chat_id = _resolve_env(telegram_cfg.get("chat_id", ""))
+
+    if not bot_token or not chat_id:
+        return JSONResponse({"ok": False, "error": "Bot token or chat ID missing"})
+
+    try:
+        import requests as req
+        resp = req.post(
+            f"https://api.telegram.org/bot{bot_token}/sendMessage",
+            json={"chat_id": chat_id, "text": "✅ Stock Options Manager — Telegram notifications are working!", "parse_mode": "HTML"},
+            timeout=10,
+        )
+        data = resp.json()
+        if data.get("ok"):
+            return JSONResponse({"ok": True})
+        return JSONResponse({"ok": False, "error": data.get("description", "Unknown error")})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)})
 
 
 # ===========================================================================

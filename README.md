@@ -48,7 +48,7 @@ Scheduler (main.py)
 
 **Per-symbol context injection:** Before each symbol is analyzed, the runner reads that symbol's recent activities from CosmosDB and injects them into the prompt. Each activity includes whether it triggered an alert (via the `is_alert` field). The LLM sees only context for the symbol it's currently analyzing — not a mix of all symbols. Context depth is configurable in `config.yaml` (`context.max_activity_entries`, default 2, range 0–5).
 
-**Output:** Every symbol produces an activity (SELL, WAIT, or HOLD) written to CosmosDB as a `activity` document. Only SELL activitys also produce a `alert` document — the actionable alerts that the dashboard and downstream systems watch. Position monitors produce WAIT or ROLL activities, with ROLL/CLOSE activities creating alert documents.
+**Output:** Every symbol produces an activity (SELL, WAIT, or HOLD) written to CosmosDB as a `activity` document. Only SELL activitys also produce a `alert` document — the actionable alerts that the dashboard and downstream systems watch. Position monitors produce WAIT or ROLL activities, with ROLL/CLOSE activities creating alert documents. If Telegram notifications are enabled, a message is sent for each alert (see [Telegram Notifications](#telegram-notifications-optional)).
 
 ## Key Concepts
 
@@ -220,6 +220,7 @@ stock-options-manager/
 │   ├── tv_cash_secured_put_instructions.py # TradingView cash secured put instructions (no-tools variant)
 │   ├── tv_open_call_instructions.py      # TradingView open call monitor instructions
 │   ├── tv_open_put_instructions.py       # TradingView open put monitor instructions
+│   └── telegram_notifier.py              # Telegram notification service — sends alerts via bot API
 ├── scripts/
 │   └── provision_cosmosdb.sh             # Azure CosmosDB provisioning via az CLI
 ├── web/
@@ -250,7 +251,7 @@ stock-options-manager/
 - **Symbol Detail** (`/symbols/{symbol}`) — Full detail page for a symbol: expandable positions with source traceability, Close/Roll/Delete actions, activities, alerts, and "Open Position from Alert" / "Roll Position from Alert" buttons on activity detail; per-symbol chat.
 - **Fetch Preview** (`/symbols/{symbol}/fetch-preview`) — Debug page showing raw TradingView data for each resource (overview, technicals, forecast, options chain) with fetch timing and size.
 - **Chat** (`/chat`) — Ask questions about your portfolio. Uses the same Azure OpenAI model with recent activities as context.
-- **Settings** (`/settings`) — Scheduler config, runtime stats (today/7d/30d telemetry), and a Debug TradingView Fetch tool for testing data fetching per symbol.
+- **Settings** (`/settings`) — Scheduler config, Telegram notifications toggle & test button, runtime stats (today/7d/30d telemetry), and a Debug TradingView Fetch tool for testing data fetching per symbol.
 
 ---
 
@@ -296,11 +297,34 @@ export COSMOSDB_KEY="your-primary-key"
 # No API key needed for TradingView — data is free via Playwright browser automation
 ```
 
-#### 3. Set Up Azure CosmosDB
+#### 3. (Optional) Set Up Telegram Notifications
+
+Receive alerts directly on Telegram. Skip this section if you don't need notifications.
+
+**Create a Telegram bot:**
+1. Open Telegram and message [@BotFather](https://t.me/BotFather)
+2. Send `/newbot` and follow the prompts (choose a name, then a username)
+3. Copy the bot token (format: `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`)
+
+**Get your chat ID:**
+1. Add the bot to a group or start a direct message with it
+2. Send any message to the bot
+3. Visit `https://api.telegram.org/bot<TOKEN>/getUpdates` (replace `<TOKEN>` with your bot token)
+4. Look for `chat.id` in the JSON response — copy the ID (group IDs are negative)
+
+**Set environment variables:**
+```bash
+export TELEGRAM_BOT_TOKEN="123456:ABC-DEF..."
+export TELEGRAM_CHAT_ID="-1001234567890"  # Use negative for groups
+```
+
+**Enable in config.yaml** (see step 5) or toggle on the Settings page. Use the **Test** button to verify connectivity.
+
+#### 4. Set Up Azure CosmosDB
 
 See the [Azure CosmosDB Setup](#azure-cosmosdb-setup) section below for provisioning instructions.
 
-#### 4. Configure Symbols
+#### 5. Configure Symbols
 
 Symbols and positions are managed via the **web dashboard** or the CosmosDB API. Each symbol has:
 - **Watchlist flags**: `covered_call` and `cash_secured_put` (true/false)
@@ -308,7 +332,7 @@ Symbols and positions are managed via the **web dashboard** or the CosmosDB API.
 
 The exchange prefix is used to construct TradingView URLs (e.g., `NYSE` + `MO` → `https://www.tradingview.com/symbols/NYSE-MO/`).
 
-#### 5. Adjust Configuration (Optional)
+#### 6. Adjust Configuration (Optional)
 
 Edit `config.yaml` to customize:
 
@@ -329,6 +353,11 @@ context:
 
 scheduler:
   cron: "0 9-16/2 * * 1-5"               # Cron expression (e.g. every 2h, Mon-Fri 9am-4pm)
+
+telegram:
+  enabled: false                        # Toggle on/off (also controllable from Settings UI)
+  bot_token: "${TELEGRAM_BOT_TOKEN}"    # Bot token from @BotFather
+  chat_id: "${TELEGRAM_CHAT_ID}"        # Target chat/group/channel ID
 ```
 
 ### Running
