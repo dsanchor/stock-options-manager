@@ -1,16 +1,14 @@
 # Decisions
 
-## Architecture
+## Architectural Decisions
 
-### [CosmosDB-Centric Refactor](inbox/danny-cosmosdb-refactor-architecture.md) — DETAILED REFERENCE
+### CosmosDB-Centric Refactor
 **Date:** 2026-03-28  
 **Author:** Danny (Lead)  
 **Status:** Implemented (Phases 1–4a complete)  
 **Impact:** Full system — data model, scheduler, web dashboard, config, deployment
 
-**SUMMARY:** Replace file-based data model with symbol-centric CosmosDB backend. Hybrid document model (symbol_config, decision, signal) partitioned by symbol. Includes schema, service layer design, provisioning commands, and 4-phase implementation plan.
-
-⚠️ **Large document (1288 lines).** See `inbox/danny-cosmosdb-refactor-architecture.md` for full specification.
+Replaced file-based data model with symbol-centric CosmosDB backend. Hybrid document model (symbol_config, activity, alert) partitioned by symbol. Includes schema, service layer design, provisioning commands, and 4-phase implementation plan spread across the phases below.
 
 ---
 
@@ -107,7 +105,38 @@ Created provisioning scripts and updated deployment documentation.
 
 ---
 
-## User Directives
+---
+
+## Domain Model
+
+### Entity Rename: decision → activity, signal → alert
+**Date:** 2025-03-29  
+**Authors:** Danny (Lead), Rusty (Agent Dev), Linus (Quant Dev)  
+**Status:** Completed  
+**Impact:** Full system — backend, frontend, instructions, documentation  
+
+The codebase used two domain concepts that were causing confusion:
+- "decision" — Agent output for every symbol/position analysis
+- "signal" — Actionable subset of decisions (SELL, ROLL, CLOSE)
+
+These terms were ambiguous and overloaded. Renamed comprehensively across the entire system:
+
+- **"decision" → "activity"** — Better reflects that these are agent actions/outputs, not decisions
+- **"signal" → "alert"** — Clarifies these are actionable notifications, distinct from trading signals
+- **"is_signal" → "is_alert"** — Boolean flag in documents
+- **"max_decision_entries" → "max_activity_entries"** — Config key
+- **"decision_ttl_days" → "activity_ttl_days"** — Config key
+
+**Implementation:**
+- **Backend (Rusty):** Renamed across 11 Python files (cosmos_db.py, agent_runner.py, context.py, config.py, 4 agent wrappers, scripts/provision_cosmosdb.sh), config.yaml. Preserved OS signal handling in main.py (SIGINT, SIGTERM).
+- **Frontend (Linus):** Renamed across web/app.py (1412 lines), 6+ templates (decision_detail.html → activity_detail.html, signal_detail.html → alert_detail.html, signals.html → alerts.html), CSS classes, display text, API routes.
+- **Instructions (Danny):** Updated agent instruction files (tv_*_instructions.py), README.md, documentation examples.
+- **Database:** Recreated from scratch; no migration needed.
+
+**Verification:** Zero "decision" or "signal" references remain in backend (except OS signals); zero remaining in frontend display text or CSS classes.
+
+---
+
 
 ### Context Injection for Agent Execution (2026-03-28T13:48)
 **By:** dsanchor (via Copilot)  
@@ -233,4 +262,222 @@ Added "Open Position" button to decision detail view (signal banner, Jinja condi
 **Files Modified:**
 - `web/templates/decision_detail.html` — Open Position button + scripts
 - `web/templates/symbol_detail.html` — Expandable position rows + expand/collapse logic
+
+---
+
+## Frontend Features
+
+### Price Chart Implementation on Symbol Detail Page
+**Date:** 2025-07-25  
+**Author:** Linus (Quant Dev)  
+**Status:** Implemented  
+
+Added a candlestick price chart with activity/alert markers on the symbol detail page to provide a visual timeline of agent activity relative to price movements.
+
+**Charting Stack:**
+- **Library:** TradingView Lightweight Charts (CDN, ~40KB, Apache 2.0)
+- **Price Data:** yfinance (3-month daily OHLC, runs in asyncio.to_thread() for non-blocking)
+- **Markers:** CosmosDB activities + alerts with visual distinction (⚡ amber for alerts, 📊 gray for activities)
+- **New Endpoint:** `GET /api/symbols/{symbol}/chart-data` returns `{"candles": [...], "markers": [...]}`
+
+**Files Changed:**
+- `web/app.py` — new `/api/symbols/{symbol}/chart-data` endpoint
+- `web/templates/symbol_detail.html` — chart card + Lightweight Charts script
+- `requirements.txt` — added `yfinance>=0.2.0`
+
+---
+
+### Manual Roll UI in Positions Table
+**Date:** 2025-07-24  
+**Author:** Linus (Quant Dev)  
+**Status:** Implemented  
+
+Added an inline roll form inside the expandable position detail row rather than a modal dialog. The Roll button in the actions column expands the row and reveals the form at the top of the detail panel.
+
+**Design:** Pre-populates form with current strike/expiration so users only need to adjust.
+
+**API Contract:** `POST /api/symbols/{symbol}/positions/{position_id}/roll` with body `{"new_strike": 150.0, "new_expiration": "2025-08-15", "notes": "optional"}`
+
+**Signal Table Enhancement:** Conditionally shows `(from $X)` context for roll signals with `new_strike`/`current_strike` and `new_expiration`/`current_expiration` fields.
+
+---
+
+### Roll Position Frontend — Conditional Buttons + Closing Source Display
+**Date:** 2025-07-15  
+**Author:** Linus (Quant Dev)  
+**Status:** Implemented  
+
+Button type in `decision_detail.html` determined by `decision.agent_type` at render time via Jinja conditional. Roll button calls `POST /roll-from-decision/`; Open button calls `POST /from-decision/`. Symbol detail page expands rows to show `closing_source`, `rolled_from`, `rolled_to` metadata.
+
+---
+
+## Performance & Reliability
+
+### Chat Context Preload Pattern
+**Date:** 2025-07  
+**Author:** Rusty (Agent Dev)  
+**Status:** Implemented  
+
+Per-symbol chat previously fetched CosmosDB config + last 5 activities + TradingView data on every message (~5-10s latency). Split into two endpoints:
+
+1. `POST /api/symbols/{symbol}/chat/context` — Heavy data fetch, runs once on page load
+2. Chat message endpoint — Accepts optional `context` field, uses cached context if provided
+
+**Result:** Chat response time drops from ~8-12s to ~2-3s per message (after initial load).
+
+**Key Choices:**
+- POST (TradingView fetch is a side effect)
+- Optional context field (backward compatible)
+- Extracted helpers `_build_symbol_context()` and `_build_symbol_system_prompt()` to avoid duplication
+
+---
+
+### Eager CosmosDB Connection Validation at Startup
+**Date:** 2025-07-14  
+**Author:** Rusty (Agent Dev)  
+**Status:** Implemented  
+
+Azure Cosmos DB Python SDK's `CosmosClient()` is lazy — doesn't connect until first query. Added `cosmos.database.read()` immediately after construction to force eager HTTP call, surfacing connection/auth errors at startup instead of on first user request.
+
+**Trade-offs:**
+- Pro: Failures caught at startup with full traceback; error stored in `app.state.cosmos_error` for settings page
+- Con: Adds ~200ms to startup time; if CosmosDB is temporarily unreachable at startup, app won't self-heal without restart
+
+**Files Changed:**
+- `web/app.py` — startup handler, `_resolve_env`, `_get_cosmos`, settings/dashboard routes
+- `web/templates/settings.html` — error diagnostic section
+
+---
+
+## Data Management
+
+### Runtime Telemetry Infrastructure
+**Date:** 2025-07  
+**Author:** Rusty (Agent Dev)  
+**Status:** Implemented  
+
+Added a second CosmosDB container (`telemetry`) to track runtime performance stats for agent executions and TradingView data fetching.
+
+**Design:**
+- Separate container with partition key `/metric_type` (operational data separate from business data)
+- Best-effort initialization (system works without telemetry container)
+- 30-day TTL on all telemetry docs (per-document, no manual cleanup)
+- Fetcher stores stats in `self.last_fetch_stats`; caller (AgentRunner) handles write (decoupling)
+- Telemetry writes post-execution in separate try/except (never masks real errors)
+- Python-side aggregation for `get_telemetry_stats()`
+
+**Impact:** Settings page shows runtime stats card; no changes to agent logic or activity/signal flow.
+
+---
+
+### Position Rollover Design
+
+#### Roll Position — Atomic Single-Write
+**Date:** 2025-07  
+**Author:** Rusty (Agent Dev)  
+**Status:** Implemented  
+
+Rolling a position (close old, open new with same monitor-agent signal) happens with a single in-memory operation and single `replace_item` CosmosDB call. Avoids partial-write states.
+
+**Traceability:**
+- Old position → `rolled_to: <new_position_id>` + `closing_source: {snapshot}`
+- New position → `rolled_from: <old_position_id>` + `source: {snapshot}`
+- Both snapshots reference same `decision_id` from monitor signal
+
+**No Watchlist/Cascade Side Effects:** Unlike "Open Position from Activity" (watch agents), roll endpoint does NOT disable watchlist flags or cascade-delete activities. Monitor agents track open positions — disabling would break monitoring.
+
+---
+
+#### Manual Roll Endpoint Design
+**Date:** 2025-07-16  
+**Author:** Rusty (Agent Dev)  
+**Status:** Implemented  
+
+Made `source`/`closing_source` optional in `roll_position()` rather than creating separate method. One code path for both manual and signal-based rolls.
+
+**Design:** Endpoint infers position type (call/put) from existing position instead of requiring caller to specify it — fewer fields to pass, fewer validation errors.
+
+**Endpoint:** `POST /api/symbols/{symbol}/positions/{position_id}/roll`
+
+---
+
+#### Cascade runs after watchlist flag is persisted
+**Date:** 2025-07  
+**Author:** Rusty (Agent Dev)  
+**Status:** Implemented  
+
+When a user toggles off a watchlist agent (covered_call or cash_secured_put), cascade delete runs AFTER the watchlist document update is persisted (`replace_item`), not before.
+
+**Reasoning:** If cascade fails mid-way, flag is already `False` — UI correctly shows agent as disabled. Orphaned activities/signals are harmless and would be cleaned up on subsequent toggle-off or manual cleanup.
+
+---
+
+## Documentation & Deployment
+
+### Unified Azure Setup Documentation
+**Date:** 2025-07-15  
+**Author:** Rusty (Agent Dev)  
+**Status:** Implemented  
+
+Merged separate Azure provisioning sections into single "## Azure Setup" with five numbered steps in logical dependency order:
+
+1. Set Variables (consistent `${VAR:-default}` pattern)
+2. Create Resource Group (once, shared)
+3. Provision CosmosDB (inline az CLI commands)
+4. Deploy to Container Apps (uses CosmosDB outputs from step 3)
+5. Update Deployment (for subsequent pushes)
+
+**Rationale:** Prevents users from deploying Container Apps before CosmosDB; eliminates drift; consistent variable patterns; `eastus` unified default.
+
+**Impact:** README.md refactored (~48 net line reduction); `provision_cosmosdb.sh` unchanged.
+
+---
+
+### Remove Old File-Based Storage Artifacts
+**Date:** 2025-07-09  
+**Author:** Rusty (Agent Dev)  
+**Status:** Implemented  
+
+Deleted all file-based storage artifacts after CosmosDB migration completed:
+- `data/` directory
+- `logs/` directory
+- `src/logger.py`
+- `scripts/migrate_to_cosmosdb.py`
+
+**Rationale:** Dead code/files create confusion; migration script references deleted data formats; README referenced file-based workflows no longer in use.
+
+---
+
+## Logging
+
+### Timestamp Generation Moved from LLM to Python
+**Date:** 2025-07-28  
+**Author:** Rusty (Agent Dev)  
+**Status:** Implemented  
+**Commit:** 54a219e
+
+All log timestamps set in Python BEFORE agent execution using `TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"`. LLM's `timestamp` field always overridden. Ensures consistency across activity and alert JSONL logs.
+
+**Impact for team:**
+- Linus (Quant Dev): Instruction schemas still include `timestamp` but as "auto-set by system"
+- Basher (Test/Ops): All log entries now have consistent `YYYY-MM-DD HH:MM:SS` format
+
+---
+
+### Dashboard Data Enrichment from Activity Logs
+**Date:** 2025-07-28  
+**Author:** Rusty (Agent Dev)  
+**Status:** Implemented  
+**Commit:** 0831a03
+
+`_build_agent_table()` reads `activity_log` via `_latest_activities_by_key()` to enrich dashboard rows with health metrics (DTE, moneyness, delta, IV, premium, risk flags). Alert list page gains IV/Premium/Delta columns.
+
+---
+
+### Render-time Alert Enrichment from Activities
+**Date:** 2025-07  
+**Author:** Rusty (Agent Dev)  
+**Status:** Implemented  
+
+Enrich alerts at render time in `web/app.py` by matching each alert to the closest activity (same symbol key, ±2 hour window). Helper `_enrich_alert_from_activities()` copies only missing fields. Keeps alert JSONL compact.
 
