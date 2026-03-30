@@ -467,3 +467,18 @@ Rusty completed backend implementation for the position-from-decision workflow:
 - Each split page has focused data loading (only fetches what it needs, no overhead)
 
 **User preference:** Group settings by function, not by data source. Scheduler + Telegram together because both are configuration. Agent stats + Fetch stats together because both are runtime metrics.
+
+## Learnings
+
+### Navigation Dropdown Implementation (2025-01-xx)
+- **Pattern**: Converted Settings navigation from fixed submenu to hover-based dropdown
+- **Key files**: 
+  - `web/templates/base.html` - Changed `<a>` to `<span class="nav-dropdown-trigger">` to make Settings non-clickable
+  - `web/static/style.css` - Added `.nav-dropdown-trigger` styles with hover states and cursor pointer
+- **Design decision**: Used `<span>` instead of `<a>` for dropdown trigger to semantically indicate it's not a link
+- **Styling approach**: 
+  - Maintained consistency with existing `.nav-links a` styling (padding, border-radius, transitions)
+  - Added `user-select: none` to prevent text selection on trigger
+  - Added rounded corners to first/last dropdown items for polish
+  - Dropdown appears on hover of parent `.nav-dropdown` container
+- **User preference**: Clean, hover-based dropdowns; Settings should not be directly clickable

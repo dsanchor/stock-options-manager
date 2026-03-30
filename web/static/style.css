@@ -66,6 +66,20 @@ code { font-family: var(--font-mono); background: var(--bg-input); padding: 2px 
     position: relative;
     display: inline-block;
 }
+.nav-dropdown-trigger {
+    display: inline-block;
+    padding: 0.4rem 0.8rem;
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.2s;
+    user-select: none;
+}
+.nav-dropdown-trigger:hover,
+.nav-dropdown-trigger.active {
+    color: var(--text);
+    background: var(--bg-hover);
+}
 .nav-dropdown-content {
     display: none;
     position: absolute;
@@ -88,6 +102,12 @@ code { font-family: var(--font-mono); background: var(--bg-input); padding: 2px 
     color: var(--text-muted);
     transition: all 0.2s;
     border-radius: 0;
+}
+.nav-dropdown-content a:first-child {
+    border-radius: var(--radius) var(--radius) 0 0;
+}
+.nav-dropdown-content a:last-child {
+    border-radius: 0 0 var(--radius) var(--radius);
 }
 .nav-dropdown-content a:hover {
     color: var(--text);

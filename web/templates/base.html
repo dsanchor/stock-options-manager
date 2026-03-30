@@ -14,7 +14,7 @@
             <a href="/symbols" class="{% if request.url.path.startswith('/symbols') %}active{% endif %}">Symbols</a>
             <a href="/chat" class="{% if request.url.path == '/chat' %}active{% endif %}">Chat</a>
             <div class="nav-dropdown">
-                <a href="/settings/config" class="{% if request.url.path.startswith('/settings') %}active{% endif %}">Settings</a>
+                <span class="nav-dropdown-trigger {% if request.url.path.startswith('/settings') %}active{% endif %}">Settings</span>
                 <div class="nav-dropdown-content">
                     <a href="/settings/config">⚙️ Configuration</a>
                     <a href="/settings/runtime">📊 Runtime Stats</a>
