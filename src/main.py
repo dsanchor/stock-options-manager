@@ -45,15 +45,8 @@ class OptionsAgentScheduler:
         )
         self.context_provider = ContextProvider(self.cosmos)
 
-        telegram_notifier = None
-        if self.config.telegram_enabled and self.config.telegram_bot_token and self.config.telegram_chat_id:
-            from .telegram_notifier import TelegramNotifier
-            telegram_notifier = TelegramNotifier(
-                bot_token=self.config.telegram_bot_token,
-                chat_id=self.config.telegram_chat_id,
-                enabled=True,
-            )
-            print("Telegram notifications enabled")
+        from .telegram_notifier import TelegramNotifier
+        telegram_notifier = TelegramNotifier()
 
         print("Initializing Agent Framework Runner...")
         self.runner = AgentRunner(

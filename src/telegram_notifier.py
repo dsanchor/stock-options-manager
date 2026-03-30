@@ -1,7 +1,16 @@
-"""Telegram Bot API integration for alert notifications."""
+"""Telegram Bot API integration for alert notifications.
+
+The notifier reads config.yaml on every send so that changes made via the
+Settings UI take effect immediately — no scheduler restart needed.
+"""
 import logging
+import os
+import re
+from pathlib import Path
+from typing import Dict, Optional, Tuple
+
 import requests
-from typing import Dict
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -12,22 +21,48 @@ AGENT_LABELS = {
     "open_put_monitor": "Open Put Monitor",
 }
 
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _resolve_env(s: str) -> str:
+    """Resolve ${VAR_NAME} patterns in a string."""
+    def _repl(m):
+        return os.environ.get(m.group(1), "")
+    return re.sub(r'\$\{([^}]+)\}', _repl, s)
+
+
+def _read_telegram_config() -> Tuple[bool, str, str]:
+    """Read current telegram settings from config.yaml.
+
+    Returns (enabled, bot_token, chat_id) with env vars resolved.
+    """
+    try:
+        config_path = _PROJECT_ROOT / "config.yaml"
+        with open(config_path, "r") as f:
+            cfg = yaml.safe_load(f) or {}
+        tg = cfg.get("telegram", {})
+        enabled = bool(tg.get("enabled", False))
+        bot_token = _resolve_env(str(tg.get("bot_token", "")))
+        chat_id = _resolve_env(str(tg.get("chat_id", "")))
+        return enabled, bot_token, chat_id
+    except Exception:
+        logger.debug("Could not read telegram config", exc_info=True)
+        return False, "", ""
+
 
 class TelegramNotifier:
-    """Sends alert notifications via Telegram Bot API."""
+    """Sends alert notifications via Telegram Bot API.
 
-    def __init__(self, bot_token: str, chat_id: str, enabled: bool = True):
-        """Initialize the notifier.
+    Re-reads config.yaml on every call so the Settings UI toggle
+    takes effect without restarting the scheduler.
+    """
 
-        Args:
-            bot_token: Telegram Bot API token from @BotFather
-            chat_id: Target chat/group/channel ID
-            enabled: Whether notifications are active
-        """
-        self.bot_token = bot_token
-        self.chat_id = chat_id
-        self.enabled = enabled
-        self.api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    def _get_credentials(self) -> Optional[Tuple[str, str]]:
+        """Return (bot_token, chat_id) if enabled, else None."""
+        enabled, bot_token, chat_id = _read_telegram_config()
+        if enabled and bot_token and chat_id:
+            return bot_token, chat_id
+        return None
 
     def send_alert(
         self,
@@ -38,17 +73,10 @@ class TelegramNotifier:
     ) -> bool:
         """Send a formatted alert notification.
 
-        Args:
-            symbol: Stock symbol (e.g. "AAPL")
-            agent_type: Agent type (e.g. "covered_call", "open_call_monitor")
-            alert_data: The alert data dict with keys like activity, strike,
-                        expiration, confidence, etc.
-            is_roll: Whether this is a roll/close alert from a position monitor
-
-        Returns:
-            True if sent successfully, False otherwise
+        Returns True if sent successfully, False otherwise.
         """
-        if not self.enabled:
+        creds = self._get_credentials()
+        if creds is None:
             return False
 
         try:
@@ -57,7 +85,7 @@ class TelegramNotifier:
                 text = self._format_roll_alert(symbol, label, alert_data)
             else:
                 text = self._format_sell_alert(symbol, label, alert_data)
-            return self.send_message(text)
+            return self._send(creds[0], creds[1], text)
         except Exception:
             logger.warning("Failed to build Telegram alert for %s", symbol, exc_info=True)
             return False
@@ -101,26 +129,32 @@ class TelegramNotifier:
     # ── low-level send ────────────────────────────────────────────────
 
     def send_message(self, text: str, parse_mode: str = "HTML") -> bool:
-        """Send a raw message. Low-level.
+        """Send a raw message using current config.yaml credentials.
 
-        Returns:
-            True if sent successfully, False otherwise
+        Returns True if sent successfully, False otherwise.
         """
-        if not self.enabled:
+        creds = self._get_credentials()
+        if creds is None:
             return False
+        return self._send(creds[0], creds[1], text, parse_mode)
 
+    @staticmethod
+    def _send(bot_token: str, chat_id: str, text: str,
+              parse_mode: str = "HTML") -> bool:
+        """Low-level POST to the Telegram Bot API."""
         try:
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
             resp = requests.post(
-                self.api_url,
+                url,
                 json={
-                    "chat_id": self.chat_id,
+                    "chat_id": chat_id,
                     "text": text,
                     "parse_mode": parse_mode,
                 },
                 timeout=10,
             )
             if resp.ok:
-                logger.info("Telegram message sent (chat_id=%s)", self.chat_id)
+                logger.info("Telegram message sent (chat_id=%s)", chat_id)
                 return True
             logger.warning(
                 "Telegram API error %s: %s", resp.status_code, resp.text,
