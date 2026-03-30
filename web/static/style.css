@@ -427,14 +427,11 @@ textarea:focus { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
     white-space: nowrap;
 }
 .btn-trigger:hover { background: rgba(34,197,94,0.15); }
-.btn-trigger.btn-primary {
-    background: var(--accent-blue);
-    color: #fff;
+.btn-trigger.btn-trigger-blue {
     border-color: var(--accent-blue);
-    padding: 0.35rem 0.9rem;
-    font-size: 0.85rem;
+    color: var(--accent-blue);
 }
-.btn-trigger.btn-primary:hover { background: #3a8fee; }
+.btn-trigger.btn-trigger-blue:hover { background: rgba(74,158,255,0.15); }
 .btn-trigger.running {
     color: var(--accent-orange);
     border-color: var(--accent-orange);

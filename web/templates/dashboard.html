@@ -39,12 +39,10 @@
     <span>🕐 Cron: <code>{{ cron_expr }}</code></span>
     <span>Last run: <strong>{{ last_run or "Never" }}</strong></span>
     <span>Next run: <strong>{{ next_run or "N/A" }}</strong></span>
+    <button id="run-full-analysis" class="btn-trigger btn-trigger-blue" title="Run all agents sequentially">▶▶ Run Full Analysis</button>
 </div>
 
 <!-- Agent tables -->
-<div class="run-full-container" style="display: flex; justify-content: flex-end; margin-bottom: 1rem;">
-    <button id="run-full-analysis" class="btn-trigger btn-primary" title="Run all agents sequentially">▶▶ Run Full Analysis</button>
-</div>
 
 {% for agent in agent_tables %}
 <div class="card agent-card">
