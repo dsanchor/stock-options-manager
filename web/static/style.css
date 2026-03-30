@@ -98,6 +98,8 @@ code { font-family: var(--font-mono); background: var(--bg-input); padding: 2px 
     display: flex;
     flex-wrap: wrap;
     gap: 1.5rem;
+    justify-content: space-between;
+    align-items: center;
     padding: 0.75rem 1rem;
     background: var(--bg-card);
     border: 1px solid var(--border);
@@ -107,6 +109,7 @@ code { font-family: var(--font-mono); background: var(--bg-input); padding: 2px 
     color: var(--text-muted);
 }
 .scheduler-bar strong { color: var(--text); }
+.scheduler-bar .btn-trigger { margin-left: auto; }
 
 /* ── Cards ── */
 .card {
