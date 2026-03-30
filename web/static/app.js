@@ -45,6 +45,58 @@ document.addEventListener('DOMContentLoaded', function() {
                 });
         });
     });
+
+    // ── Run Full Analysis button ──
+    var runFullBtn = document.getElementById('run-full-analysis');
+    if (runFullBtn) {
+        runFullBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var agents = ['covered_call', 'cash_secured_put', 'open_call_monitor', 'open_put_monitor'];
+            var originalText = runFullBtn.textContent;
+            
+            runFullBtn.disabled = true;
+            runFullBtn.textContent = '⏳ Running...';
+            runFullBtn.classList.add('running');
+            
+            var success = 0;
+            var failed = 0;
+            
+            // Sequential execution using promise chain
+            agents.reduce(function(promise, agentType, index) {
+                return promise.then(function() {
+                    runFullBtn.textContent = '⏳ Running... (' + (index + 1) + '/' + agents.length + ')';
+                    return fetch('/api/trigger/' + agentType, { method: 'POST' })
+                        .then(function(resp) {
+                            if (resp.ok) {
+                                success++;
+                            } else {
+                                failed++;
+                            }
+                        })
+                        .catch(function() {
+                            failed++;
+                        });
+                });
+            }, Promise.resolve())
+            .then(function() {
+                runFullBtn.textContent = '✓ Complete (' + success + '/' + agents.length + ')';
+                runFullBtn.classList.remove('running');
+                runFullBtn.classList.add('done');
+            })
+            .catch(function() {
+                runFullBtn.textContent = '✗ Error';
+                runFullBtn.classList.remove('running');
+                runFullBtn.classList.add('error');
+            })
+            .finally(function() {
+                setTimeout(function() {
+                    runFullBtn.textContent = originalText;
+                    runFullBtn.disabled = false;
+                    runFullBtn.classList.remove('running', 'done', 'error');
+                }, 3000);
+            });
+        });
+    }
 });
 
 /* ── Filtering ─────────────────────────────────────────────────── */

@@ -42,12 +42,16 @@
 </div>
 
 <!-- Agent tables -->
+<div class="run-full-container" style="display: flex; justify-content: flex-end; margin-bottom: 1rem;">
+    <button id="run-full-analysis" class="btn-trigger btn-primary" title="Run all agents sequentially">▶▶ Run Full Analysis</button>
+</div>
+
 {% for agent in agent_tables %}
 <div class="card agent-card">
     <div class="card-header">
         <h2>{{ agent.label }}</h2>
         <div style="display:flex; align-items:center; gap:0.5rem;">
-            <button class="btn-trigger" data-agent="{{ agent.key }}" title="Run this agent now">▶ Run Now</button>
+            <button class="btn-trigger" data-agent="{{ agent.key }}" title="Run this agent now">▶ Run Analysis</button>
         </div>
     </div>
     {% if agent.rows %}
