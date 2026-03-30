@@ -13,7 +13,7 @@ context:
   activity_ttl_days: 90     # Activities older than this are auto-expired via CosmosDB TTL
 
 scheduler:
-  cron: "00 9-16/4 * * 1-5"  # Cron expression: every 2 hours, market hours (Mon-Fri 14-21 Spain / 9-16 US)
+  cron: "30 9-16/4 * * 1-5"  # Cron expression: every 2 hours, market hours (Mon-Fri 14-21 Spain / 9-16 US)
   timezone: "America/New_York"  # Timezone for scheduler (default: America/New_York)
 
 web:
