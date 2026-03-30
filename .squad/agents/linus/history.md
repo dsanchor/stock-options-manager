@@ -408,3 +408,24 @@ Rusty completed backend implementation for the position-from-decision workflow:
 **Approach:** Sequential execution using promise chaining (`.reduce()` pattern) to ensure agents run one after another. Used existing `/api/trigger/{agentType}` endpoint for each agent.
 
 **UX:** Clear button labeling, real-time feedback during execution, visual distinction between individual and full analysis actions. Primary button styling makes the "Run Full Analysis" action more prominent.
+
+
+### 2024-XX-XX: Run Full Analysis Button Styling Fix
+
+**Task:** Fixed "Run Full Analysis" button to match user's visual expectations.
+
+**Key changes:**
+- **web/templates/dashboard.html**: 
+  - Moved "Run Full Analysis" button from separate container into `.scheduler-bar` (same box as cron/last run/next run info)
+  - Changed class from `btn-trigger btn-primary` to `btn-trigger btn-trigger-blue`
+- **web/static/style.css**: 
+  - Removed `.btn-trigger.btn-primary` styling (solid blue button with white text)
+  - Added `.btn-trigger.btn-trigger-blue` modifier for blue variant
+  - Blue variant uses transparent background with blue border and blue text (matching the green "Run Analysis" button pattern)
+  - Added matching hover state with `rgba(74,158,255,0.15)` background
+
+**User feedback:** Originally implemented with solid blue background (btn-primary), but user expected the same format as other "Run Analysis" buttons (transparent background, colored border/text) using blue instead of green.
+
+**Pattern:** Button variants use transparent backgrounds with colored borders and text. Hover states use semi-transparent backgrounds of the button color. Format consistency > visual hierarchy through color fills.
+
+**Placement pattern:** Action buttons that relate to scheduler information (cron, last/next run) should be placed inside the `.scheduler-bar` container, not in separate sections.
