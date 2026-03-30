@@ -504,3 +504,39 @@ Rusty completed backend implementation for the position-from-decision workflow:
   - Both GET and POST handlers pass timezone to template
 - **User Request**: "set America/New York as default" — implemented as default value in backend and as first/default option in dropdown
 - **Pattern**: Matched existing scheduler field handling — read from CosmosDB first, fallback to config.yaml, persist to both on save
+
+---
+
+### 2024-03-XX: Dashboard Timezone Display Enhancement
+
+**Task**: Display "Last run" and "Next run" times in the scheduler's configured timezone with local timezone fallback.
+
+**Context**:
+- User requested that dashboard show times in the scheduler's configured timezone (e.g., America/New_York)
+- Previously times were displayed as raw strings without proper timezone formatting
+- Backend already updated by Rusty to pass timezone-aware ISO timestamps
+
+**Implementation**:
+- **Frontend** (`web/templates/dashboard.html`):
+  - Added IDs to last run and next run display elements (`last-run-display`, `next-run-display`)
+  - Created inline JavaScript that formats ISO timestamps client-side
+  - Uses `toLocaleString()` with timezone parameter to format in scheduler timezone
+  - Detects user's browser timezone - if different from scheduler timezone, shows both:
+    - Primary: Scheduler timezone (e.g., "Mar 20, 2024, 02:30:00 PM EDT")
+    - Secondary: User's local time (smaller, gray text below)
+  - Adds hover tooltip showing both times when they differ
+  - Graceful fallback if timezone not supported in browser
+  - Keeps consistent with dashboard design - no layout changes needed
+
+**Technical details**:
+- Backend provides: `last_run_iso`, `next_run_iso`, `scheduler_timezone`
+- JavaScript parses ISO datetime, formats using Intl API
+- Dual timezone display only shown when user TZ ≠ scheduler TZ
+- Format: "MMM DD, YYYY, HH:MM:SS AM/PM TZN"
+
+**User benefit**:
+- Clear visibility of when scheduler last ran and will run next
+- No confusion about which timezone is shown
+- Automatic adaptation to user's local timezone when relevant
+- Professional, polished time display
+

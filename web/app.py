@@ -9,6 +9,7 @@ from pathlib import Path
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
+import pytz
 import yaml
 from croniter import croniter
 from fastapi import FastAPI, Request, Query
@@ -733,12 +734,24 @@ def _build_dashboard_tables(cosmos, all_symbols, all_alerts, all_activities):
 async def dashboard(request: Request):
     config = _load_config()
     cron_expr = config.get("scheduler", {}).get("cron", "")
+    scheduler_tz_str = config.get("scheduler", {}).get("timezone", "America/New_York")
+    
+    # Use scheduler timezone for next_run calculation
+    try:
+        scheduler_tz = pytz.timezone(scheduler_tz_str)
+    except Exception:
+        scheduler_tz = pytz.timezone("America/New_York")
+        scheduler_tz_str = "America/New_York"
 
     next_run = ""
+    next_run_iso = ""
     if cron_expr:
         try:
-            cron = croniter(cron_expr, datetime.now())
-            next_run = cron.get_next(datetime).strftime("%Y-%m-%d %H:%M:%S")
+            now_tz = datetime.now(scheduler_tz)
+            cron = croniter(cron_expr, now_tz)
+            next_run_dt = cron.get_next(datetime)
+            next_run = next_run_dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+            next_run_iso = next_run_dt.isoformat()
         except Exception:
             next_run = "Invalid cron"
 
@@ -747,7 +760,8 @@ async def dashboard(request: Request):
         "request": request,
         "agent_tables": [],
         "grand_totals": {"today": 0, "week": 0, "month": 0, "total": 0},
-        "last_run": "", "next_run": next_run, "cron_expr": cron_expr,
+        "last_run": "", "last_run_iso": "", "next_run": next_run, "next_run_iso": next_run_iso,
+        "cron_expr": cron_expr, "scheduler_timezone": scheduler_tz_str,
         "symbol_count": 0, "position_count": 0, "activity": [],
     }
     if cosmos is None:
@@ -796,8 +810,23 @@ async def dashboard(request: Request):
         cosmos, all_symbols, all_alerts, all_activities)
 
     last_run = ""
+    last_run_iso = ""
     if all_activities:
-        last_run = all_activities[0].get("timestamp", "")[:19]
+        # Activities store timestamps in ISO format (UTC)
+        timestamp_str = all_activities[0].get("timestamp", "")
+        if timestamp_str:
+            try:
+                # Parse the UTC timestamp
+                last_run_dt = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+                # Convert to scheduler timezone
+                if last_run_dt.tzinfo is None:
+                    last_run_dt = last_run_dt.replace(tzinfo=timezone.utc)
+                last_run_dt = last_run_dt.astimezone(scheduler_tz)
+                last_run = last_run_dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+                last_run_iso = last_run_dt.isoformat()
+            except Exception:
+                # Fallback to simple string truncation
+                last_run = timestamp_str[:19]
 
     activity = []
     for d in all_activities[:100]:
@@ -811,8 +840,11 @@ async def dashboard(request: Request):
         "agent_tables": agent_tables,
         "grand_totals": grand_totals,
         "last_run": last_run,
+        "last_run_iso": last_run_iso,
         "next_run": next_run,
+        "next_run_iso": next_run_iso,
         "cron_expr": cron_expr,
+        "scheduler_timezone": scheduler_tz_str,
         "symbol_count": symbol_count,
         "position_count": position_count,
         "activity": activity,

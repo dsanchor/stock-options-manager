@@ -838,3 +838,63 @@ Systematically renamed domain entities throughout the backend:
 **Verification:** Python syntax validated with `py_compile`. All files compile cleanly.
 
 **Key insight:** The pytz library handles all timezone complexity (daylight saving, historical changes, etc.). By making croniter timezone-aware from the start, we ensure schedule accuracy regardless of server timezone or DST transitions. The existing CosmosDB settings persistence automatically handles timezone storage/retrieval — no schema changes needed.
+
+---
+
+## 2025-01-XX: Dashboard Timezone Display
+
+**Task:** Update dashboard API to show last_run and next_run in scheduler's configured timezone (not server local time or UTC).
+
+**Problem:**
+- Dashboard was calculating `next_run` using `datetime.now()` (server local time)
+- `last_run` was displaying raw UTC timestamp from activities
+- No timezone information sent to frontend
+- Users in different timezones couldn't tell when scheduler actually ran/will run
+
+**Solution:**
+
+**web/app.py changes:**
+
+1. **Added pytz import** (line 12)
+   - Required for timezone conversion
+
+2. **Dashboard route — timezone-aware next_run calculation:**
+   - Load scheduler timezone from config: `config.get("scheduler", {}).get("timezone", "America/New_York")`
+   - Create timezone object with fallback: `scheduler_tz = pytz.timezone(scheduler_tz_str)`
+   - Calculate next_run using scheduler timezone: `now_tz = datetime.now(scheduler_tz)`
+   - Format with timezone abbreviation: `strftime("%Y-%m-%d %H:%M:%S %Z")` → "2025-01-15 14:30:00 EST"
+   - Also provide ISO format: `next_run_iso = next_run_dt.isoformat()`
+
+3. **Dashboard route — timezone-aware last_run conversion:**
+   - Parse activity timestamp (stored in UTC): `datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))`
+   - Ensure timezone awareness: `replace(tzinfo=timezone.utc)` if naive
+   - Convert to scheduler timezone: `last_run_dt.astimezone(scheduler_tz)`
+   - Format with timezone abbreviation: `strftime("%Y-%m-%d %H:%M:%S %Z")`
+   - Provide ISO format: `last_run_iso = last_run_dt.isoformat()`
+
+4. **Template context additions:**
+   - `last_run`: Human-readable string with timezone (e.g., "2025-01-15 14:30:00 EST")
+   - `last_run_iso`: ISO 8601 with timezone for JavaScript parsing
+   - `next_run`: Human-readable string with timezone
+   - `next_run_iso`: ISO 8601 with timezone for JavaScript parsing
+   - `scheduler_timezone`: Timezone string (e.g., "America/New_York") for frontend display/conversion
+
+**Key patterns:**
+- **Server-side conversion preferred:** Convert to scheduler timezone in Python (more reliable than JavaScript timezone handling)
+- **Dual format strategy:** Send both human-readable (with %Z abbreviation) and ISO format (for programmatic use)
+- **Graceful fallback:** Invalid timezone config falls back to America/New_York
+- **Consistent timezone source:** Uses same config path as scheduler (`config.scheduler.timezone`)
+- **Timezone abbreviation in display:** Shows "EST" or "EDT" automatically based on date (pytz handles DST)
+
+**Frontend usage:**
+- Display `last_run` and `next_run` directly (already in scheduler timezone)
+- Use `last_run_iso`/`next_run_iso` for calculations or relative time display
+- Show `scheduler_timezone` to clarify which timezone times are displayed in
+- Can use JavaScript `Intl.DateTimeFormat` with `last_run_iso` to convert to user's browser timezone if desired
+
+**Files modified:**
+- `web/app.py` — Added pytz import, timezone-aware time calculations in dashboard route
+
+**Verification:** Python syntax validated with `py_compile`. Clean compilation.
+
+**Key insight:** By converting to scheduler timezone on the backend, we ensure consistent display regardless of browser timezone. The ISO format provides flexibility for frontend to do additional conversions if needed. The %Z formatter automatically shows correct timezone abbreviation (EST vs EDT) based on DST rules, which is more reliable than trying to compute this in JavaScript.
