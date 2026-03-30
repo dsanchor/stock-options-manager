@@ -1474,6 +1474,7 @@ async def _build_symbol_context(symbol: str, cosmos) -> dict:
             ("overview", "Overview"),
             ("technicals", "Technicals"),
             ("forecast", "Forecast"),
+            ("dividends", "Dividends"),
             ("options_chain", "Options Chain"),
         ]:
             content = tv_data.get(section_key, "")
