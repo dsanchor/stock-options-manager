@@ -1100,3 +1100,53 @@ Remove all non-TradingView providers. TradingView via Playwright is the sole dat
 - **Linus (Quant Dev):** Only TV instruction files exist now. Any instruction changes go to `tv_*` files.
 - **Basher (Test/Ops):** No need to test multiple providers. Playwright container is the only external dependency.
 - **Scribe (Docs):** README already updated. No multi-provider docs to maintain.
+# Decision: Dashboard Run Button UX
+
+**Date:** 2024-12-XX  
+**Author:** Linus (Quant Dev / Frontend Dev)  
+**Status:** Implemented  
+
+## Context
+
+The dashboard had "Run Now" buttons for each agent, but users needed:
+1. Clearer button labeling (what does "Run Now" actually do?)
+2. Ability to trigger all agents at once for comprehensive analysis
+
+## Decision
+
+1. **Button Text Change**: "Run Now" → "Run Analysis"
+   - More explicit about what the button does
+   - Aligns with the purpose: running analysis, not just "now"
+
+2. **New Full Analysis Button**: Added "Run Full Analysis" button
+   - Positioned above agent tables, right-aligned
+   - Triggers all 4 agents sequentially (covered_call, cash_secured_put, open_call_monitor, open_put_monitor)
+   - Shows progress during execution: "Running... (2/4)"
+   - Blue primary styling to distinguish from individual agent buttons
+
+## Implementation
+
+- Sequential execution using promise chaining (not parallel)
+- Uses existing `/api/trigger/{agentType}` endpoint
+- Real-time progress feedback
+- Button disables during execution, re-enables after completion
+
+## Rationale
+
+- **Sequential over Parallel**: Ensures controlled execution order and reduces server load
+- **Progress Indicator**: Users can see which agent is currently running
+- **Primary Styling**: Visual hierarchy makes it clear this is a comprehensive action
+- **Consistent Patterns**: Reuses existing trigger button styles and API endpoints
+
+## Alternatives Considered
+
+1. **Parallel Execution**: Rejected due to potential resource contention
+2. **Server-Side Batch Endpoint**: Rejected to keep frontend changes isolated
+3. **Modal Dialog**: Rejected as too heavy for a simple batch trigger
+
+## Impact
+
+- **Frontend**: 3 files modified (dashboard.html, app.js, style.css)
+- **Backend**: No changes needed (reuses existing endpoints)
+- **UX**: Improved clarity and efficiency for users running multiple agents
+
