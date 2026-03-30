@@ -3,6 +3,7 @@ import time
 import signal
 import asyncio
 from datetime import datetime
+import pytz
 
 from croniter import croniter
 
@@ -27,9 +28,11 @@ class OptionsAgentScheduler:
         self.context_provider = None
         self._cron_changed = False
     
-    def reschedule(self, new_cron: str):
-        """Update cron expression. The run loop will pick it up on next iteration."""
+    def reschedule(self, new_cron: str, new_timezone: str = None):
+        """Update cron expression and/or timezone. The run loop will pick it up on next iteration."""
         self.config.cron_expression = new_cron
+        if new_timezone:
+            self.config.timezone = new_timezone
         self._cron_changed = True
     
     def setup(self):
@@ -64,6 +67,7 @@ class OptionsAgentScheduler:
         )
         
         print(f"Scheduler configured with cron: {self.config.cron_expression}")
+        print(f"Scheduler timezone: {self.config.timezone}")
     
     def run_all_agents(self):
         """Execute all agents (bridges async to sync for scheduler)."""
@@ -71,8 +75,10 @@ class OptionsAgentScheduler:
     
     async def _run_all_agents_async(self):
         """Execute all agents asynchronously."""
+        tz = pytz.timezone(self.config.timezone)
+        now_tz = datetime.now(tz)
         print(f"\n{'#'*70}")
-        print(f"# Starting scheduled agent run at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"# Starting scheduled agent run at {now_tz.strftime('%Y-%m-%d %H:%M:%S %Z')}")
         print(f"{'#'*70}\n")
         
         try:
@@ -94,8 +100,10 @@ class OptionsAgentScheduler:
         except Exception as e:
             print(f"ERROR during agent execution: {str(e)}")
         
+        tz = pytz.timezone(self.config.timezone)
+        now_tz = datetime.now(tz)
         print(f"\n{'#'*70}")
-        print(f"# Completed scheduled agent run at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"# Completed scheduled agent run at {now_tz.strftime('%Y-%m-%d %H:%M:%S %Z')}")
         print(f"{'#'*70}\n")
     
     def signal_handler(self, sig, frame):
@@ -116,27 +124,32 @@ class OptionsAgentScheduler:
         
         self.setup()
         
-        cron = croniter(self.config.cron_expression, datetime.now())
+        tz = pytz.timezone(self.config.timezone)
+        now_tz = datetime.now(tz)
+        cron = croniter(self.config.cron_expression, now_tz)
         
         # Schedule via cron
         next_run = cron.get_next(datetime)
-        print(f"Next scheduled run: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Next scheduled run: {next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}")
         print("Press Ctrl+C to stop\n")
         
         while self.running:
             # Check if cron was updated from the web UI
             if self._cron_changed:
                 self._cron_changed = False
-                cron = croniter(self.config.cron_expression, datetime.now())
+                tz = pytz.timezone(self.config.timezone)
+                now_tz = datetime.now(tz)
+                cron = croniter(self.config.cron_expression, now_tz)
                 next_run = cron.get_next(datetime)
                 print(f"Cron rescheduled to: {self.config.cron_expression}")
-                print(f"Next scheduled run: {next_run.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                print(f"Timezone: {self.config.timezone}")
+                print(f"Next scheduled run: {next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}\n")
 
-            now = datetime.now()
-            if now >= next_run:
+            now_tz = datetime.now(tz)
+            if now_tz >= next_run:
                 self.run_all_agents()
                 next_run = cron.get_next(datetime)
-                print(f"Next scheduled run: {next_run.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                print(f"Next scheduled run: {next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}\n")
             time.sleep(1)
         
         print("Scheduler stopped. Goodbye!")

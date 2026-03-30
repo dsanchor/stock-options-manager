@@ -1,6 +1,7 @@
 import os
 import re
 import yaml
+import pytz
 from typing import Any, Dict
 
 
@@ -94,6 +95,24 @@ class Config:
     @cron_expression.setter
     def cron_expression(self, value: str):
         self.config['scheduler']['cron'] = value
+
+    @property
+    def timezone(self) -> str:
+        tz_str = self.config.get('scheduler', {}).get('timezone', 'America/New_York')
+        try:
+            pytz.timezone(tz_str)
+            return tz_str
+        except pytz.exceptions.UnknownTimeZoneError:
+            print(f"WARNING: Invalid timezone '{tz_str}', falling back to 'America/New_York'")
+            return 'America/New_York'
+
+    @timezone.setter
+    def timezone(self, value: str):
+        try:
+            pytz.timezone(value)
+            self.config['scheduler']['timezone'] = value
+        except pytz.exceptions.UnknownTimeZoneError:
+            raise ValueError(f"Invalid timezone: {value}")
 
     # ── Context ────────────────────────────────────────────────────────
 

@@ -994,6 +994,7 @@ async def settings_config_page(request: Request):
         config = _load_config()
     
     cron_expr = config.get("scheduler", {}).get("cron", "0 14-21/2 * * 1-5")
+    timezone = config.get("scheduler", {}).get("timezone", "America/New_York")
     telegram_cfg = config.get("telegram", {})
     telegram_enabled = telegram_cfg.get("enabled", False)
     telegram_bot_token = telegram_cfg.get("bot_token", "")
@@ -1008,6 +1009,7 @@ async def settings_config_page(request: Request):
     return templates.TemplateResponse("settings_config.html", {
         "request": request,
         "cron_expr": cron_expr,
+        "timezone": timezone,
         "telegram_enabled": telegram_enabled,
         "telegram_bot_token": telegram_bot_token,
         "telegram_chat_id": telegram_chat_id,
@@ -1023,6 +1025,7 @@ async def settings_config_save(request: Request):
 
     # Cron schedule
     new_cron = str(form.get("cron_expr", "")).strip()
+    new_timezone = str(form.get("timezone", "America/New_York")).strip()
     if new_cron:
         try:
             croniter(new_cron)
@@ -1031,11 +1034,13 @@ async def settings_config_save(request: Request):
             if cosmos:
                 cosmos_settings = _load_settings_from_cosmos(cosmos) or {}
                 cosmos_settings.setdefault("scheduler", {})["cron"] = new_cron
+                cosmos_settings.setdefault("scheduler", {})["timezone"] = new_timezone
                 _save_settings_to_cosmos(cosmos, cosmos_settings)
             
             # Also update config.yaml for backward compat
             config = _load_config()
             config.setdefault("scheduler", {})["cron"] = new_cron
+            config.setdefault("scheduler", {})["timezone"] = new_timezone
             _write_config(config)
             saved.append("Cron schedule")
 
@@ -1080,6 +1085,7 @@ async def settings_config_save(request: Request):
         config = _load_config()
     
     cron_expr = config.get("scheduler", {}).get("cron", "0 14-21/2 * * 1-5")
+    timezone = config.get("scheduler", {}).get("timezone", "America/New_York")
     telegram_cfg = config.get("telegram", {})
     tg_enabled = telegram_cfg.get("enabled", False)
     tg_bot_token = telegram_cfg.get("bot_token", "")
@@ -1092,6 +1098,7 @@ async def settings_config_save(request: Request):
     return templates.TemplateResponse("settings_config.html", {
         "request": request,
         "cron_expr": cron_expr,
+        "timezone": timezone,
         "saved": saved,
         "telegram_enabled": tg_enabled,
         "telegram_bot_token": tg_bot_token,

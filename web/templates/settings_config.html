@@ -21,8 +21,27 @@
         </div>
         <p class="hint">Cron expression controlling when agents run. Format: <code>minute hour day-of-month month day-of-week</code> — e.g. <code>0 14-21/2 * * 1-5</code> = every 2h on weekdays 14:00–20:00.</p>
         <div style="padding: 0.75rem 1.25rem;">
-            <input type="text" name="cron_expr" value="{{ cron_expr }}" spellcheck="false"
-                   style="width:100%; padding:0.6rem 0.8rem; background:var(--bg); border:1px solid var(--border); color:var(--text); font-family:var(--font-mono); font-size:0.9rem; border-radius:var(--radius);">
+            <div style="margin-bottom:1rem;">
+                <label style="display:block; font-size:0.85rem; color:var(--text-muted); margin-bottom:0.3rem;">Cron Expression</label>
+                <input type="text" name="cron_expr" value="{{ cron_expr }}" spellcheck="false"
+                       style="width:100%; padding:0.6rem 0.8rem; background:var(--bg); border:1px solid var(--border); color:var(--text); font-family:var(--font-mono); font-size:0.9rem; border-radius:var(--radius);">
+            </div>
+            <div>
+                <label style="display:block; font-size:0.85rem; color:var(--text-muted); margin-bottom:0.3rem;">
+                    Timezone 
+                    <span style="font-size:0.8rem; color:var(--text-muted); font-weight:normal;" title="Timezone for cron schedule execution">ⓘ</span>
+                </label>
+                <select name="timezone" 
+                        style="width:100%; padding:0.6rem 0.8rem; background:var(--bg); border:1px solid var(--border); color:var(--text); font-size:0.9rem; border-radius:var(--radius); cursor:pointer;">
+                    <option value="America/New_York" {{ 'selected' if timezone == 'America/New_York' }}>America/New York (EST/EDT)</option>
+                    <option value="America/Chicago" {{ 'selected' if timezone == 'America/Chicago' }}>America/Chicago (CST/CDT)</option>
+                    <option value="America/Los_Angeles" {{ 'selected' if timezone == 'America/Los_Angeles' }}>America/Los Angeles (PST/PDT)</option>
+                    <option value="Europe/Madrid" {{ 'selected' if timezone == 'Europe/Madrid' }}>Europe/Madrid (CET/CEST)</option>
+                    <option value="Europe/London" {{ 'selected' if timezone == 'Europe/London' }}>Europe/London (GMT/BST)</option>
+                    <option value="UTC" {{ 'selected' if timezone == 'UTC' }}>UTC</option>
+                    <option value="Asia/Tokyo" {{ 'selected' if timezone == 'Asia/Tokyo' }}>Asia/Tokyo (JST)</option>
+                </select>
+            </div>
         </div>
     </div>
 

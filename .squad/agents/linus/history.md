@@ -482,3 +482,25 @@ Rusty completed backend implementation for the position-from-decision workflow:
   - Added rounded corners to first/last dropdown items for polish
   - Dropdown appears on hover of parent `.nav-dropdown` container
 - **User preference**: Clean, hover-based dropdowns; Settings should not be directly clickable
+
+### Timezone Configuration UI (2025-01-XX)
+- Added timezone dropdown field to Settings Configuration page scheduler section
+- **Frontend** (`web/templates/settings_config.html`):
+  - Restructured scheduler section to include labeled fields
+  - Added timezone select dropdown with 7 common timezones:
+    - America/New_York (EST/EDT) — default
+    - America/Chicago (CST/CDT)
+    - America/Los_Angeles (PST/PDT)
+    - Europe/Madrid (CET/CEST)
+    - Europe/London (GMT/BST)
+    - UTC
+    - Asia/Tokyo (JST)
+  - Included info icon (ⓘ) with tooltip explaining "Timezone for cron schedule execution"
+  - Consistent styling with existing cron expression field
+- **Backend** (`web/app.py`):
+  - Updated `settings_config_page()` GET handler to read `scheduler.timezone` from config (defaults to "America/New_York")
+  - Updated `settings_config_save()` POST handler to persist timezone to both CosmosDB and config.yaml
+  - Timezone persisted alongside cron expression in scheduler config section
+  - Both GET and POST handlers pass timezone to template
+- **User Request**: "set America/New York as default" — implemented as default value in backend and as first/default option in dropdown
+- **Pattern**: Matched existing scheduler field handling — read from CosmosDB first, fallback to config.yaml, persist to both on save

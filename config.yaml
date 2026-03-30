@@ -14,6 +14,7 @@ context:
 
 scheduler:
   cron: "0 14-21/2 * * 1-5"  # Cron expression: every 2 hours, market hours (Mon-Fri 14-21 Spain / 9-16 US)
+  timezone: "America/New_York"  # Timezone for scheduler (default: America/New_York)
 
 web:
   host: "0.0.0.0"

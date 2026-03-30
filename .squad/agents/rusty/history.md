@@ -777,3 +777,64 @@ Systematically renamed domain entities throughout the backend:
 **Verification:** All Python files validated with `py_compile`. Syntax clean. Commit: fa64388.
 
 **Key insight:** The recursive deep-merge pattern ensures graceful config evolution across deployments — new features can add config keys in config.yaml without disrupting existing user settings in CosmosDB. The dual-write strategy (CosmosDB primary, config.yaml backup) provides resilience when CosmosDB is temporarily unavailable.
+
+---
+
+## 2025-01-XX: Timezone Configuration Support
+
+**Task:** Add timezone awareness to the scheduler backend (default: America/New_York).
+
+**Changes:**
+
+**config.yaml:**
+- Added `timezone: "America/New_York"` field under `scheduler` section
+- Provides default timezone for cron scheduling
+
+**src/config.py:**
+- Imported `pytz` module for timezone validation
+- Added `timezone` property getter:
+  - Reads from `config.scheduler.timezone`
+  - Defaults to "America/New_York" if not set
+  - Validates with `pytz.timezone()`, falls back to default if invalid
+  - Returns timezone string (e.g., "America/New_York")
+- Added `timezone` setter:
+  - Validates timezone string with `pytz.timezone()`
+  - Raises `ValueError` if invalid
+  - Updates `config['scheduler']['timezone']`
+
+**src/main.py:**
+- Imported `pytz` module
+- Updated `reschedule()` method:
+  - Added optional `new_timezone` parameter
+  - Updates timezone config if provided
+- Updated `setup()` method:
+  - Added timezone logging: `print(f"Scheduler timezone: {self.config.timezone}")`
+- Updated `_run_all_agents_async()`:
+  - Gets timezone-aware datetime: `now_tz = datetime.now(pytz.timezone(self.config.timezone))`
+  - Logs timestamps with timezone abbreviation: `%Y-%m-%d %H:%M:%S %Z`
+- Updated `run()` main scheduler loop:
+  - Creates timezone object: `tz = pytz.timezone(self.config.timezone)`
+  - Uses timezone-aware datetime for croniter: `croniter(cron_expr, now_tz)`
+  - All datetime comparisons now timezone-aware
+  - Reschedule logic recreates timezone object when `_cron_changed` flag is set
+  - Logs include timezone abbreviation (EDT, EST, etc.)
+
+**requirements.txt:**
+- Added `pytz>=2024.0` explicit dependency
+
+**Key patterns:**
+- Timezone validation happens at config property access (fail-fast with fallback)
+- All cron scheduling uses timezone-aware datetime objects
+- Scheduler loop checks timezone on reschedule (supports dynamic timezone changes)
+- CosmosDB settings persistence: timezone stored alongside cron expression (web app handles automatically via merge_defaults)
+- Timezone abbreviation (%Z) in logs helps debugging across daylight saving transitions
+
+**Files modified:**
+- `config.yaml` — Added timezone field
+- `src/config.py` — Added timezone property with pytz validation
+- `src/main.py` — Timezone-aware scheduling throughout
+- `requirements.txt` — Added pytz dependency
+
+**Verification:** Python syntax validated with `py_compile`. All files compile cleanly.
+
+**Key insight:** The pytz library handles all timezone complexity (daylight saving, historical changes, etc.). By making croniter timezone-aware from the start, we ensure schedule accuracy regardless of server timezone or DST transitions. The existing CosmosDB settings persistence automatically handles timezone storage/retrieval — no schema changes needed.
