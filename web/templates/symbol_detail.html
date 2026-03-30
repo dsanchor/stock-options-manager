@@ -21,6 +21,13 @@
             <span>Put Watchlist</span>
         </span>
         <span style="display:flex; align-items:center; gap:0.4rem;">
+            <label class="switch">
+                <input type="checkbox" id="toggle-notifications" {% if symbol_doc.telegram_notifications_enabled is not defined or symbol_doc.telegram_notifications_enabled %}checked{% endif %}>
+                <span class="slider"></span>
+            </label>
+            <span>Notifications</span>
+        </span>
+        <span style="display:flex; align-items:center; gap:0.4rem;">
             <a href="/symbols/{{ symbol_doc.symbol }}/chat" class="switch-link" style="display:inline-flex; align-items:center; gap:0.4rem; text-decoration:none; color:inherit; padding:0.2rem 0.6rem; border-radius:16px; background:rgba(255,255,255,0.06); border:1px solid var(--border-color, #2a2a4a); transition:background 0.2s;">
                 <span style="font-size:0.9rem;">💬</span>
                 <span>Chat</span>
@@ -477,6 +484,26 @@
             }
         });
     });
+
+    // Toggle notifications
+    var toggleNotifications = document.getElementById('toggle-notifications');
+    if (toggleNotifications) {
+        toggleNotifications.addEventListener('change', async function() {
+            var payload = { telegram_notifications_enabled: this.checked };
+            try {
+                var res = await fetch('/api/symbols/' + SYMBOL, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                if (!res.ok) {
+                    this.checked = !this.checked;
+                }
+            } catch(e) {
+                this.checked = !this.checked;
+            }
+        });
+    }
 
     // Expandable position rows
     document.querySelectorAll('tr.pos-row').forEach(function(row) {

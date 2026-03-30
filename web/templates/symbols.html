@@ -37,6 +37,7 @@
                     <th>Display Name</th>
                     <th>Call Watchlist</th>
                     <th>Put Watchlist</th>
+                    <th>Notifications</th>
                     <th class="num">Active Positions</th>
                     <th>Actions</th>
                 </tr>
@@ -58,6 +59,13 @@
                         <label class="switch">
                             <input type="checkbox" class="toggle-csp" data-symbol="{{ sym.symbol }}"
                                    {% if sym.watchlist.cash_secured_put %}checked{% endif %}>
+                            <span class="slider"></span>
+                        </label>
+                    </td>
+                    <td>
+                        <label class="switch">
+                            <input type="checkbox" class="toggle-notifications" data-symbol="{{ sym.symbol }}"
+                                   {% if sym.telegram_notifications_enabled is not defined or sym.telegram_notifications_enabled %}checked{% endif %}>
                             <span class="slider"></span>
                         </label>
                     </td>
@@ -120,13 +128,41 @@
         }
     });
 
-    // Toggle watchlist flags
-    document.querySelectorAll('.toggle-cc, .toggle-csp').forEach(function(toggle) {
+    // Toggle watchlist flags and notifications
+    document.querySelectorAll('.toggle-cc, .toggle-csp, .toggle-notifications').forEach(function(toggle) {
         toggle.addEventListener('change', async function() {
             var sym = this.dataset.symbol;
-            var field = this.classList.contains('toggle-cc') ? 'covered_call' : 'cash_secured_put';
+            var field;
+            if (this.classList.contains('toggle-cc')) {
+                field = 'covered_call';
+            } else if (this.classList.contains('toggle-csp')) {
+                field = 'cash_secured_put';
+            } else {
+                field = 'telegram_notifications_enabled';
+            }
             var payload = {};
             payload[field] = this.checked;
+
+            try {
+                var res = await fetch('/api/symbols/' + sym, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                if (!res.ok) {
+                    this.checked = !this.checked; // revert on failure
+                }
+            } catch(e) {
+                this.checked = !this.checked;
+            }
+        });
+    });
+
+    // Toggle notifications
+    document.querySelectorAll('.toggle-notifications').forEach(function(toggle) {
+        toggle.addEventListener('change', async function() {
+            var sym = this.dataset.symbol;
+            var payload = { telegram_notifications_enabled: this.checked };
 
             try {
                 var res = await fetch('/api/symbols/' + sym, {

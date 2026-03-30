@@ -287,6 +287,8 @@ async def api_update_symbol(request: Request, symbol: str):
             doc["watchlist"]["cash_secured_put"] = bool(body["cash_secured_put"])
         if "exchange" in body:
             doc["exchange"] = body["exchange"].strip().upper()
+        if "telegram_notifications_enabled" in body:
+            doc["telegram_notifications_enabled"] = bool(body["telegram_notifications_enabled"])
 
         doc["updated_at"] = datetime.utcnow().isoformat() + "Z"
         updated = cosmos.container.replace_item(item=doc["id"], body=doc)

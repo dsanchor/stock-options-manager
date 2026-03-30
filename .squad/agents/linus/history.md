@@ -564,3 +564,40 @@ Rusty completed backend implementation for the position-from-decision workflow:
 - `web/templates/alert_detail.html`: Added symbol parsing logic to extract ticker from "MARKET:SYMBOL" format
 
 **Key Learning**: Symbol data can come in different formats depending on the source. Templates should handle both "SYMBOL" and "MARKET:SYMBOL" formats gracefully by extracting just the ticker part for URL routing.
+
+### Notifications Toggle UI (2026-01-XX)
+Added per-symbol notification toggle UI to enable/disable Telegram notifications:
+
+**Locations Updated:**
+1. **`web/templates/symbols.html`**:
+   - Added "Notifications" column header to table
+   - Added toggle switch for each symbol row using `toggle-notifications` class
+   - Default state: checked (enabled) unless explicitly disabled
+   - JavaScript handler: saves state to backend via PUT `/api/symbols/{symbol}` with `{notifications_enabled: boolean}`
+   - Toggle pattern matches existing call/put watchlist toggles for consistency
+
+2. **`web/templates/symbol_detail.html`**:
+   - Added "Notifications" toggle in watchlist-toggles section (between Put Watchlist and Chat link)
+   - Uses ID `toggle-notifications` for single-element selection
+   - Default state: checked (enabled) unless explicitly disabled
+   - JavaScript handler: saves state to backend via PUT `/api/symbols/{symbol}` with `{notifications_enabled: boolean}`
+   - Same UI pattern as call/put toggles (switch class with slider span)
+
+**Technical Details:**
+- Field name: `telegram_notifications_enabled` (backend API field)
+- Default behavior: `{% if sym.telegram_notifications_enabled is not defined or sym.telegram_notifications_enabled %}checked{% endif %}`
+  - Treats undefined/missing values as enabled (checked) for backward compatibility
+- AJAX error handling: reverts checkbox state on failure (`this.checked = !this.checked`)
+- No confirmation dialog (instant save on change, like watchlist toggles)
+
+**Pattern Reused:**
+- Follows exact same toggle implementation as call/put watchlist toggles
+- Uses existing `.switch` and `.slider` CSS classes from base styles
+- JavaScript uses same fetch pattern with PUT method and JSON payload
+- Optimistic UI with rollback on error
+
+**Backend Integration:**
+- Backend updated in parallel by Rusty to handle `telegram_notifications_enabled` field
+- Frontend sends boolean value to backend via existing symbol update endpoint
+- No schema migration needed (backend handles missing field gracefully)
+

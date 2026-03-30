@@ -935,3 +935,60 @@ if merged_settings:
 **Verification:** Python syntax validated with `py_compile`.
 
 **Impact:** This ensures that settings modified via the web UI (stored in CosmosDB) correctly override config.yaml defaults at scheduler startup. Previously, the scheduler would always use config.yaml values even if they had been changed in the UI.
+
+---
+
+### Per-Symbol Telegram Notification Toggles (2025-01-15)
+
+**Feature:** Added per-symbol toggle to enable/disable Telegram notifications.
+
+**Requirements:**
+- Per-symbol boolean flag to control Telegram notifications
+- Default to enabled (preserve existing behavior)
+- UI toggles on both symbols list and symbol detail pages
+- Setting persists in CosmosDB
+
+**Implementation:**
+
+1. **Database Schema (cosmos_db.py):**
+   - Added `telegram_notifications_enabled: bool` field to symbol config documents
+   - Defaults to `True` in `create_symbol()` method
+   - Migration script provided for existing symbols
+
+2. **API Layer (web/app.py):**
+   - Updated `PUT /api/symbols/{symbol}` endpoint to handle `telegram_notifications_enabled` field
+   - Field update follows same pattern as `covered_call`/`cash_secured_put` toggles
+
+3. **Notification Logic (telegram_notifier.py):**
+   - Added `_is_symbol_notifications_enabled(symbol)` method to check the flag
+   - Modified `send_alert()` to check symbol flag before sending
+   - Returns early with debug log if notifications disabled for symbol
+   - Defaults to `True` if symbol not found or field missing (safe fallback)
+
+4. **Frontend (symbol_detail.html, symbols.html):**
+   - Added "Telegram Notifications" toggle next to Call/Put watchlist toggles
+   - Toggle uses existing switch component styling
+   - JavaScript handler sends `telegram_notifications_enabled` field to API
+   - Defaults to checked if field not defined (backward compatible)
+
+**Files Modified:**
+- `src/cosmos_db.py` — Added telegram_notifications_enabled to symbol schema
+- `src/telegram_notifier.py` — Added symbol-level notification check
+- `web/app.py` — Added API handling for telegram_notifications_enabled field
+- `web/templates/symbol_detail.html` — Added notification toggle UI
+- `web/templates/symbols.html` — Added notification toggle column
+- `scripts/migrate_add_telegram_notifications.py` — Migration script for existing symbols
+
+**Migration:**
+Run `python scripts/migrate_add_telegram_notifications.py` to add the field to existing symbols with default value `True`.
+
+**Verification:** Python syntax validated with `py_compile`. Clean compilation.
+
+**Pattern Notes:**
+- Per-symbol settings follow the watchlist toggle pattern (boolean field in symbol config)
+- Notification check happens early in send_alert() before credentials check
+- Safe defaults: missing field = enabled (don't break existing notifications)
+- UI toggles are non-blocking (async API calls with error handling)
+
+**Key Insight:** By checking the notification flag at the notifier level (not agent runner level), we ensure the check applies to ALL notification types (sell alerts, roll alerts, and any future notification types) without modifying multiple agent codepaths.
+

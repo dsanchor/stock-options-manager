@@ -72,6 +72,7 @@ class CosmosDBService:
                 "covered_call": covered_call,
                 "cash_secured_put": cash_secured_put,
             },
+            "telegram_notifications_enabled": True,
             "positions": [],
             "created_at": now,
             "updated_at": now,

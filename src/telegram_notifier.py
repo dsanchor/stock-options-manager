@@ -88,6 +88,24 @@ class TelegramNotifier:
             return bot_token, chat_id
         return None
 
+    def _is_symbol_notifications_enabled(self, symbol: str) -> bool:
+        """Check if Telegram notifications are enabled for a specific symbol.
+        
+        Returns True if enabled or if the setting doesn't exist (default).
+        """
+        if not self._cosmos:
+            return True
+        
+        try:
+            symbol_doc = self._cosmos.get_symbol(symbol)
+            if symbol_doc is None:
+                return True
+            return symbol_doc.get("telegram_notifications_enabled", True)
+        except Exception:
+            logger.debug("Could not check notification setting for %s, defaulting to enabled", 
+                        symbol, exc_info=True)
+            return True
+
     def send_alert(
         self,
         symbol: str,
@@ -99,6 +117,10 @@ class TelegramNotifier:
 
         Returns True if sent successfully, False otherwise.
         """
+        if not self._is_symbol_notifications_enabled(symbol):
+            logger.debug("Telegram notifications disabled for symbol %s", symbol)
+            return False
+
         creds = self._get_credentials()
         if creds is None:
             return False
