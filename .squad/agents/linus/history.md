@@ -369,3 +369,18 @@ Rusty completed backend implementation for the position-from-decision workflow:
 
 **Validation:** Used comprehensive grep searches to confirm no remaining entity references to "decision_id", "signal_id", "get_decision", "get_signal", etc. Only field value references (like `.decision` for the actual decision value) remain, which is correct.
 
+
+### 2024-XX-XX: Client-Side Activity/Alert Filtering
+
+**Task:** Added time-range (1d/7d/30d) and symbol filters to dashboard and symbol detail pages.
+
+**Key changes:**
+- **web/app.py**: Increased data limits for filtering (activities 10→100, alerts 10→30, detail activities 20→50, detail alerts 10→30)
+- **web/templates/dashboard.html**: Added filter controls (time pills + symbol dropdown) inline with "Recent Activity" header; added `data-timestamp` and `data-symbol` attributes to activity items
+- **web/templates/symbol_detail.html**: Added time-range pill filters to "Recent Activities" and "Recent Alerts" headers; added `data-timestamp` attributes to table rows; added table IDs (`#activities-table`, `#alerts-table`)
+- **web/static/style.css**: Added CSS for `.filter-group`, `.filter-pills`, `.pill` buttons, and `.filter-select` dropdown
+- **web/static/app.js**: Implemented client-side filtering logic with `cutoffDate()`, `applyDashboardFilters()`, and `applyTableFilter()` functions; wire up pill click handlers and symbol dropdown; auto-apply 7d default on page load; update badge counts after filtering
+
+**Approach:** Client-side JS filtering (vs. server-side) for instant feedback without page reloads. Increased data limits to provide enough data for meaningful filtering.
+
+**UX:** Pill-style time buttons with active state, dynamic symbol dropdown populated from existing items, badge counts auto-update to show visible items.
