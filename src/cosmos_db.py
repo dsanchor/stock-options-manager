@@ -40,6 +40,20 @@ class CosmosDBService:
             )
             self.telemetry_container = None
 
+        # Settings container — best-effort; never blocks if missing
+        try:
+            self.settings_container = self.database.get_container_client(
+                "settings"
+            )
+            # Probe to confirm the container exists
+            self.settings_container.read()
+        except Exception:
+            logger.warning(
+                "Settings container not found — settings persistence disabled. "
+                "Run scripts/provision_cosmosdb.sh to create it."
+            )
+            self.settings_container = None
+
     # ── Symbol Config CRUD ─────────────────────────────────────────────
 
     def create_symbol(self, symbol: str, exchange: str,
@@ -690,3 +704,91 @@ class CosmosDBService:
         except Exception as exc:
             logger.warning("Telemetry stats query failed: %s", exc)
             return {}
+
+    # ── Settings Management ────────────────────────────────────────────
+
+    def get_settings(self) -> dict:
+        """Read the app settings document from CosmosDB.
+        
+        Returns empty dict if not found or if settings container is unavailable.
+        """
+        if self.settings_container is None:
+            return {}
+        try:
+            doc = self.settings_container.read_item(
+                item="app-config",
+                partition_key="app-config",
+            )
+            # Return copy without internal fields
+            result = {k: v for k, v in doc.items() if k not in ("id", "_rid", "_self", "_etag", "_attachments", "_ts")}
+            return result
+        except CosmosResourceNotFoundError:
+            return {}
+        except Exception as exc:
+            logger.warning("Failed to read settings from CosmosDB: %s", exc)
+            return {}
+
+    def save_settings(self, settings: dict) -> dict:
+        """Write the full settings document to CosmosDB (upsert).
+        
+        Args:
+            settings: The settings dict to persist (should not contain 'id' key)
+        
+        Returns:
+            The saved document
+        """
+        if self.settings_container is None:
+            raise RuntimeError("Settings container not available")
+        
+        doc = {"id": "app-config", **settings}
+        return self.settings_container.upsert_item(doc)
+
+    def merge_defaults(self, defaults: dict) -> dict:
+        """Deep-merge: read current settings from CosmosDB.
+        
+        For any key in `defaults` that doesn't exist in the stored doc, add it.
+        Never overwrite existing keys. This is called at startup with the
+        config.yaml contents (excluding credentials) as defaults.
+        
+        Args:
+            defaults: Default settings from config.yaml (excluding azure/cosmosdb)
+        
+        Returns:
+            The merged settings document
+        """
+        if self.settings_container is None:
+            logger.warning("Settings container unavailable — skipping merge_defaults")
+            return {}
+        
+        stored = self.get_settings()
+        
+        def deep_merge(base: dict, new_vals: dict) -> dict:
+            """Recursively merge new_vals into base.
+            
+            Rules:
+            - If key exists in new_vals but not in base → add it
+            - If key exists in both and both are dicts → recurse
+            - If key exists in both and base value is NOT a dict → keep base (never overwrite)
+            - If key exists in base but not in new_vals → keep it
+            """
+            result = base.copy()
+            for key, val in new_vals.items():
+                if key not in result:
+                    # Key doesn't exist in stored → add it
+                    result[key] = val
+                elif isinstance(result[key], dict) and isinstance(val, dict):
+                    # Both are dicts → recurse
+                    result[key] = deep_merge(result[key], val)
+                # else: key exists in stored and is not a dict → keep stored value
+            return result
+        
+        merged = deep_merge(stored, defaults)
+        
+        # Save the merged result back to CosmosDB
+        try:
+            self.save_settings(merged)
+            logger.info("Settings merged and saved to CosmosDB")
+        except Exception as exc:
+            logger.warning("Failed to save merged settings to CosmosDB: %s", exc)
+        
+        return merged

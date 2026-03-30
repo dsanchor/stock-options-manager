@@ -1,7 +1,7 @@
 """Telegram Bot API integration for alert notifications.
 
-The notifier reads config.yaml on every send so that changes made via the
-Settings UI take effect immediately — no scheduler restart needed.
+The notifier reads from CosmosDB first (if available), falling back to config.yaml.
+Changes made via the Settings UI take effect immediately — no scheduler restart needed.
 """
 import logging
 import os
@@ -53,12 +53,36 @@ def _read_telegram_config() -> Tuple[bool, str, str]:
 class TelegramNotifier:
     """Sends alert notifications via Telegram Bot API.
 
-    Re-reads config.yaml on every call so the Settings UI toggle
-    takes effect without restarting the scheduler.
+    Reads settings from CosmosDB first (if available), falling back to config.yaml.
+    Settings UI changes take effect without restarting the scheduler.
     """
 
+    def __init__(self, cosmos=None):
+        """Initialize the Telegram notifier.
+        
+        Args:
+            cosmos: Optional CosmosDBService instance. If provided, will read
+                    settings from CosmosDB first, falling back to config.yaml.
+        """
+        self._cosmos = cosmos
+
     def _get_credentials(self) -> Optional[Tuple[str, str]]:
-        """Return (bot_token, chat_id) if enabled, else None."""
+        """Return (bot_token, chat_id) if enabled, else None.
+        
+        Tries CosmosDB first, falls back to config.yaml.
+        """
+        # Try CosmosDB first
+        if self._cosmos:
+            try:
+                settings = self._cosmos.get_settings()
+                tg = settings.get('telegram', {})
+                if tg.get('enabled') and tg.get('bot_token') and tg.get('chat_id'):
+                    return tg['bot_token'], tg['chat_id']
+            except Exception:
+                logger.debug("Could not read telegram config from CosmosDB, "
+                             "falling back to config.yaml", exc_info=True)
+        
+        # Fall back to config.yaml
         enabled, bot_token, chat_id = _read_telegram_config()
         if enabled and bot_token and chat_id:
             return bot_token, chat_id

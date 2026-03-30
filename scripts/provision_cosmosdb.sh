@@ -144,6 +144,35 @@ az cosmosdb sql container create \
 
 echo "  ✓ Telemetry container ready"
 
+# ── 4c. Create Settings Container ────────────────────────────────────────────
+SETTINGS_CONTAINER="settings"
+echo "▶ Creating container '$SETTINGS_CONTAINER' (partition key: /id)..."
+
+# Serverless container
+az cosmosdb sql container create \
+  --account-name "$COSMOSDB_ACCOUNT" \
+  --resource-group "$RESOURCE_GROUP" \
+  --database-name "$DATABASE_NAME" \
+  --name "$SETTINGS_CONTAINER" \
+  --partition-key-path "/id" \
+  --partition-key-version 2 \
+  --only-show-errors \
+  -o none
+
+# Provisioned container with autoscale (uncomment if using Option B above)
+# az cosmosdb sql container create \
+#   --account-name "$COSMOSDB_ACCOUNT" \
+#   --resource-group "$RESOURCE_GROUP" \
+#   --database-name "$DATABASE_NAME" \
+#   --name "$SETTINGS_CONTAINER" \
+#   --partition-key-path "/id" \
+#   --partition-key-version 2 \
+#   --max-throughput 4000 \
+#   --only-show-errors \
+#   -o none
+
+echo "  ✓ Settings container ready"
+
 # ── 5. Apply Custom Indexing Policy ──────────────────────────────────────────
 echo "▶ Applying custom indexing policy..."
 az cosmosdb sql container update \

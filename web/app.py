@@ -56,6 +56,28 @@ def _resolve_env(s: str) -> str:
     return re.sub(r'\$\{([^}]+)\}', _repl, s)
 
 
+def _load_settings_from_cosmos(cosmos) -> Optional[dict]:
+    """Load settings from CosmosDB. Returns None if unavailable."""
+    if cosmos is None:
+        return None
+    try:
+        return cosmos.get_settings()
+    except Exception:
+        logger.warning("Failed to load settings from CosmosDB", exc_info=True)
+        return None
+
+
+def _save_settings_to_cosmos(cosmos, settings: dict):
+    """Save settings to CosmosDB. Best-effort."""
+    if cosmos is None:
+        return
+    try:
+        cosmos.save_settings(settings)
+        logger.info("Settings saved to CosmosDB")
+    except Exception:
+        logger.warning("Failed to save settings to CosmosDB", exc_info=True)
+
+
 def parse_timestamp(ts: str) -> Optional[datetime]:
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f",
                 "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S%z"):
@@ -140,6 +162,20 @@ async def init_cosmos(app_instance):
             app_instance.state.cosmos_error = None
             logger.info("CosmosDB initialized successfully: %s, database=%s",
                         endpoint, database)
+            
+            # Merge config.yaml defaults into CosmosDB (first-run seed + new keys)
+            settings_defaults = {
+                k: v for k, v in config.items()
+                if k not in ('azure', 'cosmosdb')
+            }
+            # Resolve env vars in defaults before storing
+            from src.config import Config
+            resolved_config = Config()
+            resolved_defaults = {
+                k: v for k, v in resolved_config.config.items()
+                if k not in ('azure', 'cosmosdb')
+            }
+            cosmos.merge_defaults(resolved_defaults)
         else:
             missing = []
             if not endpoint:
@@ -947,7 +983,18 @@ async def activity_detail_page(request: Request, activity_id: str):
 
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
-    config = _load_config()
+    cosmos = getattr(request.app.state, "cosmos", None)
+    
+    # Try CosmosDB first, fall back to config.yaml
+    cosmos_settings = _load_settings_from_cosmos(cosmos)
+    if cosmos_settings:
+        config = cosmos_settings
+        # Add back cosmosdb info for display (not stored in CosmosDB)
+        yaml_config = _load_config()
+        config["cosmosdb"] = yaml_config.get("cosmosdb", {})
+    else:
+        config = _load_config()
+    
     cron_expr = config.get("scheduler", {}).get("cron", "0 14-21/2 * * 1-5")
     telegram_cfg = config.get("telegram", {})
     telegram_enabled = telegram_cfg.get("enabled", False)
@@ -969,7 +1016,6 @@ async def settings_page(request: Request):
 
     telemetry_stats = {}
     symbols = []
-    cosmos = getattr(request.app.state, "cosmos", None)
     if cosmos:
         try:
             telemetry_stats = cosmos.get_telemetry_stats()
@@ -999,11 +1045,20 @@ async def settings_page(request: Request):
 async def settings_save(request: Request):
     form = await request.form()
     saved: List[str] = []
+    cosmos = getattr(request.app.state, "cosmos", None)
 
     new_cron = str(form.get("cron_expr", "")).strip()
     if new_cron:
         try:
             croniter(new_cron)
+            
+            # Update CosmosDB first
+            if cosmos:
+                cosmos_settings = _load_settings_from_cosmos(cosmos) or {}
+                cosmos_settings.setdefault("scheduler", {})["cron"] = new_cron
+                _save_settings_to_cosmos(cosmos, cosmos_settings)
+            
+            # Also update config.yaml for backward compat
             config = _load_config()
             config.setdefault("scheduler", {})["cron"] = new_cron
             _write_config(config)
@@ -1020,6 +1075,18 @@ async def settings_save(request: Request):
     telegram_bot_token = str(form.get("telegram_bot_token", "")).strip()
     telegram_chat_id = str(form.get("telegram_chat_id", "")).strip()
 
+    # Update CosmosDB first
+    if cosmos:
+        cosmos_settings = _load_settings_from_cosmos(cosmos) or {}
+        cosmos_settings.setdefault("telegram", {})
+        cosmos_settings["telegram"]["enabled"] = telegram_enabled
+        if telegram_bot_token:
+            cosmos_settings["telegram"]["bot_token"] = telegram_bot_token
+        if telegram_chat_id:
+            cosmos_settings["telegram"]["chat_id"] = telegram_chat_id
+        _save_settings_to_cosmos(cosmos, cosmos_settings)
+    
+    # Also update config.yaml for backward compat
     config = _load_config()
     config.setdefault("telegram", {})
     config["telegram"]["enabled"] = telegram_enabled
@@ -1030,7 +1097,16 @@ async def settings_save(request: Request):
     _write_config(config)
     saved.append("Telegram settings")
 
-    config = _load_config()
+    # Re-read for display (prefer CosmosDB)
+    cosmos_settings = _load_settings_from_cosmos(cosmos)
+    if cosmos_settings:
+        config = cosmos_settings
+        # Add back cosmosdb info for display (not stored in CosmosDB)
+        yaml_config = _load_config()
+        config["cosmosdb"] = yaml_config.get("cosmosdb", {})
+    else:
+        config = _load_config()
+    
     cron_expr = config.get("scheduler", {}).get("cron", "0 14-21/2 * * 1-5")
     telegram_cfg = config.get("telegram", {})
     tg_enabled = telegram_cfg.get("enabled", False)
@@ -1050,7 +1126,6 @@ async def settings_save(request: Request):
     cosmos_error = getattr(request.app.state, "cosmos_error", None)
 
     telemetry_stats = {}
-    cosmos = getattr(request.app.state, "cosmos", None)
     if cosmos:
         try:
             telemetry_stats = cosmos.get_telemetry_stats()

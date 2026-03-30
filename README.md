@@ -14,7 +14,7 @@ The first two agents (sell-side) decide whether to **open** new positions. The l
 
 Both sell-side agents use the Microsoft Agent Framework (`agent-framework`) with TradingView as the data source. Market data is pre-fetched deterministically via [Playwright](https://playwright.dev/python/) (headless Chromium) and passed to the LLM for analysis — the LLM never touches the browser directly.
 
-**Storage backend:** Azure CosmosDB with two containers: `symbols` (watchlists, positions, activities, alerts) and `telemetry` (runtime performance stats with 30-day TTL). Each symbol is a partition key in the symbols container containing three document types: `symbol_config` (watchlist flags + positions), `activity` (full audit trail), and `alert` (actionable alerts). The telemetry container tracks TradingView fetch durations and agent run times, displayed on the Settings page. See the [Azure CosmosDB Setup](#azure-cosmosdb-setup) section for provisioning.
+**Storage backend:** Azure CosmosDB with three containers: `symbols` (watchlists, positions, activities, alerts), `telemetry` (runtime performance stats with 30-day TTL), and `settings` (application configuration persistence). Each symbol is a partition key in the symbols container containing three document types: `symbol_config` (watchlist flags + positions), `activity` (full audit trail), and `alert` (actionable alerts). The telemetry container tracks TradingView fetch durations and agent run times, displayed on the Settings page. The settings container persists application configuration with partition key `/id`. See the [Azure CosmosDB Setup](#azure-cosmosdb-setup) section for provisioning.
 
 ## How It Works
 
@@ -145,7 +145,7 @@ context:
 
 ### CosmosDB Document Model
 
-All data is stored in Azure CosmosDB across two containers:
+All data is stored in Azure CosmosDB across three containers:
 
 **`symbols` container** (partition key: `/symbol`) — three document types:
 
@@ -161,6 +161,14 @@ All data is stored in Azure CosmosDB across two containers:
 |---|---|---|
 | `tv_fetch` | TradingView page fetch timing | resource, duration_seconds, response_size_chars |
 | `agent_run` | End-to-end agent execution timing | agent_type, duration_seconds |
+
+**`settings` container** (partition key: `/id`) — application configuration persistence:
+
+| Document ID | Purpose | Persisted Sections |
+|---|---|---|
+| `app_config` | Application settings synchronized across all components | `context`, `scheduler`, `web`, `telegram` |
+
+On first run, configuration from `config.yaml` is seeded into the `settings` container (except `azure` and `cosmosdb` sections which remain file-only). On subsequent runs, new keys from `config.yaml` are added to CosmosDB, but existing values are never overwritten, allowing the Settings UI to persist changes. The Settings UI reads and writes directly to CosmosDB, making configuration changes immediately available to all components (scheduler, telegram notifier, web UI) without restart. If CosmosDB is unavailable, `config.yaml` serves as the fallback.
 
 Telemetry stats are displayed on the Settings page and auto-expire after 30 days.
 
@@ -251,7 +259,7 @@ stock-options-manager/
 - **Symbol Detail** (`/symbols/{symbol}`) — Full detail page for a symbol: expandable positions with source traceability, Close/Roll/Delete actions, activities, alerts, and "Open Position from Alert" / "Roll Position from Alert" buttons on activity detail; per-symbol chat.
 - **Fetch Preview** (`/symbols/{symbol}/fetch-preview`) — Debug page showing raw TradingView data for each resource (overview, technicals, forecast, options chain) with fetch timing and size.
 - **Chat** (`/chat`) — Ask questions about your portfolio. Uses the same Azure OpenAI model with recent activities as context.
-- **Settings** (`/settings`) — Scheduler config, Telegram notifications toggle & test button, runtime stats (today/7d/30d telemetry), and a Debug TradingView Fetch tool for testing data fetching per symbol.
+- **Settings** (`/settings`) — Scheduler config, Telegram notifications toggle & test button, runtime stats (today/7d/30d telemetry), and a Debug TradingView Fetch tool for testing data fetching per symbol. Settings are persisted to CosmosDB and survive application restarts and deployments. Changes made in the Settings UI are immediately available to all components (scheduler, telegram notifier, etc.) without requiring a restart.
 
 ---
 
@@ -531,6 +539,16 @@ az cosmosdb sql container update \
   --database-name "$DATABASE_NAME" \
   --name "telemetry" \
   --ttl 2592000 \
+  -o none
+
+# Create settings container (partition key /id, configuration persistence)
+az cosmosdb sql container create \
+  --account-name "$COSMOSDB_ACCOUNT" \
+  --resource-group "$RESOURCE_GROUP" \
+  --database-name "$DATABASE_NAME" \
+  --name "settings" \
+  --partition-key-path "/id" \
+  --partition-key-version 2 \
   -o none
 
 # Apply custom indexing policy

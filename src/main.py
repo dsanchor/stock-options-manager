@@ -45,8 +45,15 @@ class OptionsAgentScheduler:
         )
         self.context_provider = ContextProvider(self.cosmos)
 
+        # Merge config.yaml defaults into CosmosDB (first-run seed + new keys)
+        settings_defaults = {
+            k: v for k, v in self.config.config.items()
+            if k not in ('azure', 'cosmosdb')
+        }
+        self.cosmos.merge_defaults(settings_defaults)
+
         from .telegram_notifier import TelegramNotifier
-        telegram_notifier = TelegramNotifier()
+        telegram_notifier = TelegramNotifier(cosmos=self.cosmos)
 
         print("Initializing Agent Framework Runner...")
         self.runner = AgentRunner(
