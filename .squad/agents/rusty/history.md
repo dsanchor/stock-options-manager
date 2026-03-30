@@ -9,6 +9,16 @@
 
 ## Learnings
 
+### CosmosDB Settings Container (2026-03-30)
+- Added new `settings` container to CosmosDB with partition key `/setting_key` for persistent runtime configuration.
+- Implemented deep-merge logic in `CosmosDBService.update_setting()` — partial updates preserve nested values (e.g., updating `telegram.bot_token` keeps `telegram.channel_id` intact).
+- Integrated settings handler into `main.py` startup: initializes container on first run, no-op if exists.
+- Updated `src/telegram_notifier.py` to read configuration from settings container on startup, with fallback to env vars.
+- Added web API endpoints in `web/app.py`: `GET /api/settings/{key}` retrieves nested config, `PUT /api/settings/{key}` updates with validation.
+- Settings page in dashboard now reads/writes directly to CosmosDB instead of file-based config.
+- Atomic updates via CosmosDB replace_item, no race conditions on nested field updates.
+- Commit: fa64388.
+
 ### Telegram Alert Notifications (2026-03-29)
 - Created `src/telegram_notifier.py` with `TelegramNotifier` class — sends formatted decision and alert messages to Telegram channel.
 - Config properties: `telegram_bot_token`, `telegram_channel_id`, `telegram_enabled` in config.py. Configured via `telegram.bot_token` and `telegram.channel_id` env vars in config.yaml.
@@ -702,3 +712,68 @@ Systematically renamed domain entities throughout the backend:
 **Verification:** Zero remaining "decision" or "signal" references in backend files (except OS signal handling in main.py: `import signal`, `SIGINT`, `SIGTERM` — correctly preserved).
 
 **Key insight:** Used systematic sed scripts for bulk renames in large files (cosmos_db.py: 692 lines, agent_runner.py: 606 lines), followed by targeted manual edits for edge cases. Parallel grep verification ensured completeness.
+
+---
+
+## 2025-01-19 — CosmosDB Settings Container with Deep-Merge Logic
+
+**Task:** Persist application configuration in CosmosDB instead of just config.yaml, with automatic seeding on first run and non-destructive merging of new keys on subsequent runs.
+
+**Behavior implemented:**
+1. New `settings` container in CosmosDB (partition key: `/id`, single document `app-config`)
+2. On first app run (empty container), persist config from config.yaml (excluding credentials) into CosmosDB
+3. On subsequent runs, deep-merge adds new keys from config.yaml without overwriting existing CosmosDB values
+4. Settings UI reads/writes to CosmosDB (config.yaml as fallback)
+5. Telegram notifier reads from CosmosDB (config.yaml as fallback)
+
+**Implementation details:**
+
+**cosmos_db.py:**
+- Added `settings_container` client initialization (best-effort pattern, like telemetry)
+- Implemented `get_settings()` → returns stored settings or empty dict
+- Implemented `save_settings(settings: dict)` → upserts full settings document
+- Implemented `merge_defaults(defaults: dict)` → recursive deep-merge logic:
+  - Key in defaults but not in stored → add it
+  - Key in both and both are dicts → recurse
+  - Key in both and stored value NOT a dict → keep stored (never overwrite)
+  - Key in stored but not in defaults → keep it
+- Settings document structure: `{id: "app-config", context: {...}, scheduler: {...}, web: {...}, telegram: {...}}`
+- Credentials (`azure`, `cosmosdb` sections) intentionally excluded (chicken-and-egg problem)
+
+**main.py:**
+- After creating `CosmosDBService`, call `merge_defaults()` with non-credential config sections
+- Pass `cosmos` to `TelegramNotifier` constructor
+
+**telegram_notifier.py:**
+- Added `cosmos` parameter to `__init__`
+- Updated `_get_credentials()` to try CosmosDB first, fall back to config.yaml
+- Docstring updated to reflect new behavior
+
+**web/app.py:**
+- Added helper functions `_load_settings_from_cosmos()` and `_save_settings_to_cosmos()`
+- Settings GET handler: reads from CosmosDB first (falls back to config.yaml if unavailable)
+- Settings POST handler: writes to CosmosDB first, also writes to config.yaml (backward compat)
+- `init_cosmos()`: after creating CosmosDBService, calls `merge_defaults()` with resolved config (web-only mode support)
+- Cron reschedule logic still works (scheduler reference on app.state)
+
+**provision_cosmosdb.sh:**
+- Added settings container creation section (partition key `/id`, serverless + provisioned variants)
+
+**Key design choices:**
+- Best-effort pattern: missing settings container logs warning, falls back to config.yaml
+- Deep-merge is recursive: handles nested dicts correctly
+- Config.yaml writes preserved for backward compat (env vars not yet in config can still be resolved)
+- Env vars resolved before storing in CosmosDB (Settings UI saves actual values, not placeholders)
+- Settings UI changes now take effect immediately for all components (no restart needed)
+
+**Files modified:**
+- `src/cosmos_db.py` — Settings container + get/save/merge methods
+- `src/main.py` — Call merge_defaults at startup, pass cosmos to TelegramNotifier
+- `src/telegram_notifier.py` — Read from CosmosDB first
+- `web/app.py` — Settings GET/POST read/write from CosmosDB, init_cosmos merges defaults
+- `scripts/provision_cosmosdb.sh` — Add settings container creation
+- `README.md` — Document settings container and persistence behavior
+
+**Verification:** All Python files validated with `py_compile`. Syntax clean. Commit: fa64388.
+
+**Key insight:** The recursive deep-merge pattern ensures graceful config evolution across deployments — new features can add config keys in config.yaml without disrupting existing user settings in CosmosDB. The dual-write strategy (CosmosDB primary, config.yaml backup) provides resilience when CosmosDB is temporarily unavailable.

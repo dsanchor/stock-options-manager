@@ -9,6 +9,17 @@
 
 ## Learnings
 
+### CosmosDB Settings Container Documentation (2026-03-30)
+- Updated `README.md` with comprehensive "Settings Container" section covering:
+  - Feature overview with deep-merge behavior and use cases
+  - Setup and initialization instructions (automatic on first run)
+  - Configuration API reference with endpoint signatures
+  - Example JSON payloads for nested config updates (e.g., telegram settings)
+  - Troubleshooting guide for common configuration issues
+  - Cross-reference to Rusty's implementation details
+- Documentation included in commit fa64388 alongside implementation.
+- Ensures users can independently manage runtime configuration via API or file.
+
 ### Telegram Documentation (2026-03-29)
 - Updated `README.md` with:
   - **Telegram Alerts section** — Feature overview (real-time decision/alert notifications)
