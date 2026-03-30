@@ -1,6 +1,6 @@
 """TradingView data fetcher using native Python Playwright.
 
-Pre-fetches overview, technicals, forecast, and options chain data from
+Pre-fetches overview, technicals, forecast, dividends, and options chain data from
 TradingView before the agent runs. Returns clean text data the agent can
 analyze without needing any browser tools.
 """

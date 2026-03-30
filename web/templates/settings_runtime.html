@@ -68,7 +68,7 @@
                 </tr>
             </thead>
             <tbody>
-                {% for resource in ['overview', 'technicals', 'forecast', 'options_chain'] %}
+                {% for resource in ['overview', 'technicals', 'forecast', 'dividends', 'options_chain'] %}
                 {% if resource in telemetry_stats['tv_fetch'] %}
                 {% set rs = telemetry_stats['tv_fetch'][resource] %}
                 <tr>

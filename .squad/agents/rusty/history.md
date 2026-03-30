@@ -1127,3 +1127,84 @@ Run `python scripts/migrate_add_telegram_notifications.py` to add the field to e
 - Dividend rules are most critical for covered calls (early assignment risk), less so for cash-secured puts
 - Monitoring agents already had ex-dividend rules — shows good prior design
 
+
+---
+
+## 2025-03-30: AUDIT AND FIX — Dividends Fetcher Integration Gaps
+
+**Context:** User reported the dividends fetcher was NOT added to all the same places where overview, forecast, and technicals are used. Specifically: debug/test fetcher pages, runtime stats tracking, and potentially other display locations.
+
+**Task:** Search exhaustively for every place where overview/technicals/forecast fetching is referenced in the codebase, and ensure dividends is also included following the exact same pattern.
+
+**Findings:**
+
+**Files With Missing Dividends References (FIXED):**
+1. **web/templates/settings_debug.html** (line 107)
+   - JavaScript array only listed: `['overview', 'technicals', 'forecast', 'options_chain']`
+   - Labels object missing 'dividends' entry
+   - **FIXED:** Added 'dividends' to array and labels
+
+2. **web/templates/settings_runtime.html** (line 71)
+   - Jinja2 loop only iterated: `['overview', 'technicals', 'forecast', 'options_chain']`
+   - **FIXED:** Added 'dividends' to loop
+
+3. **web/templates/fetch_preview.html** (line 102)
+   - JavaScript array only listed: `['overview', 'technicals', 'forecast', 'options_chain']`
+   - Labels object missing 'dividends' entry
+   - **FIXED:** Added 'dividends' to array and labels
+
+4. **web/templates/settings.html** (line 35 and line 263)
+   - Both Jinja2 runtime stats and JavaScript debug fetch had same gaps
+   - **FIXED:** Added 'dividends' to both sections
+
+5. **web/app.py** (line 963) — api_fetch_preview endpoint
+   - Tuple only iterated: `("overview", "technicals", "forecast", "options_chain")`
+   - **FIXED:** Added "dividends" to tuple
+
+6. **Documentation strings:**
+   - `src/tv_data_fetcher.py` module docstring (line 3)
+   - `web/app.py` symbol chat system prompt (line 1511)
+   - **FIXED:** Updated both to mention dividends
+
+**Files Already Correct (NO CHANGES NEEDED):**
+- `src/tv_data_fetcher.py` — fetch_dividends() exists, fetch_all() includes it
+- `src/agent_runner.py` — Uses fetch_all() generically, logs telemetry for ALL resources dynamically
+- `src/cosmos_db.py` — Telemetry aggregation works for ANY resource dynamically
+- All agent instruction files — Already reference dividends where needed
+
+**Architecture Insights:**
+- **Display Layer Pattern:** Any UI that lists specific resources (overview, technicals, forecast, options_chain) in hardcoded arrays/tuples MUST also include dividends
+- **Backend Pattern:** Code that uses fetch_all() generically or iterates over fetcher.last_fetch_stats dynamically already includes dividends automatically
+- **Critical Locations:** Debug/test pages, runtime stats displays, fetch preview endpoints
+- **Safe Locations:** Agent runner, telemetry tracking, CosmosDB storage (all generic/dynamic)
+
+**Search Strategy Used:**
+1. Grepped for `fetch_overview|fetch_technicals|fetch_forecast` → Found key files
+2. Grepped for `overview.*technicals|technicals.*forecast` → Found display templates
+3. Grepped for `options_chain` → Cross-referenced with dividends mentions
+4. Manually inspected each file showing resource lists
+5. Updated all hardcoded arrays, tuples, and labels to include 'dividends'
+
+**Key Pattern Identified:**
+The dividends fetcher WAS correctly implemented at the data layer (tv_data_fetcher.py, agent_runner.py) but was MISSING from the presentation layer (HTML templates, API endpoints that explicitly list resources).
+
+**Files Modified:**
+- src/tv_data_fetcher.py — Updated module docstring
+- web/app.py — Added dividends to api_fetch_preview tuple + updated symbol chat system prompt
+- web/templates/settings_debug.html — Added dividends to fetch test tool
+- web/templates/settings_runtime.html — Added dividends to runtime stats display
+- web/templates/fetch_preview.html — Added dividends to fetch preview display
+- web/templates/settings.html — Added dividends to both stats and debug sections
+
+**Verification Method:**
+- git status shows 6 modified files
+- git diff confirms all changes are surgical additions of 'dividends' to existing patterns
+- No removal of existing functionality
+- All changes follow existing code style and structure
+
+**Learnings:**
+- When adding new data sources, check BOTH data layer (fetchers, runners) AND presentation layer (UI templates, API endpoints)
+- Hardcoded resource lists in templates are a maintenance risk — consider future refactor to iterate dynamically over fetcher.last_fetch_stats.keys()
+- Grep search patterns: look for both exact function names (fetch_*) and contextual patterns (overview.*technicals)
+- HTML templates with JavaScript often have TWO places to update: JS arrays and corresponding labels
+- CosmosDB telemetry aggregation was designed well — it handles ANY resource dynamically without code changes

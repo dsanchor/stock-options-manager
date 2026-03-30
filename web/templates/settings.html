@@ -32,7 +32,7 @@
                 </tr>
             </thead>
             <tbody>
-                {% for resource in ['overview', 'technicals', 'forecast', 'options_chain'] %}
+                {% for resource in ['overview', 'technicals', 'forecast', 'dividends', 'options_chain'] %}
                 {% if resource in telemetry_stats['tv_fetch'] %}
                 {% set rs = telemetry_stats['tv_fetch'][resource] %}
                 <tr>
@@ -260,8 +260,8 @@
 
             status.textContent = '✅ Done in ' + elapsed + 's';
 
-            var order = ['overview', 'technicals', 'forecast', 'options_chain'];
-            var labels = { overview: 'Overview', technicals: 'Technicals', forecast: 'Forecast', options_chain: 'Options Chain' };
+            var order = ['overview', 'technicals', 'forecast', 'dividends', 'options_chain'];
+            var labels = { overview: 'Overview', technicals: 'Technicals', forecast: 'Forecast', dividends: 'Dividends', options_chain: 'Options Chain' };
             var html = '';
 
             for (var i = 0; i < order.length; i++) {

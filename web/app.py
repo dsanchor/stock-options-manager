@@ -960,7 +960,7 @@ async def api_fetch_preview(request: Request, symbol: str):
         return JSONResponse({"error": f"Fetch failed: {e}"}, status_code=500)
 
     resources = {}
-    for key in ("overview", "technicals", "forecast", "options_chain"):
+    for key in ("overview", "technicals", "forecast", "dividends", "options_chain"):
         text = data.get(key, "")
         st = stats.get(key, {})
         resources[key] = {
@@ -1508,7 +1508,7 @@ def _build_symbol_system_prompt(symbol: str, exchange: str,
         f"You have access to:\n"
         f"1. Recent analysis activities for this symbol\n"
         f"2. Live market data from TradingView "
-        f"(overview, technicals, forecast, options chain)\n"
+        f"(overview, technicals, forecast, dividends, options chain)\n"
         f"3. Current positions and watchlist status\n\n"
         f"Answer questions about this symbol's options opportunities, "
         f"risks, positions, and market conditions.\n"
