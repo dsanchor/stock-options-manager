@@ -53,7 +53,13 @@ class OptionsAgentScheduler:
             k: v for k, v in self.config.config.items()
             if k not in ('azure', 'cosmosdb')
         }
-        self.cosmos.merge_defaults(settings_defaults)
+        merged_settings = self.cosmos.merge_defaults(settings_defaults)
+        
+        # Update Config object with merged settings from CosmosDB (CosmosDB takes precedence)
+        if merged_settings:
+            for key, value in merged_settings.items():
+                if key not in ('azure', 'cosmosdb'):
+                    self.config.config[key] = value
 
         from .telegram_notifier import TelegramNotifier
         telegram_notifier = TelegramNotifier(cosmos=self.cosmos)

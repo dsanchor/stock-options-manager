@@ -898,3 +898,40 @@ Systematically renamed domain entities throughout the backend:
 **Verification:** Python syntax validated with `py_compile`. Clean compilation.
 
 **Key insight:** By converting to scheduler timezone on the backend, we ensure consistent display regardless of browser timezone. The ISO format provides flexibility for frontend to do additional conversions if needed. The %Z formatter automatically shows correct timezone abbreviation (EST vs EDT) based on DST rules, which is more reliable than trying to compute this in JavaScript.
+
+---
+
+## Learnings
+
+### Cron Expression Runtime Override Bug (2025-01-15)
+
+**Issue:** Cron expression was being set to "30 9-16/4 * * 1-5" in both config.yaml and CosmosDB settings, but at runtime the scheduler was using "00 9-16/4 * * 1-5" (minute field changed from 30 to 00).
+
+**Root Cause:** Config initialization order issue in `src/main.py`:
+1. Line 41: `Config()` loads settings from `config.yaml`
+2. Line 56: `merge_defaults()` merges config.yaml into CosmosDB (preserving existing CosmosDB values)
+3. **BUG:** The `Config` object was NOT updated with the merged settings from CosmosDB
+4. Line 69+: Scheduler uses stale `self.config.cron_expression` from config.yaml, not the merged CosmosDB value
+
+**Fix Applied:** After `merge_defaults()`, update the Config object with merged settings:
+```python
+merged_settings = self.cosmos.merge_defaults(settings_defaults)
+
+# Update Config object with merged settings from CosmosDB (CosmosDB takes precedence)
+if merged_settings:
+    for key, value in merged_settings.items():
+        if key not in ('azure', 'cosmosdb'):
+            self.config.config[key] = value
+```
+
+**Key Pattern:** When using a two-tier config system (file + database):
+- Database values should take precedence over file defaults at runtime
+- After merging defaults, reload/update the in-memory config with database values
+- The merge operation returns the final merged settings — use them immediately
+
+**Files Modified:**
+- `src/main.py` — Added config update after merge_defaults() call
+
+**Verification:** Python syntax validated with `py_compile`.
+
+**Impact:** This ensures that settings modified via the web UI (stored in CosmosDB) correctly override config.yaml defaults at scheduler startup. Previously, the scheduler would always use config.yaml values even if they had been changed in the UI.
