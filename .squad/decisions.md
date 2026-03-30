@@ -1150,3 +1150,33 @@ The dashboard had "Run Now" buttons for each agent, but users needed:
 - **Backend**: No changes needed (reuses existing endpoints)
 - **UX**: Improved clarity and efficiency for users running multiple agents
 
+
+---
+
+### 8. Button Alignment Fix — Run Full Analysis Button
+**Date:** 2025  
+**Author:** Linus (Quant Dev / Frontend)  
+**Status:** Completed  
+**Impact:** UI/UX (visual consistency)
+
+#### Context
+The "Run Full Analysis" button was positioned inline with scheduler information (cron, last run, next run) in the `.scheduler-bar` container. Individual "Run Analysis" buttons on each agent card are right-aligned, creating a visual inconsistency.
+
+#### Key Design Decision
+Updated `.scheduler-bar` CSS to use flexbox space distribution:
+1. Added `justify-content: space-between` — Distributes space evenly, pushing the button to the right
+2. Added `align-items: center` — Ensures vertical alignment with scheduler text
+3. Added `.scheduler-bar .btn-trigger { margin-left: auto; }` — Ensures button stays right, even with flex-wrap
+
+#### Implementation
+- **File Modified:** web/static/style.css
+- **HTML Changes:** None (CSS-only solution)
+- **Rationale:** Button already had correct CSS classes (`btn-trigger btn-trigger-blue`); solution uses standard flexbox patterns consistent with existing card headers
+
+#### Result
+"Run Full Analysis" button now right-aligns within scheduler info bar, matching visual alignment of individual "Run Analysis" buttons on agent cards.
+
+#### Trade-offs
+- **Simplicity:** CSS-only approach avoids template changes
+- **Consistency:** Uses existing flexbox patterns already in codebase
+
