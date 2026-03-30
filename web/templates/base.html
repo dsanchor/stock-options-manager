@@ -13,7 +13,14 @@
             <a href="/dashboard" class="{% if request.url.path in ('/', '/dashboard') %}active{% endif %}">Dashboard</a>
             <a href="/symbols" class="{% if request.url.path.startswith('/symbols') %}active{% endif %}">Symbols</a>
             <a href="/chat" class="{% if request.url.path == '/chat' %}active{% endif %}">Chat</a>
-            <a href="/settings" class="{% if request.url.path == '/settings' %}active{% endif %}">Settings</a>
+            <div class="nav-dropdown">
+                <a href="/settings/config" class="{% if request.url.path.startswith('/settings') %}active{% endif %}">Settings</a>
+                <div class="nav-dropdown-content">
+                    <a href="/settings/config">⚙️ Configuration</a>
+                    <a href="/settings/runtime">📊 Runtime Stats</a>
+                    <a href="/settings/debug">🔍 Debug</a>
+                </div>
+            </div>
         </div>
     </nav>
     <main class="container">

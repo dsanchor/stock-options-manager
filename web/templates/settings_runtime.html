@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Runtime Stats — Stock Options Manager{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📊 Runtime Stats</h1>
+    <p class="subtitle">Agent runs and fetch performance metrics.</p>
+</div>
+
+<!-- Agent Run Stats -->
+<div class="card settings-card">
+    <div class="card-header">
+        <h2>🤖 Agent Run Stats</h2>
+    </div>
+    {% if telemetry_stats and telemetry_stats.get('agent_run') %}
+    <div style="padding: 0.75rem 1.25rem;">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Agent Type</th>
+                    <th>Today</th>
+                    <th>7 Days</th>
+                    <th>30 Days</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for agent_type in ['covered_call', 'cash_secured_put', 'open_call_monitor', 'open_put_monitor'] %}
+                {% if agent_type in telemetry_stats['agent_run'] %}
+                {% set ag = telemetry_stats['agent_run'][agent_type] %}
+                <tr>
+                    <td>{{ agent_type | replace('_', ' ') | title }}</td>
+                    {% for period in ['today', '7d', '30d'] %}
+                    <td class="mono">
+                        {% if ag.get(period, {}).get('count', 0) > 0 %}
+                        {{ ag[period]['avg_duration'] }}s ({{ ag[period]['count'] }} runs)
+                        {% else %}
+                        —
+                        {% endif %}
+                    </td>
+                    {% endfor %}
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div style="padding: 0.75rem 1.25rem; color: var(--text-muted, #888);">
+        No agent run data yet. Stats will appear after agent runs.
+    </div>
+    {% endif %}
+</div>
+
+<!-- Fetch Stats -->
+<div class="card settings-card">
+    <div class="card-header">
+        <h2>📡 TradingView Fetch Stats</h2>
+    </div>
+    {% if telemetry_stats and telemetry_stats.get('tv_fetch') %}
+    <div style="padding: 0.75rem 1.25rem;">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Resource</th>
+                    <th>Today (Avg)</th>
+                    <th>7 Days (Avg)</th>
+                    <th>30 Days (Avg)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for resource in ['overview', 'technicals', 'forecast', 'options_chain'] %}
+                {% if resource in telemetry_stats['tv_fetch'] %}
+                {% set rs = telemetry_stats['tv_fetch'][resource] %}
+                <tr>
+                    <td>{{ resource | replace('_', ' ') | title }}</td>
+                    {% for period in ['today', '7d', '30d'] %}
+                    <td class="mono">
+                        {% if rs.get(period, {}).get('count', 0) > 0 %}
+                        {{ rs[period]['avg_duration'] }}s / {{ "{:,.0f}".format(rs[period]['avg_size']) }}
+                        {% else %}
+                        —
+                        {% endif %}
+                    </td>
+                    {% endfor %}
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div style="padding: 0.75rem 1.25rem; color: var(--text-muted, #888);">
+        No fetch data yet. Stats will appear after data fetches.
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

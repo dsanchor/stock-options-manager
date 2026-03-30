@@ -429,3 +429,41 @@ Rusty completed backend implementation for the position-from-decision workflow:
 **Pattern:** Button variants use transparent backgrounds with colored borders and text. Hover states use semi-transparent backgrounds of the button color. Format consistency > visual hierarchy through color fills.
 
 **Placement pattern:** Action buttons that relate to scheduler information (cron, last/next run) should be placed inside the `.scheduler-bar` container, not in separate sections.
+
+### 2025-01-XX: Settings Page Split into Three Submenus
+
+**Task:** Reorganize monolithic Settings page into 3 separate pages with navigation submenu.
+
+**Changes made:**
+- **Created 3 new templates:**
+  - `web/templates/settings_config.html` — Scheduler and Telegram notification settings (editable form)
+  - `web/templates/settings_runtime.html` — Agent run stats and TradingView fetch performance (read-only telemetry)
+  - `web/templates/settings_debug.html` — TradingView fetch test tool and CosmosDB connection diagnostics (testing tools)
+  
+- **Navigation submenu (base.html):**
+  - Wrapped Settings link in `.nav-dropdown` container
+  - Added `.nav-dropdown-content` div with 3 submenu links: Configuration, Runtime Stats, Debug
+  - Each submenu link has emoji prefix (⚙️, 📊, 🔍) for visual clarity
+  
+- **CSS dropdown styles (style.css):**
+  - `.nav-dropdown` — relative positioning container
+  - `.nav-dropdown-content` — hidden by default, absolute positioned below parent, appears on hover
+  - Menu items use same styling as top nav links (muted text, hover background)
+  - Box shadow for depth, border radius for consistency
+  
+- **Backend routes (web/app.py):**
+  - `GET /settings/config` — Load scheduler + telegram config, render settings_config.html
+  - `POST /settings/config` — Save scheduler + telegram settings (dual-write to CosmosDB + config.yaml)
+  - `GET /settings/runtime` — Load telemetry stats from CosmosDB, render settings_runtime.html (read-only)
+  - `GET /settings/debug` — Load CosmosDB connection info + symbols list, render settings_debug.html (testing tools)
+  - `GET /settings` — 301 redirect to /settings/config for backward compatibility
+  - Removed old monolithic `settings_page()` and `settings_save()` routes
+  
+**Pattern learned:**
+- Settings pages split by purpose: **Config** (user-editable), **Runtime** (read-only stats), **Debug** (testing tools)
+- Dropdown menu uses hover state (no JavaScript) — simple and accessible
+- POST endpoints redirect to same page with `saved` parameter for success feedback
+- Backward compatibility via 301 redirect prevents broken links
+- Each split page has focused data loading (only fetches what it needs, no overhead)
+
+**User preference:** Group settings by function, not by data source. Scheduler + Telegram together because both are configuration. Agent stats + Fetch stats together because both are runtime metrics.

@@ -978,20 +978,18 @@ async def activity_detail_page(request: Request, activity_id: str):
 
 
 # ===========================================================================
-# Page Routes — Settings
+# Settings - Split Views
 # ===========================================================================
 
-@app.get("/settings", response_class=HTMLResponse)
-async def settings_page(request: Request):
+@app.get("/settings/config", response_class=HTMLResponse)
+async def settings_config_page(request: Request):
+    """Configuration page — Scheduler and Telegram."""
     cosmos = getattr(request.app.state, "cosmos", None)
     
     # Try CosmosDB first, fall back to config.yaml
     cosmos_settings = _load_settings_from_cosmos(cosmos)
     if cosmos_settings:
         config = cosmos_settings
-        # Add back cosmosdb info for display (not stored in CosmosDB)
-        yaml_config = _load_config()
-        config["cosmosdb"] = yaml_config.get("cosmosdb", {})
     else:
         config = _load_config()
     
@@ -1000,53 +998,30 @@ async def settings_page(request: Request):
     telegram_enabled = telegram_cfg.get("enabled", False)
     telegram_bot_token = telegram_cfg.get("bot_token", "")
     telegram_chat_id = telegram_cfg.get("chat_id", "")
-    # Mask env var placeholders for display
+    
+    # Resolve env vars for display
     if telegram_bot_token.startswith("${"):
         telegram_bot_token = _resolve_env(telegram_bot_token)
     if telegram_chat_id.startswith("${"):
         telegram_chat_id = _resolve_env(telegram_chat_id)
-    cosmos_endpoint = _resolve_env(
-        config.get("cosmosdb", {}).get("endpoint", ""))
-    cosmos_database = config.get("cosmosdb", {}).get(
-        "database", "stock-options-manager")
-    cosmos_status = ("Connected"
-                     if getattr(request.app.state, "cosmos", None)
-                     else "Not connected")
-    cosmos_error = getattr(request.app.state, "cosmos_error", None)
-
-    telemetry_stats = {}
-    symbols = []
-    if cosmos:
-        try:
-            telemetry_stats = cosmos.get_telemetry_stats()
-        except Exception:
-            pass
-        try:
-            symbols = cosmos.list_symbols()
-        except Exception:
-            pass
-
-    return templates.TemplateResponse("settings.html", {
+    
+    return templates.TemplateResponse("settings_config.html", {
         "request": request,
         "cron_expr": cron_expr,
         "telegram_enabled": telegram_enabled,
         "telegram_bot_token": telegram_bot_token,
         "telegram_chat_id": telegram_chat_id,
-        "cosmos_endpoint": cosmos_endpoint,
-        "cosmos_database": cosmos_database,
-        "cosmos_status": cosmos_status,
-        "cosmos_error": cosmos_error,
-        "telemetry_stats": telemetry_stats,
-        "symbols": symbols,
     })
 
 
-@app.post("/settings", response_class=HTMLResponse)
-async def settings_save(request: Request):
+@app.post("/settings/config", response_class=HTMLResponse)
+async def settings_config_save(request: Request):
+    """Save configuration settings."""
     form = await request.form()
     saved: List[str] = []
     cosmos = getattr(request.app.state, "cosmos", None)
 
+    # Cron schedule
     new_cron = str(form.get("cron_expr", "")).strip()
     if new_cron:
         try:
@@ -1097,13 +1072,10 @@ async def settings_save(request: Request):
     _write_config(config)
     saved.append("Telegram settings")
 
-    # Re-read for display (prefer CosmosDB)
+    # Re-read for display
     cosmos_settings = _load_settings_from_cosmos(cosmos)
     if cosmos_settings:
         config = cosmos_settings
-        # Add back cosmosdb info for display (not stored in CosmosDB)
-        yaml_config = _load_config()
-        config["cosmosdb"] = yaml_config.get("cosmosdb", {})
     else:
         config = _load_config()
     
@@ -1116,35 +1088,71 @@ async def settings_save(request: Request):
         tg_bot_token = _resolve_env(tg_bot_token)
     if tg_chat_id.startswith("${"):
         tg_chat_id = _resolve_env(tg_chat_id)
-    cosmos_endpoint = _resolve_env(
-        config.get("cosmosdb", {}).get("endpoint", ""))
-    cosmos_database = config.get("cosmosdb", {}).get(
-        "database", "stock-options-manager")
-    cosmos_status = ("Connected"
-                     if getattr(request.app.state, "cosmos", None)
-                     else "Not connected")
-    cosmos_error = getattr(request.app.state, "cosmos_error", None)
 
-    telemetry_stats = {}
-    if cosmos:
-        try:
-            telemetry_stats = cosmos.get_telemetry_stats()
-        except Exception:
-            pass
-
-    return templates.TemplateResponse("settings.html", {
+    return templates.TemplateResponse("settings_config.html", {
         "request": request,
         "cron_expr": cron_expr,
         "saved": saved,
         "telegram_enabled": tg_enabled,
         "telegram_bot_token": tg_bot_token,
         "telegram_chat_id": tg_chat_id,
+    })
+
+
+@app.get("/settings/runtime", response_class=HTMLResponse)
+async def settings_runtime_page(request: Request):
+    """Runtime stats page — Agent runs and fetch statistics."""
+    cosmos = getattr(request.app.state, "cosmos", None)
+    
+    telemetry_stats = {}
+    if cosmos:
+        try:
+            telemetry_stats = cosmos.get_telemetry_stats()
+        except Exception:
+            pass
+    
+    return templates.TemplateResponse("settings_runtime.html", {
+        "request": request,
+        "telemetry_stats": telemetry_stats,
+    })
+
+
+@app.get("/settings/debug", response_class=HTMLResponse)
+async def settings_debug_page(request: Request):
+    """Debug page — TradingView fetch and CosmosDB diagnostics."""
+    cosmos = getattr(request.app.state, "cosmos", None)
+    
+    # CosmosDB connection info
+    config = _load_config()
+    cosmos_endpoint = _resolve_env(config.get("cosmosdb", {}).get("endpoint", ""))
+    cosmos_database = config.get("cosmosdb", {}).get("database", "stock-options-manager")
+    cosmos_status = "Connected" if cosmos else "Not connected"
+    cosmos_error = getattr(request.app.state, "cosmos_error", None)
+    
+    # Get symbols for debug dropdown
+    symbols = []
+    if cosmos:
+        try:
+            symbols = cosmos.list_symbols()
+        except Exception:
+            pass
+    
+    return templates.TemplateResponse("settings_debug.html", {
+        "request": request,
         "cosmos_endpoint": cosmos_endpoint,
         "cosmos_database": cosmos_database,
         "cosmos_status": cosmos_status,
         "cosmos_error": cosmos_error,
-        "telemetry_stats": telemetry_stats,
+        "symbols": symbols,
     })
+
+
+# Redirect old /settings to /settings/config for backward compatibility
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_redirect(request: Request):
+    """Redirect old settings URL to config page."""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/settings/config", status_code=301)
 
 
 # ===========================================================================
