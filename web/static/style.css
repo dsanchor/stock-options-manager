@@ -124,6 +124,48 @@ code { font-family: var(--font-mono); background: var(--bg-input); padding: 2px 
     border-bottom: 1px solid var(--border);
 }
 .card-header h2 { font-size: 1.1rem; font-weight: 600; }
+
+/* ── Filter controls ──────────────────────────────────────────────── */
+.filter-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.filter-pills {
+    display: flex;
+    gap: 2px;
+    background: var(--bg-input);
+    border-radius: 6px;
+    padding: 2px;
+}
+.filter-pills .pill {
+    padding: 0.2rem 0.6rem;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.15s;
+}
+.filter-pills .pill:hover {
+    color: var(--text);
+}
+.filter-pills .pill.active {
+    background: var(--accent);
+    color: white;
+}
+.filter-select {
+    padding: 0.2rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-card);
+    color: var(--text);
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+
 .card-badge {
     font-size: 0.75rem;
     background: var(--bg-input);

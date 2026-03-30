@@ -110,10 +110,20 @@
 <div class="card">
     <div class="card-header">
         <h2>Recent Activity</h2>
+        <div class="filter-group">
+            <div class="filter-pills" id="activity-time-filter">
+                <button class="pill" data-range="1">1d</button>
+                <button class="pill active" data-range="7">7d</button>
+                <button class="pill" data-range="30">30d</button>
+            </div>
+            <select id="activity-symbol-filter" class="filter-select">
+                <option value="">All Symbols</option>
+            </select>
+        </div>
     </div>
     <div class="activity-feed">
         {% for item in activity %}
-        <div class="activity-item">
+        <div class="activity-item" data-timestamp="{{ item.timestamp[:19] }}" data-symbol="{{ item.symbol }}">
             <div class="activity-time">{{ item.timestamp[:19] }}</div>
             <span class="badge badge-{{ item.activity | lower if item.activity else 'info' }}">{{ item.activity or "N/A" }}</span>
             <span class="activity-agent">{{ item._agent_label }}</span>

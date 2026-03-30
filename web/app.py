@@ -758,7 +758,7 @@ async def dashboard(request: Request):
     try:
         all_symbols = cosmos.list_symbols()
         all_alerts = cosmos.get_all_alerts(limit=500)
-        all_activities = cosmos.get_all_activities(limit=50)
+        all_activities = cosmos.get_all_activities(limit=200)
     except Exception as e:
         empty_ctx["error"] = f"CosmosDB query failed: {e}"
         return templates.TemplateResponse("dashboard.html", empty_ctx)
@@ -800,7 +800,7 @@ async def dashboard(request: Request):
         last_run = all_activities[0].get("timestamp", "")[:19]
 
     activity = []
-    for d in all_activities[:10]:
+    for d in all_activities[:100]:
         agent_key = d.get("agent_type", "")
         d["_agent_label"] = AGENT_TYPES.get(agent_key, {}).get(
             "label", agent_key)
@@ -854,18 +854,18 @@ async def symbol_detail_page(request: Request, symbol: str):
     activities: List[Dict] = []
     for agent_type, meta in AGENT_TYPES.items():
         acts = cosmos.get_recent_activities(
-            symbol.upper(), agent_type, max_entries=20)
+            symbol.upper(), agent_type, max_entries=50)
         for d in acts:
             d["_agent_label"] = meta["label"]
         activities.extend(acts)
     activities.sort(key=lambda d: d.get("timestamp", ""), reverse=True)
-    activities = activities[:20]
+    activities = activities[:50]
 
     # Gather recent alerts
     alerts: List[Dict] = []
     for agent_type, meta in AGENT_TYPES.items():
         alts = cosmos.get_recent_alerts(
-            symbol.upper(), agent_type, max_entries=10)
+            symbol.upper(), agent_type, max_entries=30)
         for s in alts:
             s["_agent_label"] = meta["label"]
         alerts.extend(alts)
