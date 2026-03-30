@@ -384,3 +384,27 @@ Rusty completed backend implementation for the position-from-decision workflow:
 **Approach:** Client-side JS filtering (vs. server-side) for instant feedback without page reloads. Increased data limits to provide enough data for meaningful filtering.
 
 **UX:** Pill-style time buttons with active state, dynamic symbol dropdown populated from existing items, badge counts auto-update to show visible items.
+
+
+### 2024-XX-XX: Dashboard Button Updates
+
+**Task:** Updated dashboard run buttons with clearer labeling and batch execution capability.
+
+**Key changes:**
+- **web/templates/dashboard.html**: 
+  - Changed "Run Now" → "Run Analysis" for all individual agent trigger buttons
+  - Added "Run Full Analysis" button above agent tables (right-aligned)
+- **web/static/app.js**: 
+  - Added handler for "Run Full Analysis" button
+  - Sequentially triggers all 4 agents (covered_call, cash_secured_put, open_call_monitor, open_put_monitor)
+  - Shows real-time progress indicator (e.g., "Running... (2/4)")
+  - Displays completion summary (e.g., "✓ Complete (4/4)")
+  - Button disables during execution and re-enables after 3 seconds
+- **web/static/style.css**: 
+  - Added `.btn-trigger.btn-primary` styling for the full analysis button
+  - Larger padding and font size to differentiate from individual agent buttons
+  - Blue accent color to indicate comprehensive action
+
+**Approach:** Sequential execution using promise chaining (`.reduce()` pattern) to ensure agents run one after another. Used existing `/api/trigger/{agentType}` endpoint for each agent.
+
+**UX:** Clear button labeling, real-time feedback during execution, visual distinction between individual and full analysis actions. Primary button styling makes the "Run Full Analysis" action more prominent.
