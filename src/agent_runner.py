@@ -301,6 +301,9 @@ class AgentRunner:
 --- FORECAST PAGE ({exchange}:{symbol}) ---
 {data['forecast']}
 
+--- DIVIDENDS PAGE ({exchange}:{symbol}) ---
+{data['dividends']}
+
 --- OPTIONS CHAIN ({exchange}:{symbol}) ---
 {data['options_chain']}
 

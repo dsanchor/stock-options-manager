@@ -126,6 +126,17 @@ class TradingViewFetcher:
             logger.error("Failed to fetch forecast for %s: %s", full_symbol, e)
             return f"STOCK FORECAST\n\n[ERROR: {e}]"
 
+    async def fetch_dividends(self, full_symbol: str) -> str:
+        """Fetch dividends page content from #tv-content."""
+        url = f"https://www.tradingview.com/symbols/{full_symbol}/financials-dividends/"
+        try:
+            text = await self._fetch_page_text(url)
+            content = text or "[ERROR: No text content in dividends response]"
+            return f"STOCK DIVIDENDS\n\n{content}"
+        except Exception as e:
+            logger.error("Failed to fetch dividends for %s: %s", full_symbol, e)
+            return f"STOCK DIVIDENDS\n\n[ERROR: {e}]"
+
     # Exact TradingView scanner endpoints that carry options chain data
     _OPTIONS_SCAN_URLS = [
         "scanner.tradingview.com/global/scan2?label-product=symbols-options",
@@ -249,7 +260,7 @@ class TradingViewFetcher:
     async def fetch_all(self, symbol: str) -> dict:
         """Fetch all data for a symbol.
 
-        Returns dict with keys: overview, technicals, forecast, options_chain.
+        Returns dict with keys: overview, technicals, forecast, dividends, options_chain.
         Timing stats are stored in ``self.last_fetch_stats``.
         """
         # Convert NYSE-MO → NYSE:MO for TradingView URLs
@@ -298,9 +309,17 @@ class TradingViewFetcher:
         )
         logger.info("Forecast fetched: %d chars", len(forecast))
 
+        dividends = await _timed_fetch(
+            "dividends",
+            lambda fs=full_symbol: self.fetch_dividends(fs),
+            f"dividends({symbol})",
+        )
+        logger.info("Dividends fetched: %d chars", len(dividends))
+
         return {
             "overview": overview,
             "technicals": technicals,
             "forecast": forecast,
+            "dividends": dividends,
             "options_chain": options_chain,
         }

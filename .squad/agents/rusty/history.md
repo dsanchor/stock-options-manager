@@ -1022,3 +1022,108 @@ Run `python scripts/migrate_add_telegram_notifications.py` to add the field to e
 - Three main fetch methods provide data to agents: overview, technicals, and forecast
 - Options chain fetcher was not modified (no section title requested for it)
 - Section titles help LLM agents parse and categorize the fetched market data
+
+---
+
+## Task: Add Dividends Fetcher and Enhanced Dividend Rules (2025-01-15)
+
+**Context:** Need to provide agents with comprehensive dividend data from TradingView and enhance agent instructions with detailed dividend-related trading rules for options strategies.
+
+**Requirements:**
+
+**Part 1: Implement Dividends Fetcher**
+- Add new TradingView fetcher for dividends data from `/financials-dividends/` page
+- Follow exact same pattern as existing fetchers (overview, forecast, technicals)
+- Prepend "STOCK DIVIDENDS\n\n" to fetched content
+- Add to fetch pipeline alongside other resources
+- Ensure dividends data is passed to agents in the message context
+
+**Part 2: Validate and Enhance Agent Dividend Rules**
+- Check agent instructions for dividend-related rules
+- Ensure ex-dividend date awareness (critical for options timing)
+- Add rules for dividend impact on options pricing
+- Include early assignment risk assessment for covered calls
+- Cover put-call parity effects from dividends
+
+**Implementation:**
+
+1. **Added `fetch_dividends()` method to `src/tv_data_fetcher.py`:**
+   - Created new async method following exact pattern of fetch_overview/technicals/forecast
+   - URL: `https://www.tradingview.com/symbols/{full_symbol}/financials-dividends/`
+   - Prepends "STOCK DIVIDENDS\n\n" to all content
+   - Uses same error handling and retry logic as other fetchers
+   - Returns formatted string with section title
+
+2. **Updated `fetch_all()` method in `src/tv_data_fetcher.py`:**
+   - Added dividends to the timed fetch sequence
+   - Returns dict now includes `"dividends"` key alongside overview, technicals, forecast, options_chain
+   - Updated docstring to reflect five data sections instead of four
+   - Logging added for dividends fetch timing and size
+
+3. **Updated agent message template in `src/agent_runner.py`:**
+   - Added `--- DIVIDENDS PAGE ({exchange}:{symbol}) ---` section to the pre-fetched data message
+   - Positioned between FORECAST PAGE and OPTIONS CHAIN sections
+   - Ensures dividends data is always passed to agents alongside other resources
+
+4. **Enhanced Covered Call Instructions (`src/tv_covered_call_instructions.py`):**
+   - Updated Phase 1 Data Review from 4 to 5 sections, added DIVIDENDS PAGE description
+   - Expanded dividend rules from 2 lines to comprehensive guidance:
+     - What happens on ex-dividend date (price drop)
+     - Early assignment risk levels (HIGH/MODERATE/LOW) based on strike distance and dividend amount
+     - Specific decision rules: ex-div within DTE + <10% OTM = WAIT or choose deeper OTM strike
+     - Timing guidance: best to sell AFTER ex-dividend date
+     - Options pricing impact: call premiums drop by ~dividend amount as ex-div approaches
+     - Put-call parity effects from dividends
+   - Updated Calendar Check criteria with 4-tier decision framework:
+     - IDEAL: Ex-div after expiration
+     - ACCEPTABLE: Ex-div within DTE but strike >10% OTM
+     - AVOID: Ex-div within DTE with strike <10% OTM
+     - NEVER: Ex-div within 5 days of expiration with ITM strike
+
+5. **Enhanced Cash-Secured Put Instructions (`src/tv_cash_secured_put_instructions.py`):**
+   - Updated Phase 1 Data Review from 4 to 5 sections, added DIVIDENDS PAGE description
+   - Added dividend section with CSP-specific guidance:
+     - Quality signal: consistent dividends = financial stability
+     - Early assignment risk (rare but possible for deep ITM puts)
+     - Options pricing impact: put premiums slightly higher for dividend stocks
+     - Best timing: BEFORE ex-div date (capture elevated premiums)
+     - Dividend yield >3% = quality signal + premium boost
+   - Expanded Calendar Considerations with detailed dividend rules:
+     - Price drop mechanics on ex-div date
+     - Early assignment conditions (deep ITM + high dividend + near expiration)
+     - Put-call parity effects
+     - Generally favorable: dividend stocks = quality companies
+
+6. **Monitored Open Call/Put Instructions:**
+   - Already had comprehensive dividend rules, no changes needed
+   - `tv_open_call_instructions.py` has detailed ex-dividend risk section for ITM calls
+   - `tv_open_put_instructions.py` correctly states dividends are irrelevant for short puts
+
+**Files Modified:**
+- `src/tv_data_fetcher.py` — Added fetch_dividends() method, updated fetch_all() to include dividends
+- `src/agent_runner.py` — Added DIVIDENDS PAGE section to agent message template
+- `src/tv_covered_call_instructions.py` — Added DIVIDENDS PAGE description, enhanced dividend rules and calendar checks
+- `src/tv_cash_secured_put_instructions.py` — Added DIVIDENDS PAGE description, enhanced dividend rules and calendar considerations
+
+**Verification:** Python syntax validated with `py_compile`. Clean compilation.
+
+**Key Patterns:**
+- TradingView fetcher pattern: async method that calls _fetch_page_text(), prepends section title, handles errors uniformly
+- Fetch pipeline: sequential timed fetches with retry logic, all orchestrated in fetch_all()
+- Agent message structure: Clear section markers (---) with consistent formatting
+- Instruction enhancement: Move from brief mentions to comprehensive decision frameworks with risk levels
+
+**Architecture Insights:**
+- Dividends fetcher integrates seamlessly into existing fetch_all() pipeline
+- No changes needed to covered_call_agent.py or cash_secured_put_agent.py — they use the fetcher generically
+- Agent instructions are Python string constants in separate files (tv_*_instructions.py)
+- The agent_runner builds the prompt by concatenating fetched data sections with instruction context
+
+**Learnings:**
+- TradingView dividends page URL pattern: `symbols/{EXCHANGE}-{SYMBOL}/financials-dividends/`
+- Five fetcher methods now: overview, technicals, forecast, dividends, options_chain
+- All fetched data goes into agent_runner message template at lines 291-313
+- Agent instructions define how to USE the data, not how to FETCH it (separation of concerns)
+- Dividend rules are most critical for covered calls (early assignment risk), less so for cash-secured puts
+- Monitoring agents already had ex-dividend rules — shows good prior design
+

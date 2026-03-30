@@ -28,10 +28,10 @@ All market data has been **pre-fetched from TradingView** and is included direct
 
 ### Phase 1: Data Review & Investment Quality Validation
 
-Market data has been pre-fetched and included in your message. You will find four sections:
+Market data has been pre-fetched and included in your message. You will find five sections:
 
 1. **OVERVIEW PAGE** — Contains general stock information: current price, market cap, P/E ratio, dividend yield, 52-week high/low, volume, sector, industry, earnings date.
-   - Use for: fundamental context, current price confirmation, dividend info relevant to cash-secured put assignment risk
+   - Use for: fundamental context, current price confirmation, dividend yield summary
 
 2. **TECHNICALS PAGE** — Contains oscillator summaries, moving average data, and pivot points.
    Tab-separated table data: Name\tValue\tAction for each indicator.
@@ -68,7 +68,15 @@ Market data has been pre-fetched and included in your message. You will find fou
      - Number of analysts: more coverage = more institutional interest = more stable
      - If analyst consensus is overwhelmingly negative (majority Sell) → WAIT regardless of premium
 
-4. **OPTIONS CHAIN** — Contains the expanded options chain accessibility snapshot.
+4. **DIVIDENDS PAGE** — Contains dividend payment history, ex-dividend dates, payment dates, and dividend amounts.
+   - **Relevant for CSPs**: Dividends affect put pricing and assignment risk (though less critical than for calls)
+   - Use for: ex-dividend date identification, dividend sustainability assessment, company quality signal
+   - Key data: Ex-dividend date, payment date, dividend amount, dividend yield, payout frequency
+   - **Quality Signal**: Consistent dividend payments = financial stability = good assignment candidate
+   - **Early Assignment Risk (Rare)**: Deep ITM puts before ex-div may face early assignment if holder wants to capture dividend
+   - **Options Pricing Impact**: Put premiums slightly higher for dividend-paying stocks (reflects lower downside from div income)
+
+5. **OPTIONS CHAIN** — Contains the expanded options chain accessibility snapshot.
    Rows contain: Delta, Gamma, Theta, Vega, IV%, Strike, Bid, Ask, Volume for calls and puts.
    The expiration closest to 30-45 DTE has been pre-expanded.
    - **Put-Specific Data Extraction**: Puts are in the right half of each data row
@@ -307,9 +315,20 @@ The agent synthesizes all gathered data into a comprehensive analysis:
   - IDEAL: Sell 1-3 days after earnings (capture IV crush, uncertainty resolved)
   - ACCEPTABLE: Sell >7 days before earnings if strike well below support
   - AVOID: Selling 3-7 days before earnings (max uncertainty)
-- **Dividend Dates**: 
-  - Check ex-dividend date; early assignment rare on puts but possible
-  - If deep ITM before ex-div, assignor may exercise to get dividend
+- **Dividend Dates & Ex-Dividend Impact** (less critical for puts but still relevant):
+  - **What happens**: On ex-dividend date, stock price typically drops by dividend amount
+  - **Early assignment risk on puts**: RARE but possible if put is deep ITM before ex-div
+    - Rational for American-style put holder: Exercise early if intrinsic value > time value + dividend
+    - More likely with: Deep ITM puts (delta < -0.80), high dividend (>$0.50), near expiration
+  - **Options pricing impact**: 
+    - Put premiums slightly higher for dividend-paying stocks (reflects lower downside risk from dividend income)
+    - Best timing for CSP: BEFORE ex-dividend date (capture slightly elevated premiums)
+    - After ex-div: Stock drops by dividend amount, may create new entry opportunity
+  - **Decision rules**:
+    - Generally neutral to favorable: Dividend stocks = quality companies = good assignment candidates
+    - If put strike is deep ITM (delta < -0.70) AND ex-div within 10 days → be aware of early assignment possibility
+    - Dividend yield >3% = quality signal + put premium boost = favorable
+  - **Put-Call Parity**: Dividends affect put-call pricing; higher dividends = higher put premiums (relative to calls)
 - **Seasonal Patterns**: Be aware of sector seasonality
 
 ## ACTIVITY CRITERIA

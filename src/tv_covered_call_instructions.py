@@ -28,10 +28,10 @@ All market data has been **pre-fetched from TradingView** and is included direct
 
 ### Phase 1: Data Review
 
-Market data has been pre-fetched and included in your message. You will find four sections:
+Market data has been pre-fetched and included in your message. You will find five sections:
 
 1. **OVERVIEW PAGE** — Contains general stock information: current price, market cap, P/E ratio, dividend yield, 52-week high/low, volume, sector, industry, earnings date.
-   - Use for: fundamental context, current price confirmation, dividend info relevant to covered call assignment risk
+   - Use for: fundamental context, current price confirmation, dividend yield summary
 
 2. **TECHNICALS PAGE** — Contains oscillator summaries, moving average data, and pivot points.
    Tab-separated table data: Name\tValue\tAction for each indicator.
@@ -51,7 +51,13 @@ Market data has been pre-fetched and included in your message. You will find fou
    - Current price (visible in page header), next earnings date, analyst price targets
    - Analysis: Strong consensus Buy with rising targets → caution selling calls (upside expectations)
 
-4. **OPTIONS CHAIN** — Contains the expanded options chain accessibility snapshot.
+4. **DIVIDENDS PAGE** — Contains dividend payment history, ex-dividend dates, payment dates, and dividend amounts.
+   - **CRITICAL for covered calls**: Check upcoming ex-dividend date relative to option expiration
+   - Use for: ex-dividend date identification, dividend amount assessment, early assignment risk evaluation
+   - Key data: Ex-dividend date, payment date, dividend amount, dividend yield, payout frequency
+   - Analysis: Ex-div within DTE + ITM call = HIGH early assignment risk
+
+5. **OPTIONS CHAIN** — Contains the expanded options chain accessibility snapshot.
    Rows contain: Delta, Gamma, Theta, Vega, IV%, Strike, Bid, Ask, Volume for calls and puts.
    The expiration closest to 30-45 DTE has been pre-expanded.
    - Extract: Strike prices, IV%, delta, bid/ask, volume from the data rows
@@ -235,8 +241,21 @@ The agent synthesizes all gathered data into a comprehensive analysis:
 - **Earnings Proximity**: NEVER sell calls expiring after next earnings (IV crush risk irrelevant since you're short)
   - Actually, IV crush helps you (option loses value) but earnings can cause gaps
   - Safe zone: >7 days after earnings, or expiration before earnings
-- **Dividend Dates**: If ex-dividend date within DTE, assignment risk increases
-  - Early assignment possible if call goes ITM before ex-div date
+- **Dividend Dates & Ex-Dividend Risk** (CRITICAL for covered calls):
+  - **What happens**: On ex-dividend date, stock price typically drops by dividend amount
+  - **Early assignment risk**: If call is ITM before ex-div, call holder may exercise early to capture dividend
+  - **Risk assessment**:
+    - HIGH RISK: Strike <5% OTM with dividend >$0.50, ex-div within 10 days of expiration
+    - MODERATE RISK: Strike 5-10% OTM, any dividend amount, ex-div within DTE
+    - LOW RISK: Strike >10% OTM (delta <0.20), or ex-div after expiration, or dividend <$0.25
+  - **Decision rules**:
+    - If ex-div within DTE AND strike <10% OTM → WAIT or choose strike >10% OTM (delta <0.20)
+    - If ex-div within 5 days of expiration AND ITM → DO NOT SELL (near-certain assignment)
+    - If dividend yield >3% annually AND ex-div within DTE → extra caution on strike selection
+  - **Options pricing impact**: 
+    - Call premium drops by ~dividend amount as ex-div approaches (reflects expected price drop)
+    - Best timing: AFTER ex-dividend date (no assignment risk, cleaner pricing)
+  - **Put-Call Parity**: Dividends affect call-put pricing relationship; higher dividends = lower call premiums
 - **Catalyst Calendar**: 
   - FDA decisions, product launches, major conferences within DTE = WAIT
   - These can cause sharp moves that result in assignment
@@ -262,7 +281,11 @@ The agent synthesizes all gathered data into a comprehensive analysis:
 4. **Calendar Check**:
    - NO earnings within DTE window
    - NO known catalysts (FDA, product launch) within DTE
-   - If ex-dividend within DTE, strike sufficiently OTM (delta < 0.25)
+   - Ex-dividend date check:
+     - IDEAL: Ex-div AFTER expiration (no assignment risk)
+     - ACCEPTABLE: Ex-div within DTE but strike >10% OTM (delta <0.20)
+     - AVOID: Ex-div within DTE with strike <10% OTM (HIGH early assignment risk)
+     - NEVER: Ex-div within 5 days of expiration with ITM strike (near-certain assignment)
 
 5. **Sentiment Check**:
    - No recent insider buying surge (last 7 days)
