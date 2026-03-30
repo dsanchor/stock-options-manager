@@ -992,3 +992,33 @@ Run `python scripts/migrate_add_telegram_notifications.py` to add the field to e
 
 **Key Insight:** By checking the notification flag at the notifier level (not agent runner level), we ensure the check applies to ALL notification types (sell alerts, roll alerts, and any future notification types) without modifying multiple agent codepaths.
 
+
+---
+
+## Task: Add Section Titles to TradingView Fetchers (2025)
+
+**Context:** The LLM agents need clear section markers to identify which fetched content corresponds to which type of data (overview, technicals, forecast).
+
+**Requirements:**
+- Prepend "STOCK OVERVIEW\n\n" to overview fetcher content
+- Prepend "STOCK TECHNICALS\n\n" to technicals fetcher content
+- Prepend "STOCK FORECAST\n\n" to forecast fetcher content
+
+**Implementation:**
+
+1. **Modified `src/tv_data_fetcher.py`:**
+   - Updated `fetch_overview()` to prepend "STOCK OVERVIEW\n\n" to all returned content
+   - Updated `fetch_technicals()` to prepend "STOCK TECHNICALS\n\n" to all returned content
+   - Updated `fetch_forecast()` to prepend "STOCK FORECAST\n\n" to all returned content
+   - Applied titles to both successful fetches and error responses for consistency
+
+**Key Pattern:** Section titles are added at the point of return, ensuring they appear in all code paths (success and error). This makes the fetched data self-describing for the LLM.
+
+**File Modified:**
+- `src/tv_data_fetcher.py` — Added section titles to fetch_overview, fetch_technicals, and fetch_forecast methods
+
+**Learnings:**
+- TradingView data fetcher is located at `src/tv_data_fetcher.py`
+- Three main fetch methods provide data to agents: overview, technicals, and forecast
+- Options chain fetcher was not modified (no section title requested for it)
+- Section titles help LLM agents parse and categorize the fetched market data

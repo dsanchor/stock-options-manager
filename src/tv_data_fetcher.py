@@ -98,30 +98,33 @@ class TradingViewFetcher:
         url = f"https://www.tradingview.com/symbols/{full_symbol}/"
         try:
             text = await self._fetch_page_text(url)
-            return text or "[ERROR: No text content in overview response]"
+            content = text or "[ERROR: No text content in overview response]"
+            return f"STOCK OVERVIEW\n\n{content}"
         except Exception as e:
             logger.error("Failed to fetch overview for %s: %s", full_symbol, e)
-            return f"[ERROR: {e}]"
+            return f"STOCK OVERVIEW\n\n[ERROR: {e}]"
 
     async def fetch_technicals(self, full_symbol: str) -> str:
         """Fetch technicals page content from #tv-content."""
         url = f"https://www.tradingview.com/symbols/{full_symbol}/technicals/"
         try:
             text = await self._fetch_page_text(url)
-            return text or "[ERROR: No text content in technicals response]"
+            content = text or "[ERROR: No text content in technicals response]"
+            return f"STOCK TECHNICALS\n\n{content}"
         except Exception as e:
             logger.error("Failed to fetch technicals for %s: %s", full_symbol, e)
-            return f"[ERROR: {e}]"
+            return f"STOCK TECHNICALS\n\n[ERROR: {e}]"
 
     async def fetch_forecast(self, full_symbol: str) -> str:
         """Fetch forecast page content from #tv-content."""
         url = f"https://www.tradingview.com/symbols/{full_symbol}/forecast/"
         try:
             text = await self._fetch_page_text(url)
-            return text or "[ERROR: No text content in forecast response]"
+            content = text or "[ERROR: No text content in forecast response]"
+            return f"STOCK FORECAST\n\n{content}"
         except Exception as e:
             logger.error("Failed to fetch forecast for %s: %s", full_symbol, e)
-            return f"[ERROR: {e}]"
+            return f"STOCK FORECAST\n\n[ERROR: {e}]"
 
     # Exact TradingView scanner endpoints that carry options chain data
     _OPTIONS_SCAN_URLS = [
