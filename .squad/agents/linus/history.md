@@ -540,3 +540,27 @@ Rusty completed backend implementation for the position-from-decision workflow:
 - Automatic adaptation to user's local timezone when relevant
 - Professional, polished time display
 
+
+## Fixed: Alert Detail "Return to Symbol" Link (2024-03-30)
+
+**Issue**: The "return to SYMBOL" link in alert detail view was broken - constructing URLs with "MARKET:SYMBOL" format (e.g., "NASDAQ:AAPL"), but symbol detail page expects just the symbol (e.g., "AAPL").
+
+**Root Cause**: The `symbol` variable passed to the alert_detail.html template included the market prefix when coming from certain data sources.
+
+**Solution**: Updated `web/templates/alert_detail.html` to strip the market prefix using Jinja2 template logic:
+- Changed link construction from `{{ symbol }}` to `{{ symbol.split(':')[-1] if ':' in symbol else symbol }}`
+- Applied fix to:
+  - Back link URL (line 6)
+  - Back link display text (line 6)
+  - Page title (line 2)
+  - Subtitle (line 8)
+
+**Pattern**: When dealing with symbols in templates, always strip market prefix for URL construction:
+```jinja2
+{{ symbol.split(':')[-1] if ':' in symbol else symbol }}
+```
+
+**Files Modified**:
+- `web/templates/alert_detail.html`: Added symbol parsing logic to extract ticker from "MARKET:SYMBOL" format
+
+**Key Learning**: Symbol data can come in different formats depending on the source. Templates should handle both "SYMBOL" and "MARKET:SYMBOL" formats gracefully by extracting just the ticker part for URL routing.

@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Alert Detail — {{ symbol }} — Stock Options Manager{% endblock %}
+{% block title %}Alert Detail — {{ symbol.split(':')[-1] if ':' in symbol else symbol }} — Stock Options Manager{% endblock %}
 
 {% block content %}
 <div class="page-header">
-    <a href="/alerts/{{ agent_type }}/{{ symbol }}" class="back-link">← {{ agent_label }}: {{ symbol }}</a>
+    <a href="/alerts/{{ agent_type }}/{{ symbol.split(':')[-1] if ':' in symbol else symbol }}" class="back-link">← {{ agent_label }}: {{ symbol.split(':')[-1] if ':' in symbol else symbol }}</a>
     <h1>Alert Detail</h1>
-    <p class="subtitle">{{ agent_label }} · {{ symbol }} · Entry #{{ alert_index + 1 }}</p>
+    <p class="subtitle">{{ agent_label }} · {{ symbol.split(':')[-1] if ':' in symbol else symbol }} · Entry #{{ alert_index + 1 }}</p>
 </div>
 
 <!-- Alert card -->
