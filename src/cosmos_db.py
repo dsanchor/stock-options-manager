@@ -421,10 +421,15 @@ class CosmosDBService:
             "is_alert": False,
             **activity_data,
         }
-        # Ensure computed id and canonical timestamp are not overridden
-        # by activity_data (the **spread can silently overwrite earlier keys).
+        # The **activity_data spread above can silently overwrite earlier keys.
+        # Reassert all routing/identity fields so LLM-generated dicts never
+        # corrupt id, doc_type, symbol, agent_type, timestamp, or is_alert.
         doc["id"] = doc_id
         doc["timestamp"] = ts
+        doc["doc_type"] = "activity"
+        doc["symbol"] = symbol
+        doc["agent_type"] = agent_type
+        doc["is_alert"] = False
 
         if ttl_seconds is not None:
             doc["ttl"] = ttl_seconds
@@ -449,10 +454,15 @@ class CosmosDBService:
             "activity_id": activity_id,
             **alert_data,
         }
-        # Ensure computed id and canonical timestamp are not overridden
-        # by alert_data (the **spread can silently overwrite earlier keys).
+        # The **alert_data spread above can silently overwrite earlier keys.
+        # Reassert all routing/identity fields so LLM-generated dicts never
+        # corrupt id, doc_type, symbol, agent_type, timestamp, or activity_id.
         doc["id"] = doc_id
         doc["timestamp"] = ts
+        doc["doc_type"] = "alert"
+        doc["symbol"] = symbol
+        doc["agent_type"] = agent_type
+        doc["activity_id"] = activity_id
 
         return self.container.create_item(doc)
 

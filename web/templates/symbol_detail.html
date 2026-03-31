@@ -292,51 +292,6 @@
     </div>
 </div>
 
-<!-- Recent Activities -->
-<div class="card">
-    <div class="card-header">
-        <h2>Recent Activities</h2>
-        <div class="filter-group">
-            <div class="filter-pills" id="sym-activity-time-filter">
-                <button class="pill" data-range="1">1d</button>
-                <button class="pill active" data-range="7">7d</button>
-                <button class="pill" data-range="30">30d</button>
-            </div>
-            <span class="card-badge">{{ activities | length }}</span>
-        </div>
-    </div>
-    {% if activities %}
-    <div class="table-wrap">
-        <table id="activities-table">
-            <thead>
-                <tr>
-                    <th>Timestamp</th>
-                    <th>Agent</th>
-                    <th>Activity</th>
-                    <th>Underlying</th>
-                    <th>Confidence</th>
-                    <th>Reason</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for d in activities %}
-                <tr class="clickable-row" data-href="/activities/{{ d.id }}" data-timestamp="{{ d.timestamp[:19] }}">
-                    <td class="mono">{{ d.timestamp[:19] }}</td>
-                    <td>{{ d._agent_label }}</td>
-                    <td><span class="badge badge-{{ d.activity | lower }}">{{ d.activity }}</span>{% if d.is_alert %} ⚡{% endif %}</td>
-                    <td class="mono">${{ d.underlying_price if d.underlying_price else "—" }}</td>
-                    <td><span class="confidence confidence-{{ d.confidence or 'medium' }}">{{ d.confidence or "—" }}</span></td>
-                    <td>{{ d.reason[:120] ~ ("…" if d.reason | length > 120 else "") if d.reason else "—" }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    {% else %}
-    <p class="empty-state">No activities yet for this symbol.</p>
-    {% endif %}
-</div>
-
 <!-- Recent Alerts -->
 <div class="card">
     <div class="card-header">
@@ -395,6 +350,51 @@
     </div>
     {% else %}
     <p class="empty-state">No alerts yet for this symbol.</p>
+    {% endif %}
+</div>
+
+<!-- Recent Activities -->
+<div class="card">
+    <div class="card-header">
+        <h2>Recent Activities</h2>
+        <div class="filter-group">
+            <div class="filter-pills" id="sym-activity-time-filter">
+                <button class="pill" data-range="1">1d</button>
+                <button class="pill active" data-range="7">7d</button>
+                <button class="pill" data-range="30">30d</button>
+            </div>
+            <span class="card-badge">{{ activities | length }}</span>
+        </div>
+    </div>
+    {% if activities %}
+    <div class="table-wrap">
+        <table id="activities-table">
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Agent</th>
+                    <th>Activity</th>
+                    <th>Underlying</th>
+                    <th>Confidence</th>
+                    <th>Reason</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for d in activities %}
+                <tr class="clickable-row" data-href="/activities/{{ d.id }}" data-timestamp="{{ d.timestamp[:19] }}">
+                    <td class="mono">{{ d.timestamp[:19] }}</td>
+                    <td>{{ d._agent_label }}</td>
+                    <td><span class="badge badge-{{ d.activity | lower }}">{{ d.activity }}</span>{% if d.is_alert %} ⚡{% endif %}</td>
+                    <td class="mono">${{ d.underlying_price if d.underlying_price else "—" }}</td>
+                    <td><span class="confidence confidence-{{ d.confidence or 'medium' }}">{{ d.confidence or "—" }}</span></td>
+                    <td>{{ d.reason[:120] ~ ("…" if d.reason | length > 120 else "") if d.reason else "—" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No activities yet for this symbol.</p>
     {% endif %}
 </div>
 {% endblock %}
