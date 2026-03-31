@@ -126,8 +126,8 @@ The solution: `TradingViewFetcher` (`src/tv_data_fetcher.py`) uses a hybrid appr
 | Data | Method | Typical Size | Content |
 |------|--------|-------------|---------|
 | Overview | `requests` + `BeautifulSoup` (embedded JSON) + scanner API for fundamentals | ~variable | Market cap, P/E, EPS, dividend yield, sector, employees, company description |
-| Technicals | Scanner API (`scanner.tradingview.com/america/scan2`) | ~3K chars | Oscillators (RSI, MACD, Stochastic), moving averages (EMA/SMA 10-200), summary recommendations with Buy/Sell/Neutral signals |
-| Forecast | Scanner API (`scanner.tradingview.com/america/scan2`) | ~2.5K chars | Analyst consensus, price targets (high/median/low), ratings distribution |
+| Technicals | `requests` + `BeautifulSoup` (embedded JSON) + scanner API fallback | ~3K chars | Oscillators (RSI, MACD, Stochastic), moving averages (EMA/SMA 10-200), summary recommendations with Buy/Sell/Neutral signals |
+| Forecast | `requests` + `BeautifulSoup` (embedded JSON) + scanner API fallback | ~2.5K chars | Analyst consensus, price targets (high/median/low), ratings distribution |
 | Dividends | `requests` + `BeautifulSoup` + scanner API | ~variable | Dividend yield, amount, ex-date, payment frequency, payout ratio |
 | Options chain | Playwright `page.on("response")` interception | ~variable | Structured JSON from TradingView scanner API (`scanner.tradingview.com/global/scan2` + `options/scan2`): strikes, bids, asks, greeks, volume, OI. Requires browser authentication — scanner API rejects unauthenticated options requests. Falls back to DOM `innerText` if no API responses captured |
 
