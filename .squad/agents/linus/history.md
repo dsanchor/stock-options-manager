@@ -659,3 +659,62 @@ Added per-symbol notification toggle UI to enable/disable Telegram notifications
 
 **Impact Scope:** Agent instruction files only; no downstream architecture changes.
 
+
+### Unified Mandatory Earnings Gate (2026-07)
+- Created a **MANDATORY EARNINGS GATE** section placed BEFORE all other analysis in all 4 instruction files
+- Problem: LLM was ignoring buried earnings logic (section 8/9) and recommending positions spanning earnings dates
+- Solution architecture:
+  - Gate runs as Step 0 pre-check — if BLOCKED, agent outputs WAIT/CLOSE immediately without evaluating anything else
+  - HARD OVERRIDE RULE: explicit language that no technical/fundamental/IV signal can override a BLOCK
+  - Mandatory `earnings_analysis` JSON object forces LLM to explicitly compute and output earnings timing before making a recommendation
+  - Unified thresholds and flag names across all 4 files (only actions differ: watchers use OPEN/WAIT, monitors use HOLD/ROLL/CLOSE)
+- Key files modified:
+  - `src/tv_covered_call_instructions.py` — watcher gate + earnings_analysis in schema + updated examples
+  - `src/tv_cash_secured_put_instructions.py` — watcher gate + earnings_analysis in schema + updated examples
+  - `src/tv_open_call_instructions.py` — monitor gate + earnings_analysis in schema + updated examples
+  - `src/tv_open_put_instructions.py` — monitor gate + earnings_analysis in schema + updated examples
+- Old duplicate earnings sections (section 8/9 in watchers, section 6 in monitors) replaced with brief cross-references to the gate
+- Gate result enum values:
+  - Watchers: OPEN_NORMALLY, ALLOWED, ALLOWED_WITH_CAUTION, BLOCKED, IDEAL, CONSERVATIVE_DTE
+  - Monitors: HOLD, HOLD_WITH_CAUTION, FLAG, ROLL_RECOMMENDED, ROLL_URGENTLY, CLOSE_OR_ROLL, CONSERVATIVE
+- Earnings risk flags (unified): `earnings_approaching`, `earnings_soon`, `earnings_imminent`, `earnings_within_dte`, `unknown_earnings`
+- Design insight: Forcing a structured `earnings_analysis` object in every response makes the LLM reason explicitly about dates — it can't skip the logic if it must fill in the fields
+- Commit: b51ea1a
+
+---
+
+## Earnings Matrix Ported to Monitors (2026-07-16)
+**Status:** ✅ Complete
+
+Ported Earnings Decision Matrix from analysis agents to both open_call_monitor and open_put_monitor instruction files. Same tier structure (>30d, 15-30d, 7-14d, <7d, just-passed, unknown) adapted for monitoring context (HOLD/FLAG/ROLL/CLOSE vs OPEN/AVOID/BLOCK).
+
+**Files Changed:**
+- src/tv_open_call_instructions.py
+- src/tv_open_put_instructions.py
+
+**Key Design:**
+- Expiration-vs-earnings axis remains primary
+- Urgency escalation: FLAG → ROLL → CLOSE
+- Put-specific additions: earnings miss gap risk, downgrade clustering
+- Override rule: earnings risk urgency overrides favorable Greeks
+
+---
+
+## Unified Mandatory Earnings Gate (2026-07-09)
+**Status:** ✅ Complete
+
+Implemented mandatory earnings gate as FIRST analytical step across all 4 instruction files. Gate-before-analysis architecture with hard override rule. All responses now include required `earnings_analysis` JSON object.
+
+**Files Changed:**
+- src/tv_covered_call_instructions.py
+- src/tv_cash_secured_put_instructions.py
+- src/tv_open_call_instructions.py
+- src/tv_open_put_instructions.py
+
+**Key Design Choices:**
+1. Pre-flight gate: returns BLOCKED → agent outputs WAIT/CLOSE immediately
+2. Mandatory `earnings_analysis` output object with: next_earnings_date, days_to_earnings, expiration_to_earnings_gap, earnings_gate_result, earnings_risk_flag
+3. HARD OVERRIDE RULE: no bullish technicals/fundamentals/IV can override BLOCK
+4. Unified terminology across all 4 files; only actions differ by agent type
+
+**Impact:** Non-breaking schema addition. All agents now output earnings_analysis in every response.

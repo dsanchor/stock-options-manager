@@ -907,3 +907,42 @@ config = cosmos_settings if cosmos_settings else _load_config()
 - The `merge_defaults()` logic in `cosmos_db.py` is correctly implemented (never overwrites existing keys)
 - The startup banner in `run.py` still reads from `config.yaml` since CosmosDB isn't initialized yet — cosmetic only, acceptable
 
+
+---
+
+### Unified Mandatory Earnings Gate
+
+**Date:** 2026-07-09
+**Author:** Linus (Quant Dev)
+**Status:** Implemented
+**Impact:** Team-wide (changes agent output schema)
+
+The LLM was ignoring the Earnings Decision Matrix (added in ccf299a) because it was buried at section 8/9 among many other analytical sections. A watcher agent recommended selling a call with expiration AFTER earnings, with no earnings flag. The matrix wasn't prominent enough for the LLM to consistently follow.
+
+**Decision:** Created a **MANDATORY EARNINGS GATE** that runs as the FIRST analytical step (before technicals, volatility, fundamentals) in all 4 instruction files.
+
+**Key Design Choices:**
+
+1. **Gate-before-analysis architecture**: The earnings check is a pre-flight gate, not one section among many. If it returns BLOCKED, the agent must output WAIT/CLOSE immediately — it never reaches the technical analysis.
+
+2. **Mandatory `earnings_analysis` output object**: Every JSON response now MUST include an `earnings_analysis` object with computed fields (next_earnings_date, days_to_earnings, expiration_to_earnings_gap, earnings_gate_result, earnings_risk_flag). This forces the LLM to explicitly reason about earnings timing before recommending. If it must fill in the fields, it can't skip the logic.
+
+3. **HARD OVERRIDE RULE**: Explicit language stating no combination of bullish technicals, strong fundamentals, or favorable IV can override a BLOCK. This is a binary gate, not a weighted factor.
+
+4. **Unified terminology across all 4 files**: Same thresholds, same flag names, same matrix structure. Only the actions differ (watchers: OPEN/WAIT; monitors: HOLD/ROLL/CLOSE).
+
+**Implications for Team:**
+
+- **Rusty (Infrastructure)**: The JSON output schema now includes `earnings_analysis` as a required field. If any downstream parsing depends on the schema, it should be updated to expect this new object. The agent_runner's JSON extraction should handle it transparently since it parses the full JSON block.
+
+- **Schema change**: All agents now output `earnings_analysis` in every response. This is a non-breaking addition (new field, existing fields unchanged).
+
+- **Testing**: Recommend testing with a symbol where earnings are 10-20 days away to verify the gate correctly blocks positions that span earnings.
+
+**Files Changed:**
+- `src/tv_covered_call_instructions.py`
+- `src/tv_cash_secured_put_instructions.py`
+- `src/tv_open_call_instructions.py`
+- `src/tv_open_put_instructions.py`
+
+**Commit:** b51ea1a

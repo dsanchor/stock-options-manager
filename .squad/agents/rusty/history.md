@@ -123,3 +123,37 @@ The `source` dict construction is identical in both paths — factored from the 
 
 **Impact Scope:** Web UI only; no downstream agent changes.
 
+
+---
+
+## Alert Checkbox Behavior (2026-03-31)
+**Status:** ✅ Complete
+
+Alert pre-fill for Add Position form now transparently attaches source activity metadata instead of pre-filling form fields. Checkbox sends `source_activity_id` to backend; backend builds `source` dict. No form field side effects.
+
+**Files Changed:**
+- web/app.py
+- web/templates/symbol_detail.html
+
+**Notes for Downstream:**
+- Position document includes `source` metadata when checkbox used
+- No watchlist cascade changes
+- No new CosmosDB queries
+
+---
+
+## Earnings Gate Schema Change (2026-07-09)
+**Status:** ✅ Noted
+
+Linus implemented mandatory earnings gate across all 4 instruction files. All agent responses now include `earnings_analysis` JSON object as first analytical step.
+
+**Impact:**
+- New field: `earnings_analysis` (non-breaking addition)
+- JSON extraction in agent_runner should handle transparently
+- Consider updating any downstream schema validation if present
+
+**Files Changed (by Linus):**
+- src/tv_covered_call_instructions.py
+- src/tv_cash_secured_put_instructions.py
+- src/tv_open_call_instructions.py
+- src/tv_open_put_instructions.py
