@@ -1,8 +1,12 @@
-"""TradingView data fetcher using native Python Playwright.
+"""TradingView data fetcher — hybrid BeautifulSoup + Playwright.
 
-Pre-fetches overview, technicals, forecast, dividends, and options chain data from
-TradingView before the agent runs. Returns clean text data the agent can
-analyze without needing any browser tools.
+Overview, technicals, forecast, and dividends are fetched via requests +
+BeautifulSoup (with TradingView scanner API fallback).  The options chain
+still uses Playwright because it requires browser-level API interception.
+
+Returns structured JSON strings for the four BS4-based fetchers and raw
+text for the options chain.  All return types are ``str`` so callers
+(``fetch_all``, ``agent_runner``, ``web/app.py``) work unchanged.
 """
 
 import asyncio
@@ -10,25 +14,682 @@ import json
 import logging
 import re
 import time
+from datetime import datetime, timezone
 
+import requests as _requests
+from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
 logger = logging.getLogger(__name__)
 
+# ======================================================================
+# Shared constants / helpers for the BeautifulSoup + scanner API approach
+# ======================================================================
+
+_HTTP_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+}
+
+_SCANNER_API_URL = "https://scanner.tradingview.com/america/scan"
+
+
+def _scanner_api_fetch(pro_symbol: str, columns: list[str]) -> dict | None:
+    """POST to TradingView scanner API and return a {column: value} dict."""
+    payload = {
+        "symbols": {"tickers": [pro_symbol], "query": {"types": []}},
+        "columns": columns,
+    }
+    resp = _requests.post(
+        _SCANNER_API_URL,
+        json=payload,
+        headers={
+            "User-Agent": _HTTP_HEADERS["User-Agent"],
+            "Content-Type": "application/json",
+        },
+        timeout=15,
+    )
+    if resp.status_code != 200:
+        return None
+    result = resp.json()
+    if result.get("error") or not result.get("data"):
+        return None
+    row = result["data"][0]["d"]
+    return dict(zip(columns, row))
+
+
+def _extract_pro_symbol(soup: BeautifulSoup) -> str | None:
+    """Extract the pro_symbol (e.g. NASDAQ:AAPL) from embedded JSON metadata."""
+    for script in soup.find_all("script"):
+        txt = script.get_text().strip()
+        if not (txt.startswith("{") and len(txt) > 5000):
+            continue
+        try:
+            data = json.loads(txt)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        for _key, blob in data.items():
+            if not isinstance(blob, dict):
+                continue
+            sym = blob.get("data", {}).get("symbol", {})
+            if isinstance(sym, dict) and "pro_symbol" in sym:
+                return sym["pro_symbol"]
+    return None
+
+
+# ======================================================================
+# Overview helpers
+# ======================================================================
+
+_OVERVIEW_FUNDAMENTAL_FIELDS = [
+    ("market_cap_basic", "Market Cap"),
+    ("price_earnings_ttm", "P/E Ratio (TTM)"),
+    ("earnings_per_share_basic_ttm", "EPS (TTM)"),
+    ("dividends_yield", "Dividend Yield (%)"),
+    ("total_revenue_fy", "Revenue (FY)"),
+    ("net_income", "Net Income"),
+    ("beta_1_year", "Beta (1Y)"),
+    ("total_shares_outstanding", "Shares Outstanding"),
+    ("float_shares_outstanding_current", "Float Shares"),
+    ("number_of_employees", "Employees"),
+    ("sector", "Sector"),
+    ("industry", "Industry"),
+    ("revenue_fq", "Revenue (Last Quarter)"),
+    ("earnings_per_share_fq", "EPS (Last Quarter)"),
+    ("earnings_fiscal_period_fq", "Earnings Period"),
+    ("earnings_per_share_forecast_next_fq", "EPS Forecast (Next Q)"),
+    ("revenue_forecast_next_fq", "Revenue Forecast (Next Q)"),
+    ("earnings_release_next_date_fq", "Next Earnings Date"),
+    ("recommendation_mark", "Analyst Rating (1=Strong Buy, 5=Strong Sell)"),
+    ("all_time_high", "All-Time High"),
+    ("all_time_high_day", "All-Time High Date"),
+    ("all_time_low", "All-Time Low"),
+    ("all_time_low_day", "All-Time Low Date"),
+    ("fundamental_currency_code", "Currency"),
+    ("web_site_url", "Website"),
+]
+
+
+def _format_overview_value(key: str, value):
+    if value is None:
+        return "N/A"
+    if key == "dividends_yield":
+        return f"{value:.2f}%"
+    if key in ("market_cap_basic", "total_revenue_fy", "net_income", "revenue_fq",
+               "revenue_forecast_next_fq"):
+        if abs(value) >= 1e12:
+            return f"${value / 1e12:.2f}T"
+        if abs(value) >= 1e9:
+            return f"${value / 1e9:.2f}B"
+        if abs(value) >= 1e6:
+            return f"${value / 1e6:.2f}M"
+        return f"${value:,.0f}"
+    if key in ("earnings_release_next_date_fq", "all_time_high_day", "all_time_low_day"):
+        try:
+            dt = datetime.fromtimestamp(value, tz=timezone.utc)
+            return dt.strftime("%Y-%m-%d")
+        except (ValueError, TypeError, OSError):
+            return str(value)
+    if key in ("price_earnings_ttm", "beta_1_year", "recommendation_mark"):
+        return f"{value:.2f}"
+    if key in ("earnings_per_share_basic_ttm", "earnings_per_share_fq",
+               "earnings_per_share_forecast_next_fq"):
+        return f"${value:.2f}"
+    if key in ("total_shares_outstanding", "float_shares_outstanding_current",
+               "number_of_employees"):
+        return f"{value:,.0f}"
+    if key in ("all_time_high", "all_time_low"):
+        return f"${value:,.2f}"
+    return str(value)
+
+
+def _overview_try_html(soup: BeautifulSoup) -> dict | None:
+    for tag in soup.find_all("h1"):
+        if "fundamentals" in tag.get_text(strip=True).lower():
+            parent = tag.parent
+            return {"raw_content": parent.get_text(separator="\n", strip=True)}
+    return None
+
+
+def _overview_try_json(soup: BeautifulSoup) -> dict | None:
+    for script in soup.find_all("script"):
+        txt = script.get_text().strip()
+        if not (txt.startswith("{") and len(txt) > 5000):
+            continue
+        try:
+            data = json.loads(txt)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        for _key, blob in data.items():
+            if not isinstance(blob, dict):
+                continue
+            sym = blob.get("data", {}).get("symbol", {})
+            if not isinstance(sym, dict):
+                continue
+            if "market_cap_basic" not in sym or "price_earnings_ttm" not in sym:
+                continue
+            result = {
+                "name": sym.get("short_description") or sym.get("description", ""),
+                "ticker": sym.get("ticker_title") or sym.get("instrument_name", ""),
+                "exchange": sym.get("exchange", ""),
+            }
+            fundamentals = {}
+            for field_key, label in _OVERVIEW_FUNDAMENTAL_FIELDS:
+                if field_key in sym:
+                    fundamentals[field_key] = {
+                        "label": label,
+                        "value": sym[field_key],
+                        "formatted": _format_overview_value(field_key, sym[field_key]),
+                    }
+            result["fundamentals"] = fundamentals
+            return result
+    return None
+
+
+# ======================================================================
+# Dividends helpers
+# ======================================================================
+
+_DIVIDEND_FIELDS = [
+    ("dps_common_stock_prim_issue_fy", "Dividends Per Share (FY)"),
+    ("dps_common_stock_prim_issue_fq", "Dividends Per Share (FQ)"),
+    ("dividends_yield", "Dividend Yield (%)"),
+    ("dividend_payout_ratio_ttm", "Payout Ratio (TTM %)"),
+    ("dividend_payout_ratio_fy", "Payout Ratio (FY %)"),
+    ("dps_common_stock_prim_issue_yoy_growth_fy", "DPS Growth YoY (FY %)"),
+    ("continuous_dividend_payout", "Consecutive Years Paying"),
+    ("continuous_dividend_growth", "Consecutive Years Growing"),
+    ("ex_dividend_date_recent", "Ex-Dividend Date (Recent)"),
+    ("dividends_per_share_fq", "Dividends Per Share (FQ, alt)"),
+    ("earnings_per_share_basic_ttm", "EPS (TTM)"),
+    ("price_earnings_ttm", "P/E Ratio (TTM)"),
+    ("market_cap_basic", "Market Cap"),
+    ("total_shares_outstanding", "Shares Outstanding"),
+    ("fundamental_currency_code", "Currency"),
+]
+_DIVIDEND_SCANNER_COLS = [f for f, _ in _DIVIDEND_FIELDS] + [
+    "description", "exchange", "name",
+]
+
+
+def _format_dividend_value(key: str, value):
+    if value is None:
+        return "N/A"
+    if key in ("dividends_yield", "dividend_payout_ratio_ttm", "dividend_payout_ratio_fy",
+               "dps_common_stock_prim_issue_yoy_growth_fy"):
+        return f"{value:.2f}%"
+    if key == "market_cap_basic":
+        if abs(value) >= 1e12:
+            return f"${value / 1e12:.2f}T"
+        if abs(value) >= 1e9:
+            return f"${value / 1e9:.2f}B"
+        if abs(value) >= 1e6:
+            return f"${value / 1e6:.2f}M"
+        return f"${value:,.0f}"
+    if key == "ex_dividend_date_recent":
+        try:
+            dt = datetime.fromtimestamp(value, tz=timezone.utc)
+            return dt.strftime("%Y-%m-%d")
+        except (ValueError, TypeError, OSError):
+            return str(value)
+    if key == "price_earnings_ttm":
+        return f"{value:.2f}"
+    if key in ("dps_common_stock_prim_issue_fy", "dps_common_stock_prim_issue_fq",
+               "dividends_per_share_fq", "earnings_per_share_basic_ttm"):
+        return f"${value:.2f}"
+    if key == "total_shares_outstanding":
+        return f"{value:,.0f}"
+    if key in ("continuous_dividend_payout", "continuous_dividend_growth"):
+        return f"{int(value)} years"
+    return str(value)
+
+
+def _build_dividend_dict(sym: dict) -> dict:
+    result = {
+        "name": sym.get("short_description") or sym.get("description", ""),
+        "ticker": sym.get("ticker_title") or sym.get("instrument_name") or sym.get("name", ""),
+        "exchange": sym.get("exchange", ""),
+    }
+    dividends = {}
+    for field_key, label in _DIVIDEND_FIELDS:
+        if field_key in sym and sym[field_key] is not None:
+            dividends[field_key] = {
+                "label": label,
+                "value": sym[field_key],
+                "formatted": _format_dividend_value(field_key, sym[field_key]),
+            }
+    result["dividends"] = dividends
+    return result
+
+
+def _dividends_try_html(soup: BeautifulSoup) -> dict | None:
+    for tag in soup.find_all("h1"):
+        text = tag.get_text(strip=True).lower()
+        if "dividends" in text or "fundamentals" in text:
+            parent = tag.parent
+            return {"raw_content": parent.get_text(separator="\n", strip=True)}
+    return None
+
+
+def _dividends_try_json(soup: BeautifulSoup) -> dict | None:
+    for script in soup.find_all("script"):
+        txt = script.get_text().strip()
+        if not (txt.startswith("{") and len(txt) > 5000):
+            continue
+        try:
+            data = json.loads(txt)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        for _key, blob in data.items():
+            if not isinstance(blob, dict):
+                continue
+            sym = blob.get("data", {}).get("symbol", {})
+            if not isinstance(sym, dict):
+                continue
+            if "dividends_yield" not in sym and "dps_common_stock_prim_issue_fy" not in sym:
+                continue
+            return _build_dividend_dict(sym)
+    return None
+
+
+# ======================================================================
+# Technicals helpers
+# ======================================================================
+
+_TECHNICALS_SCANNER_COLS = [
+    "Recommend.All", "Recommend.Other", "Recommend.MA",
+    "RSI", "RSI[1]",
+    "Stoch.K", "Stoch.K[1]", "Stoch.D", "Stoch.D[1]",
+    "CCI20", "CCI20[1]",
+    "ADX", "ADX+DI", "ADX-DI", "ADX+DI[1]", "ADX-DI[1]",
+    "AO", "AO[1]", "AO[2]",
+    "Mom", "Mom[1]",
+    "MACD.macd", "MACD.signal",
+    "W.R",
+    "BBPower",
+    "UO",
+    "EMA10", "SMA10", "EMA20", "SMA20", "EMA30", "SMA30",
+    "EMA50", "SMA50", "EMA100", "SMA100", "EMA200", "SMA200",
+    "Ichimoku.BLine", "VWMA", "HullMA9",
+    "close",
+    "description", "exchange", "name",
+]
+
+_OSCILLATOR_DISPLAY = [
+    ("RSI", "RSI (14)"),
+    ("Stoch.K", "Stochastic %K (14,3,3)"),
+    ("CCI20", "CCI (20)"),
+    ("ADX", "ADX (14)"),
+    ("AO", "Awesome Oscillator"),
+    ("Mom", "Momentum (10)"),
+    ("MACD.macd", "MACD Level (12,26)"),
+    ("W.R", "Williams %R (14)"),
+    ("BBPower", "Bull Bear Power"),
+    ("UO", "Ultimate Oscillator (7,14,28)"),
+]
+
+_MA_DISPLAY = [
+    ("EMA10", "EMA (10)"), ("SMA10", "SMA (10)"),
+    ("EMA20", "EMA (20)"), ("SMA20", "SMA (20)"),
+    ("EMA30", "EMA (30)"), ("SMA30", "SMA (30)"),
+    ("EMA50", "EMA (50)"), ("SMA50", "SMA (50)"),
+    ("EMA100", "EMA (100)"), ("SMA100", "SMA (100)"),
+    ("EMA200", "EMA (200)"), ("SMA200", "SMA (200)"),
+    ("Ichimoku.BLine", "Ichimoku Base Line (9,26,52,26)"),
+    ("VWMA", "VWMA (20)"), ("HullMA9", "Hull MA (9)"),
+]
+
+
+def _tech_recommendation_label(value) -> str:
+    if value is None:
+        return "N/A"
+    if value >= 0.5:
+        return "Strong Buy"
+    if value > 0.1:
+        return "Buy"
+    if value >= -0.1:
+        return "Neutral"
+    if value > -0.5:
+        return "Sell"
+    return "Strong Sell"
+
+
+def _oscillator_signal(key: str, sym: dict) -> str:
+    v = sym.get(key)
+    if v is None:
+        return "Neutral"
+    if key == "RSI":
+        prev = sym.get("RSI[1]")
+        if prev is not None:
+            if v < 30 and v > prev:
+                return "Buy"
+            if v > 70 and v < prev:
+                return "Sell"
+        return "Neutral"
+    if key == "Stoch.K":
+        k, d = sym.get("Stoch.K"), sym.get("Stoch.D")
+        k1, d1 = sym.get("Stoch.K[1]"), sym.get("Stoch.D[1]")
+        if None not in (k, d, k1, d1):
+            if k < 20 and d < 20 and k > d and k1 < d1:
+                return "Buy"
+            if k > 80 and d > 80 and k < d and k1 > d1:
+                return "Sell"
+        return "Neutral"
+    if key == "CCI20":
+        prev = sym.get("CCI20[1]")
+        if prev is not None:
+            if v < -100 and v > prev:
+                return "Buy"
+            if v > 100 and v < prev:
+                return "Sell"
+        return "Neutral"
+    if key == "ADX":
+        adx = sym.get("ADX")
+        plus_di, minus_di = sym.get("ADX+DI"), sym.get("ADX-DI")
+        plus_di1, minus_di1 = sym.get("ADX+DI[1]"), sym.get("ADX-DI[1]")
+        if None not in (adx, plus_di, minus_di, plus_di1, minus_di1) and adx > 20:
+            if plus_di > minus_di and plus_di1 < minus_di1:
+                return "Buy"
+            if plus_di < minus_di and plus_di1 > minus_di1:
+                return "Sell"
+        return "Neutral"
+    if key == "AO":
+        ao, ao1, ao2 = sym.get("AO"), sym.get("AO[1]"), sym.get("AO[2]")
+        if None not in (ao, ao1):
+            if (ao > 0 and ao1 < 0) or (ao2 is not None and ao > 0 and ao > ao1 and ao1 < ao2):
+                return "Buy"
+            if (ao < 0 and ao1 > 0) or (ao2 is not None and ao < 0 and ao < ao1 and ao1 > ao2):
+                return "Sell"
+        return "Neutral"
+    if key == "Mom":
+        prev = sym.get("Mom[1]")
+        if prev is not None:
+            return "Buy" if v > prev else ("Sell" if v < prev else "Neutral")
+        return "Neutral"
+    if key == "MACD.macd":
+        signal = sym.get("MACD.signal")
+        if signal is not None:
+            return "Buy" if v > signal else ("Sell" if v < signal else "Neutral")
+        return "Neutral"
+    if key == "W.R":
+        if v < -80:
+            return "Buy"
+        if v > -20:
+            return "Sell"
+        return "Neutral"
+    if key == "BBPower":
+        return "Buy" if v > 0 else ("Sell" if v < 0 else "Neutral")
+    if key == "UO":
+        if v < 30:
+            return "Buy"
+        if v > 70:
+            return "Sell"
+        return "Neutral"
+    return "Neutral"
+
+
+def _ma_signal(key: str, ma_val, close) -> str:
+    if ma_val is None or close is None:
+        return "Neutral"
+    if close > ma_val:
+        return "Buy"
+    if close < ma_val:
+        return "Sell"
+    return "Neutral"
+
+
+def _count_signals(signals: list[str]) -> tuple[int, int, int]:
+    buy = sum(1 for s in signals if s == "Buy")
+    sell = sum(1 for s in signals if s == "Sell")
+    neutral = sum(1 for s in signals if s == "Neutral")
+    return buy, sell, neutral
+
+
+def _format_tech_value(key: str, value):
+    if value is None:
+        return "N/A"
+    if key in ("RSI", "Stoch.K", "CCI20", "ADX", "W.R", "UO"):
+        return f"{value:.2f}"
+    if key in ("AO", "Mom", "MACD.macd", "BBPower"):
+        return f"{value:.4f}"
+    if key.startswith(("EMA", "SMA", "VWMA", "HullMA", "Ichimoku")):
+        return f"${value:,.2f}"
+    return str(value)
+
+
+def _build_technicals_dict(sym: dict) -> dict:
+    result = {
+        "name": sym.get("short_description") or sym.get("description", ""),
+        "ticker": sym.get("ticker_title") or sym.get("instrument_name") or sym.get("name", ""),
+        "exchange": sym.get("exchange", ""),
+        "price": sym.get("close"),
+    }
+    close = sym.get("close")
+    osc_signals = [_oscillator_signal(k, sym) for k, _ in _OSCILLATOR_DISPLAY]
+    ma_signals = [_ma_signal(k, sym.get(k), close) for k, _ in _MA_DISPLAY]
+    all_signals = osc_signals + ma_signals
+    total_buy, total_sell, total_neutral = _count_signals(all_signals)
+    rec_all = sym.get("Recommend.All")
+    result["summary"] = {
+        "recommendation": {"value": rec_all, "label": _tech_recommendation_label(rec_all)} if rec_all is not None else None,
+        "buy": total_buy, "sell": total_sell, "neutral": total_neutral,
+    }
+    osc_buy, osc_sell, osc_neutral = _count_signals(osc_signals)
+    rec_osc = sym.get("Recommend.Other")
+    osc_indicators = {}
+    for (fk, label), sig in zip(_OSCILLATOR_DISPLAY, osc_signals):
+        val = sym.get(fk)
+        if val is not None:
+            osc_indicators[fk] = {
+                "label": label, "value": val,
+                "formatted": _format_tech_value(fk, val), "signal": sig,
+            }
+    result["oscillators"] = {
+        "recommendation": {"value": rec_osc, "label": _tech_recommendation_label(rec_osc)} if rec_osc is not None else None,
+        "buy": osc_buy, "sell": osc_sell, "neutral": osc_neutral,
+        "indicators": osc_indicators,
+    }
+    ma_buy, ma_sell, ma_neutral = _count_signals(ma_signals)
+    rec_ma = sym.get("Recommend.MA")
+    ma_indicators = {}
+    for (fk, label), sig in zip(_MA_DISPLAY, ma_signals):
+        val = sym.get(fk)
+        if val is not None:
+            ma_indicators[fk] = {
+                "label": label, "value": val,
+                "formatted": _format_tech_value(fk, val), "signal": sig,
+            }
+    result["moving_averages"] = {
+        "recommendation": {"value": rec_ma, "label": _tech_recommendation_label(rec_ma)} if rec_ma is not None else None,
+        "buy": ma_buy, "sell": ma_sell, "neutral": ma_neutral,
+        "indicators": ma_indicators,
+    }
+    return result
+
+
+def _technicals_try_html(soup: BeautifulSoup) -> dict | None:
+    for tag in soup.find_all(["h1", "h2", "h3"]):
+        text = tag.get_text(strip=True).lower()
+        if "indicator" in text and "summary" in text:
+            parent = tag.parent
+            content = parent.get_text(separator="\n", strip=True)
+            if len(content) > len(text) + 20:
+                return {"raw_content": content}
+    return None
+
+
+def _technicals_try_json(soup: BeautifulSoup) -> dict | None:
+    for script in soup.find_all("script"):
+        txt = script.get_text().strip()
+        if not (txt.startswith("{") and len(txt) > 5000):
+            continue
+        try:
+            data = json.loads(txt)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        for _key, blob in data.items():
+            if not isinstance(blob, dict):
+                continue
+            sym = blob.get("data", {}).get("symbol", {})
+            if not isinstance(sym, dict):
+                continue
+            if "Recommend.All" not in sym and "RSI" not in sym:
+                continue
+            return _build_technicals_dict(sym)
+    return None
+
+
+# ======================================================================
+# Forecast helpers
+# ======================================================================
+
+_FORECAST_SCANNER_COLS = [
+    "price_target_average", "price_target_high", "price_target_low",
+    "price_target_median",
+    "recommendation_mark", "recommendation_buy", "recommendation_hold",
+    "recommendation_sell", "recommendation_total",
+    "Recommend.All",
+    "close",
+    "description", "exchange", "name",
+]
+
+_PRICE_TARGET_FIELDS = [
+    ("price_target_average", "Average Price Target"),
+    ("price_target_high", "High Price Target"),
+    ("price_target_low", "Low Price Target"),
+    ("price_target_median", "Median Price Target"),
+]
+
+_ANALYST_RATING_FIELDS = [
+    ("recommendation_mark", "Overall Rating"),
+    ("recommendation_total", "Total Analysts"),
+    ("recommendation_buy", "Buy"),
+    ("recommendation_hold", "Hold"),
+    ("recommendation_sell", "Sell"),
+]
+
+
+def _forecast_recommendation_label(value) -> str:
+    if value is None:
+        return "N/A"
+    if value <= 1.5:
+        return "Strong Buy"
+    if value <= 2.5:
+        return "Buy"
+    if value <= 3.5:
+        return "Hold"
+    if value <= 4.5:
+        return "Sell"
+    return "Strong Sell"
+
+
+def _build_forecast_dict(sym: dict) -> dict:
+    result = {
+        "name": sym.get("short_description") or sym.get("description", ""),
+        "ticker": sym.get("ticker_title") or sym.get("instrument_name") or sym.get("name", ""),
+        "exchange": sym.get("exchange", ""),
+        "current_price": sym.get("close"),
+    }
+    close = sym.get("close")
+    price_target: dict = {}
+    for field_key, label in _PRICE_TARGET_FIELDS:
+        val = sym.get(field_key)
+        if val is not None:
+            price_target[field_key] = {
+                "label": label, "value": val, "formatted": f"${val:,.2f}",
+            }
+    avg_target = sym.get("price_target_average")
+    if avg_target is not None and close is not None and close > 0:
+        upside_pct = ((avg_target - close) / close) * 100
+        price_target["upside_pct"] = round(upside_pct, 2)
+        price_target["upside_direction"] = "Upside" if upside_pct >= 0 else "Downside"
+    result["price_target"] = price_target if price_target else None
+
+    analyst_rating: dict = {}
+    rec_mark = sym.get("recommendation_mark")
+    if rec_mark is not None:
+        analyst_rating["overall_rating"] = {
+            "value": rec_mark,
+            "label": _forecast_recommendation_label(rec_mark),
+        }
+    for field_key, label in _ANALYST_RATING_FIELDS:
+        if field_key == "recommendation_mark":
+            continue
+        val = sym.get(field_key)
+        if val is not None:
+            analyst_rating[field_key] = {"label": label, "value": int(val)}
+    buy = sym.get("recommendation_buy") or 0
+    hold = sym.get("recommendation_hold") or 0
+    sell = sym.get("recommendation_sell") or 0
+    total = buy + hold + sell
+    if total > 0:
+        analyst_rating["distribution"] = {
+            "buy_pct": round(buy / total * 100, 1),
+            "hold_pct": round(hold / total * 100, 1),
+            "sell_pct": round(sell / total * 100, 1),
+        }
+    rec_all = sym.get("Recommend.All")
+    if rec_all is not None:
+        analyst_rating["technical_recommendation"] = {
+            "value": rec_all, "formatted": f"{rec_all:+.4f}",
+        }
+    result["analyst_rating"] = analyst_rating if analyst_rating else None
+    return result
+
+
+def _forecast_try_html(soup: BeautifulSoup) -> dict | None:
+    for tag in soup.find_all(["h1", "h2", "h3"]):
+        text = tag.get_text(strip=True).lower()
+        if "price target" in text or "analyst rating" in text:
+            parent = tag.parent
+            content = parent.get_text(separator="\n", strip=True)
+            dollar_matches = re.findall(r'\$[\d,.]+', content)
+            if len(dollar_matches) >= 3 and len(content) > 200:
+                return {"raw_content": content}
+    return None
+
+
+def _forecast_try_json(soup: BeautifulSoup) -> dict | None:
+    for script in soup.find_all("script"):
+        txt = script.get_text().strip()
+        if not (txt.startswith("{") and len(txt) > 5000):
+            continue
+        try:
+            data = json.loads(txt)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        for _key, blob in data.items():
+            if not isinstance(blob, dict):
+                continue
+            sym = blob.get("data", {}).get("symbol", {})
+            if not isinstance(sym, dict):
+                continue
+            if "price_target_average" not in sym and "recommendation_mark" not in sym:
+                continue
+            return _build_forecast_dict(sym)
+    return None
+
+
+# ======================================================================
+# TradingViewFetcher class
+# ======================================================================
 
 class TradingViewFetcher:
-    """Fetches TradingView data via headless Chromium (Python Playwright)."""
+    """Hybrid fetcher: BS4 + scanner API for 4 resources, Playwright for options."""
 
     def __init__(self):
         self._playwright = None
         self._browser = None
 
     async def __aenter__(self):
-        self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-setuid-sandbox"],
-        )
+        # Playwright is started lazily in _ensure_browser() only when needed
         return self
 
     async def __aexit__(self, *args):
@@ -37,24 +698,14 @@ class TradingViewFetcher:
         if self._playwright:
             await self._playwright.stop()
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    async def _fetch_page_text(self, url: str) -> str:
-        """Navigate to *url* and return the ``#tv-content`` innerText."""
-        page = await self._browser.new_page()
-        try:
-            await page.goto(url, wait_until="networkidle", timeout=30000)
-            await page.wait_for_timeout(2000)
-            text = await page.evaluate(
-                '(() => { const el = document.getElementById("tv-content")'
-                ' || document.querySelector("main") || document.body;'
-                ' return el.innerText; })()'
+    async def _ensure_browser(self):
+        """Start Playwright + Chromium on first use (options chain only)."""
+        if self._browser is None:
+            self._playwright = await async_playwright().start()
+            self._browser = await self._playwright.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox"],
             )
-            return text or ""
-        finally:
-            await page.close()
 
     # Retry delays in seconds for transient fetch failures
     _RETRY_DELAYS = (5, 10)
@@ -71,7 +722,6 @@ class TradingViewFetcher:
                 result = await fetch_coro_factory()
                 if result and not result.startswith("[ERROR:"):
                     return result
-                # Treat an [ERROR:…] string as a soft failure worth retrying
                 last_error = result
             except Exception as e:
                 last_error = f"[ERROR: {e}]"
@@ -90,52 +740,210 @@ class TradingViewFetcher:
         return last_error or "[ERROR: All retries exhausted]"
 
     # ------------------------------------------------------------------
-    # Page fetchers
+    # BS4 fetchers (overview, technicals, forecast, dividends)
     # ------------------------------------------------------------------
 
     async def fetch_overview(self, full_symbol: str) -> str:
-        """Fetch overview page content from #tv-content."""
+        """Fetch overview via requests + BeautifulSoup. Returns JSON string."""
         url = f"https://www.tradingview.com/symbols/{full_symbol}/"
         try:
-            text = await self._fetch_page_text(url)
-            content = text or "[ERROR: No text content in overview response]"
-            return f"STOCK OVERVIEW\n\n{content}"
+            resp = _requests.get(url, headers=_HTTP_HEADERS, timeout=15)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            data = _overview_try_html(soup)
+            if data:
+                data["source"] = "html_extraction"
+            else:
+                data = _overview_try_json(soup)
+                if data:
+                    data["source"] = "embedded_json"
+
+            if data is None:
+                logger.warning("No overview data found for %s", full_symbol)
+                return json.dumps({"title": "STOCK OVERVIEW", "symbol": full_symbol,
+                                   "error": "Could not extract overview data from HTML or embedded JSON"})
+
+            result = {
+                "title": "STOCK OVERVIEW",
+                "symbol": full_symbol,
+                "name": data.get("name", ""),
+                "ticker": data.get("ticker", ""),
+                "exchange": data.get("exchange", ""),
+                "source": data.get("source", "unknown"),
+            }
+            if "raw_content" in data:
+                result["raw_content"] = data["raw_content"]
+            elif "fundamentals" in data:
+                result["fundamentals"] = data["fundamentals"]
+            return json.dumps(result)
+
         except Exception as e:
             logger.error("Failed to fetch overview for %s: %s", full_symbol, e)
-            return f"STOCK OVERVIEW\n\n[ERROR: {e}]"
+            return json.dumps({"title": "STOCK OVERVIEW", "symbol": full_symbol,
+                               "error": str(e)})
 
     async def fetch_technicals(self, full_symbol: str) -> str:
-        """Fetch technicals page content from #tv-content."""
+        """Fetch technicals via requests + BeautifulSoup + scanner API. Returns JSON string."""
         url = f"https://www.tradingview.com/symbols/{full_symbol}/technicals/"
         try:
-            text = await self._fetch_page_text(url)
-            content = text or "[ERROR: No text content in technicals response]"
-            return f"STOCK TECHNICALS\n\n{content}"
+            resp = _requests.get(url, headers=_HTTP_HEADERS, timeout=15)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            data = _technicals_try_html(soup)
+            if data:
+                data["source"] = "html_extraction"
+            else:
+                data = _technicals_try_json(soup)
+                if data:
+                    data["source"] = "embedded_json"
+                else:
+                    pro_symbol = _extract_pro_symbol(soup)
+                    if pro_symbol:
+                        sym = _scanner_api_fetch(pro_symbol, _TECHNICALS_SCANNER_COLS)
+                        if sym:
+                            data = _build_technicals_dict(sym)
+                            data["source"] = "scanner_api"
+                            data["pro_symbol"] = pro_symbol
+
+            if data is None:
+                logger.warning("No technicals data found for %s", full_symbol)
+                return json.dumps({"title": "STOCK TECHNICALS", "symbol": full_symbol,
+                                   "error": "Could not extract technicals data"})
+
+            result = {
+                "title": "STOCK TECHNICALS",
+                "symbol": full_symbol,
+                "name": data.get("name", ""),
+                "ticker": data.get("ticker", ""),
+                "exchange": data.get("exchange", ""),
+                "source": data.get("source", "unknown"),
+            }
+            if data.get("price") is not None:
+                result["price"] = data["price"]
+            if "raw_content" in data:
+                result["raw_content"] = data["raw_content"]
+            else:
+                for key in ("summary", "oscillators", "moving_averages"):
+                    if key in data:
+                        result[key] = data[key]
+            if data.get("pro_symbol"):
+                result["pro_symbol"] = data["pro_symbol"]
+            return json.dumps(result)
+
         except Exception as e:
             logger.error("Failed to fetch technicals for %s: %s", full_symbol, e)
-            return f"STOCK TECHNICALS\n\n[ERROR: {e}]"
+            return json.dumps({"title": "STOCK TECHNICALS", "symbol": full_symbol,
+                               "error": str(e)})
 
     async def fetch_forecast(self, full_symbol: str) -> str:
-        """Fetch forecast page content from #tv-content."""
+        """Fetch forecast via requests + BeautifulSoup + scanner API. Returns JSON string."""
         url = f"https://www.tradingview.com/symbols/{full_symbol}/forecast/"
         try:
-            text = await self._fetch_page_text(url)
-            content = text or "[ERROR: No text content in forecast response]"
-            return f"STOCK FORECAST\n\n{content}"
+            resp = _requests.get(url, headers=_HTTP_HEADERS, timeout=15)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            data = _forecast_try_html(soup)
+            if data:
+                data["source"] = "html_extraction"
+            else:
+                data = _forecast_try_json(soup)
+                if data:
+                    data["source"] = "embedded_json"
+                else:
+                    pro_symbol = _extract_pro_symbol(soup)
+                    if pro_symbol:
+                        sym = _scanner_api_fetch(pro_symbol, _FORECAST_SCANNER_COLS)
+                        if sym:
+                            data = _build_forecast_dict(sym)
+                            data["source"] = "scanner_api"
+                            data["pro_symbol"] = pro_symbol
+
+            if data is None:
+                logger.warning("No forecast data found for %s", full_symbol)
+                return json.dumps({"title": "STOCK FORECAST", "symbol": full_symbol,
+                                   "error": "Could not extract forecast data"})
+
+            result = {
+                "title": "STOCK FORECAST",
+                "symbol": full_symbol,
+                "name": data.get("name", ""),
+                "ticker": data.get("ticker", ""),
+                "exchange": data.get("exchange", ""),
+                "source": data.get("source", "unknown"),
+            }
+            if data.get("current_price") is not None:
+                result["current_price"] = data["current_price"]
+            if "raw_content" in data:
+                result["raw_content"] = data["raw_content"]
+            else:
+                for key in ("price_target", "analyst_rating"):
+                    if key in data:
+                        result[key] = data[key]
+            if data.get("pro_symbol"):
+                result["pro_symbol"] = data["pro_symbol"]
+            return json.dumps(result)
+
         except Exception as e:
             logger.error("Failed to fetch forecast for %s: %s", full_symbol, e)
-            return f"STOCK FORECAST\n\n[ERROR: {e}]"
+            return json.dumps({"title": "STOCK FORECAST", "symbol": full_symbol,
+                               "error": str(e)})
 
     async def fetch_dividends(self, full_symbol: str) -> str:
-        """Fetch dividends page content from #tv-content."""
+        """Fetch dividends via requests + BeautifulSoup + scanner API. Returns JSON string."""
         url = f"https://www.tradingview.com/symbols/{full_symbol}/financials-dividends/"
         try:
-            text = await self._fetch_page_text(url)
-            content = text or "[ERROR: No text content in dividends response]"
-            return f"STOCK DIVIDENDS\n\n{content}"
+            resp = _requests.get(url, headers=_HTTP_HEADERS, timeout=15)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            data = _dividends_try_html(soup)
+            if data:
+                data["source"] = "html_extraction"
+            else:
+                data = _dividends_try_json(soup)
+                if data:
+                    data["source"] = "embedded_json"
+                else:
+                    pro_symbol = _extract_pro_symbol(soup)
+                    if pro_symbol:
+                        sym = _scanner_api_fetch(pro_symbol, _DIVIDEND_SCANNER_COLS)
+                        if sym:
+                            data = _build_dividend_dict(sym)
+                            data["source"] = "scanner_api"
+                            data["pro_symbol"] = pro_symbol
+
+            if data is None:
+                logger.warning("No dividends data found for %s", full_symbol)
+                return json.dumps({"title": "STOCK DIVIDENDS", "symbol": full_symbol,
+                                   "error": "Could not extract dividend data"})
+
+            result = {
+                "title": "STOCK DIVIDENDS",
+                "symbol": full_symbol,
+                "name": data.get("name", ""),
+                "ticker": data.get("ticker", ""),
+                "exchange": data.get("exchange", ""),
+                "source": data.get("source", "unknown"),
+            }
+            if "raw_content" in data:
+                result["raw_content"] = data["raw_content"]
+            elif "dividends" in data:
+                result["dividends"] = data["dividends"]
+            if data.get("pro_symbol"):
+                result["pro_symbol"] = data["pro_symbol"]
+            return json.dumps(result)
+
         except Exception as e:
             logger.error("Failed to fetch dividends for %s: %s", full_symbol, e)
-            return f"STOCK DIVIDENDS\n\n[ERROR: {e}]"
+            return json.dumps({"title": "STOCK DIVIDENDS", "symbol": full_symbol,
+                               "error": str(e)})
+
+    # ------------------------------------------------------------------
+    # Options chain — Playwright (unchanged)
+    # ------------------------------------------------------------------
 
     # Exact TradingView scanner endpoints that carry options chain data
     _OPTIONS_SCAN_URLS = [
@@ -150,6 +958,7 @@ class TradingViewFetcher:
         scanner endpoints. No clicking required.  Falls back to DOM innerText
         if no API data is captured.
         """
+        await self._ensure_browser()
         url = f"https://www.tradingview.com/symbols/{full_symbol}/options-chain/"
         page = await self._browser.new_page()
 
