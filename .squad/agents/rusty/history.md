@@ -43,8 +43,11 @@
 
 ## Learnings
 
-### Dict-Spread Protection Pattern
-When using `**spread` in Python dict literals, always reassert controlled fields AFTER the spread. Never rely on key ordering alone. Pattern: `doc["field"] = value` after `{**data}`.
+### Dict-Spread Protection Pattern (EXPANDED)
+When using `**spread` in Python dict literals, reassert ALL routing/identity fields after the spread — not just `id` and `timestamp`. Any field used in CosmosDB queries (e.g., `doc_type`, `symbol`, `agent_type`) MUST be protected, because LLM-generated dicts can contain arbitrary keys that silently overwrite them. The `doc_type` field is especially critical since it's used in every `WHERE` clause for document classification.
+
+### Symbol Detail Page Layout
+Alerts card appears BEFORE activities card in `web/templates/symbol_detail.html`. User preference: alerts are higher priority and should be seen first.
 
 ### Lazy Initialization of Expensive Resources
 Playwright + Chromium are expensive. Initialize lazily via helper method (`_ensure_browser()`) rather than in `__init__`. Saves resources when only lightweight fetchers (BS4) run.
@@ -55,5 +58,26 @@ Implement 3-level fallback: (1) targeted HTML extraction, (2) embedded JSON pars
 ### TradingView Scanner API for Validation
 The unauthenticated `/america/scan` endpoint (not `/options/scan2`) provides fundamentals, technicals, forecast, and dividends data without browser context. Returns "Unknown field" for invalid columns.
 
+### Chat Markdown Rendering
+Both `web/templates/chat.html` (general) and `web/templates/symbol_chat.html` (per-symbol) share the same `addMessage()` pattern. Markdown rendering via `marked.js` (CDN in `base.html`) applies only to assistant messages; user messages stay as `textContent`. The `.markdown-body` class on assistant bubbles overrides `white-space: pre-wrap` to `normal` so rendered HTML flows correctly. CSS for rendered markdown lives in `web/static/style.css` under the "Rendered Markdown inside chat bubbles" section.
+
 ### Test Scripts as Documentation
 Standalone test scripts (test_fetcher.py, test_technicals_fetcher.py, etc.) serve dual purpose: validate extraction strategies AND document the multi-strategy pattern for future maintainers.
+
+### Settings Data Source Pattern (2026-07)
+**Rule:** Any web route that displays user-configurable settings (scheduler cron, timezone, telegram config) MUST read from CosmosDB first, falling back to `config.yaml` only if CosmosDB is unavailable. Pattern: `cosmos_settings = _load_settings_from_cosmos(cosmos); config = cosmos_settings if cosmos_settings else _load_config()`. The `_load_config()` function reads the baked-in `config.yaml` which resets to defaults on every deploy. Only use `_load_config()` directly for connection credentials (`azure`, `cosmosdb` sections) that are env-var-driven.
+- **Key files:** `web/app.py` (dashboard route, telegram test route, settings routes)
+- **Related bug fix:** Commit 90c05cd — dashboard was showing config.yaml defaults instead of CosmosDB user settings after deploy.
+
+### Position Enrichment from Activities Pattern (2026-07)
+When displaying open positions, enrich them with data from the latest monitor activity (assignment_risk, moneyness). Pattern: scan the already-fetched activities list for monitor agents (`open_call_monitor`/`open_put_monitor`), build a `position_id → latest activity` lookup, and attach computed fields with `_` prefix (e.g., `_assignment_risk`, `_moneyness`) to avoid polluting the persisted document.
+- **Key files:** `web/app.py` (symbol_detail_page route, lines ~900-911), `web/templates/symbol_detail.html` (positions table)
+- **CSS classes:** `badge-risk-*` (low/medium/high/critical), `badge-moneyness-*` (otm/atm/itm/deep-itm/deep-otm) — defined in `web/static/style.css`
+- **Commit:** e8d56c8
+
+### Run Analysis Button on Symbol Detail (2026-07)
+The positions card on the symbol detail page has a "▶ Run Analysis" green `btn-trigger` button that triggers `open_call_monitor` and/or `open_put_monitor` agents depending on active position types. The button only renders when active positions exist (Jinja `selectattr` filter). It reuses the existing `/api/trigger/{agent_type}` endpoint and follows the same sequential promise-chain pattern as the dashboard's "Run Full Analysis" button (see `web/static/app.js`). Active position types (calls/puts) are embedded as `data-has-calls` / `data-has-puts` attributes on the button element.
+- **Key files:** `web/templates/symbol_detail.html` (positions card header + script block)
+- **Pattern reused from:** `web/static/app.js` (btn-trigger click handler, sequential agent triggering)
+- **CSS:** `btn-trigger` green style (defined in `web/static/style.css`)
+- **Commit:** 1f686f1
