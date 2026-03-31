@@ -91,18 +91,22 @@ Parse these sections to extract the data you need for analysis. If any section s
 
 | Days to Earnings | Expiration vs Earnings | Gate Result | Risk Flag | Confidence Impact | Rationale |
 |---|---|---|---|---|---|
-| **>30 days** | Expiration before earnings | **OPEN NORMALLY** | None | No impact | Earnings too far out. Capture elevated pre-earnings IV. |
-| **15-30 days** | Expiration ≥7 days BEFORE earnings | **ALLOWED** | `earnings_approaching` | No impact | Safe buffer. Premium boosted by approaching earnings IV. |
-| **15-30 days** | Expiration AFTER earnings | **BLOCKED → WAIT** | `earnings_within_dte` | N/A — WAIT | Position would span earnings. Gap/assignment risk. |
-| **7-14 days** | Expiration ≥5 days BEFORE earnings | **ALLOWED WITH CAUTION** | `earnings_soon` | Downgrade one level | Tight but viable. Verify expiration clears earnings by ≥5 days. |
-| **7-14 days** | Expiration <5 days before OR after earnings | **BLOCKED → WAIT** | `earnings_within_dte` | N/A — WAIT | Insufficient buffer or spans earnings. |
-| **<7 days** | Any expiration | **BLOCKED → WAIT** | `earnings_imminent` | N/A — WAIT | Too close. Wait for post-earnings setup. |
-| **0-2 days (just passed)** | Any | **IDEAL — OPEN** | None | No impact | IV crush opportunity, uncertainty resolved. |
+| **>30 days** | Expiration before earnings | **OPEN NORMALLY** | None | No impact | Earnings far out. Capture elevated pre-earnings IV. |
+| **>30 days** | Expiration after earnings | **BLOCKED → WAIT** | `earnings_within_dte` | N/A — WAIT | Position would span earnings. Wait for closer-dated expiration or post-earnings entry. |
+| **15-30 days** | Expiration ≥5 days BEFORE earnings | **OPEN NORMALLY** | None | No impact | Comfortable buffer. Pre-earnings IV premium is a seller's advantage. |
+| **15-30 days** | Expiration 3-4 days BEFORE earnings | **ALLOWED** | `earnings_approaching` | No impact | Acceptable buffer. Earnings date announcements rarely shift by >2 days. |
+| **15-30 days** | Expiration 0-2 days before OR AFTER earnings | **BLOCKED → WAIT** | `earnings_within_dte` | N/A — WAIT | Too tight or spans earnings. 3-day minimum buffer protects against date shifts. |
+| **7-14 days** | Expiration ≥5 days BEFORE earnings | **ALLOWED** | `earnings_approaching` | No impact | Pre-earnings IV boost captured. Safe expiration. |
+| **7-14 days** | Expiration 3-4 days BEFORE earnings | **ALLOWED WITH CAUTION** | `earnings_soon` | No impact | Tight but viable. TastyTrade approach: if technicals are strong, this is acceptable. |
+| **7-14 days** | Expiration 0-2 days before OR AFTER earnings | **BLOCKED → WAIT** | `earnings_within_dte` | N/A — WAIT | Insufficient buffer or spans earnings. |
+| **<7 days** | Expiration ≥3 days BEFORE earnings | **ALLOWED WITH CAUTION** | `earnings_imminent` | No impact | Earnings very close but option expires safely before. Pre-earnings IV at peak — excellent premium. |
+| **<7 days** | Expiration 0-2 days before OR AFTER earnings | **BLOCKED → WAIT** | `earnings_imminent`, `earnings_within_dte` | N/A — WAIT | Too close to earnings date. Risk of date shift or spans earnings. |
+| **0-2 days (just passed)** | Any | **IDEAL — OPEN** | None | No impact | Post-earnings IV crush still elevated, uncertainty resolved. Best entry point. |
 | **Unknown** | N/A | **CONSERVATIVE DTE** | `unknown_earnings` | Downgrade to "medium" | Use expiration <21 DTE to minimize gap risk. |
 
 ### Step 4: HARD OVERRIDE RULE
 
-⛔ **CRITICAL: No combination of bullish technicals, strong fundamentals, or favorable IV can override an earnings BLOCK. Earnings risk is BINARY — if the position would be OPEN during earnings, it is at risk regardless of other signals. The ONLY exception is when the option expires BEFORE earnings with sufficient buffer per the matrix above.**
+⛔ **CRITICAL: No combination of bullish technicals, strong fundamentals, or favorable IV can override an earnings BLOCK. The BLOCK applies ONLY when the option's expiration would be AFTER earnings or within 0-2 days before earnings (insufficient buffer for potential date shifts). If the option expires ≥3 days before earnings, it is eligible regardless of earnings proximity — pre-earnings IV is an advantage for sellers.**
 
 If the gate result is **BLOCKED → WAIT**:
 - Set `activity = "WAIT"` — this is FINAL. Do NOT proceed to evaluate technicals, Greeks, or premiums.
@@ -135,11 +139,12 @@ If the gate result is **ALLOWED** or **ALLOWED WITH CAUTION**:
 - `earnings_risk_flag`: The applicable flag from the matrix, or `null` if none
 
 ### KEY PRINCIPLE
-**The risk is NOT that earnings are nearby — the risk is that your position is OPEN during earnings.** If your option expires BEFORE earnings, the earnings event poses NO risk to that position. Use this to your advantage: pre-earnings IV boost gives better premiums.
+**The risk is NOT that earnings are nearby — the risk is that your position is OPEN during earnings.** If your option expires BEFORE earnings (with ≥3 day buffer), the earnings event poses NO risk to that position. Use this to your advantage: pre-earnings IV boost gives better premiums. The 3-day minimum buffer protects against earnings date announcements shifting by 1-2 days.
 
 ### DTE Selection Priority (when earnings are 15-30 days away)
 - PREFER expirations that fall BEFORE earnings (capture pre-earnings IV premium without earnings risk)
-- Target: expiration 7+ days before earnings for comfort, 5+ days minimum
+- Target: expiration 5+ days before earnings for comfort, 3+ days minimum buffer
+- Expirations 3-4 days before earnings are acceptable when technicals support the trade
 - This naturally selects shorter DTEs when earnings are approaching — theta decay is fastest in the final 30 days
 
 ---

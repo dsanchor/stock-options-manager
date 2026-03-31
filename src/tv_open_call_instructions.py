@@ -69,36 +69,48 @@ Parse these sections to extract the data you need for analysis. If any section s
 
 ### Step 3: Apply the Monitor Earnings Decision Matrix
 
-| Days to Earnings | Expiration vs Earnings | Gate Result | Risk Flag(s) | Confidence Impact | Rationale |
-|---|---|---|---|---|---|
-| **>30 days** | Expiration BEFORE earnings | **HOLD** — no concern | None | No impact | Position expires well before earnings. No action needed. |
-| **>30 days** | Expiration AFTER earnings | **FLAG** — awareness only | `earnings_within_dte` | No impact | Position spans earnings but 30+ days to manage. Revisit as earnings approach. |
-| **15-30 days** | Expiration ≥7 days BEFORE earnings | **HOLD** — safe buffer | None | No impact | Position closes well before earnings uncertainty window. |
-| **15-30 days** | Expiration AFTER earnings | **ROLL recommended** | `earnings_approaching`, `earnings_within_dte` | Downgrade one level | Position spans earnings. Time to roll to pre-earnings expiration. |
-| **7-14 days** | Expiration ≥5 days BEFORE earnings | **HOLD with caution** | `earnings_soon` | Downgrade one level | Tight but safe — position expires before earnings. Monitor closely. |
-| **7-14 days** | Expiration <5 days before OR after earnings | **ROLL urgently** | `earnings_soon`, `earnings_within_dte` | Downgrade one level | Insufficient buffer or spans earnings. Roll NOW. |
-| **<7 days** | Expiration BEFORE earnings | **HOLD** — expires before event | `earnings_imminent` | No impact | Position expires before imminent earnings. No gap risk. |
-| **<7 days** | Expiration AFTER earnings | **CLOSE or ROLL immediately** | `earnings_imminent`, `earnings_within_dte` | Downgrade to "low" | CRITICAL: position will be open during imminent earnings. Act now. |
-| **0-2 days (just passed)** | Any | **HOLD** — earnings resolved | None | No impact | Uncertainty resolved. IV crush favorable for short positions. |
-| **Unknown** | N/A | **CONSERVATIVE approach** | `unknown_earnings` | Downgrade to "medium" | Cannot assess earnings risk. If DTE >21, consider rolling to shorter DTE. |
+| Days to Earnings | Expiration vs Earnings | Position Moneyness | Gate Result | Risk Flag(s) | Confidence Impact | Rationale |
+|---|---|---|---|---|---|---|
+| **>30 days** | Expiration BEFORE earnings | Any | **HOLD** — no concern | None | No impact | Position expires well before earnings. No action needed. |
+| **>30 days** | Expiration AFTER earnings | Any | **FLAG** — awareness only | `earnings_within_dte` | No impact | Position spans earnings but 30+ days to manage. Revisit as earnings approach. |
+| **15-30 days** | Expiration ≥5 days BEFORE earnings | Any | **HOLD** — safe buffer | None | No impact | Position closes well before earnings. |
+| **15-30 days** | Expiration 3-4 days BEFORE earnings | Any | **HOLD with caution** | `earnings_approaching` | No impact | Tight but safe — 3-day minimum buffer holds. Monitor for earnings date shifts. |
+| **15-30 days** | Expiration AFTER earnings | **OTM (delta <0.30)** | **FLAG** — medium risk | `earnings_within_dte` | No impact | Position spans earnings but well OTM. Low assignment risk. Monitor moneyness as earnings approach. |
+| **15-30 days** | Expiration AFTER earnings | **Near ATM/ITM (delta ≥0.30)** | **ROLL recommended** | `earnings_approaching`, `earnings_within_dte` | Downgrade one level | Position spans earnings AND is near the money. Assignment risk elevated by earnings gap potential. Roll to pre-earnings expiration. |
+| **7-14 days** | Expiration ≥3 days BEFORE earnings | Any | **HOLD** — expires before event | `earnings_soon` | No impact | Position expires before earnings. No gap risk. |
+| **7-14 days** | Expiration AFTER earnings | **OTM (delta <0.30)** | **FLAG** — medium-high risk | `earnings_soon`, `earnings_within_dte` | No impact | Spans earnings but OTM. Tighten monitoring. Consider rolling if delta increases toward 0.30+. |
+| **7-14 days** | Expiration AFTER earnings | **Near ATM/ITM (delta ≥0.30)** | **ROLL urgently** | `earnings_soon`, `earnings_within_dte` | Downgrade one level | Near-money position spanning imminent earnings. Roll NOW. |
+| **<7 days** | Expiration BEFORE earnings | Any | **HOLD** — expires before event | `earnings_imminent` | No impact | Position expires before imminent earnings. No gap risk. |
+| **<7 days** | Expiration AFTER earnings | **OTM (delta <0.25)** | **FLAG** — high risk, trader decides | `earnings_imminent`, `earnings_within_dte` | Downgrade one level | Well OTM but spans imminent earnings. Flag as high risk — let trader decide. If at 50%+ profit, recommend CLOSE for profit. |
+| **<7 days** | Expiration AFTER earnings | **Near ATM/ITM (delta ≥0.25)** | **CLOSE or ROLL immediately** | `earnings_imminent`, `earnings_within_dte` | Downgrade to "low" | CRITICAL: near-money position spanning imminent earnings. Act now. |
+| **0-2 days (just passed)** | Any | Any | **HOLD** — earnings resolved | None | No impact | Uncertainty resolved. IV crush favorable for short positions. |
+| **Unknown** | N/A | Any | **CONSERVATIVE approach** | `unknown_earnings` | Downgrade to "medium" | Cannot assess earnings risk. If DTE >21, consider rolling to shorter DTE. |
 
 ### Step 4: HARD OVERRIDE RULE
 
-⛔ **CRITICAL: No combination of favorable Greeks, low delta, or safe moneyness can override an earnings CLOSE/ROLL-immediately signal. If the position spans imminent earnings (<7 days, expiration AFTER earnings), the recommendation is CLOSE or ROLL regardless of other factors. Earnings risk is BINARY — if the position is OPEN during earnings, it is at risk.**
+⛔ **CRITICAL OVERRIDE — applies ONLY when ALL three conditions are met: (1) position expires AFTER earnings, (2) earnings are <7 days away, AND (3) position is near ATM/ITM (delta ≥0.25). When all three conditions are true: CLOSE or ROLL immediately regardless of other factors.**
 
-If the gate result is **CLOSE or ROLL immediately**:
-- This is the PRIMARY recommendation — override any WAIT signals from Greeks/moneyness analysis
-- Set the activity to `CLOSE` or `ROLL_UP_AND_OUT`/`ROLL_DOWN_AND_OUT` (to move expiration past earnings or before earnings)
-- Set `reason` to explain the earnings urgency (include dates and gap calculation)
+**For positions that span earnings but are well OTM (delta <0.25-0.30), the earnings gate produces a FLAG with risk level, NOT a forced action.** The trader decides whether to roll or hold based on:
+- Current profit level (TastyTrade rule: if at 50%+ profit, close for profit regardless)
+- Delta trend (is moneyness deteriorating?)
+- IV trend (is IV still expanding, making the position more expensive to close?)
+- The specific earnings history of this company (serial beaters vs. volatile reporters)
 
-If the gate result is **ROLL recommended**:
-- Factor this into the overall WAIT/ROLL decision — earnings is a strong signal to ROLL
-- If other factors also suggest ROLL, this reinforces the recommendation
-- If other factors suggest WAIT, earnings ROLL recommendation should generally win
+If the gate result is **FLAG** (OTM position spanning earnings):
+- Include the earnings risk flag(s) in `risk_flags`
+- Set `earnings_gate_result` to indicate the risk level (FLAG, FLAG_MEDIUM, FLAG_HIGH)
+- DO NOT force a ROLL or CLOSE — provide the risk assessment and let other technical factors contribute to the decision
+- If other factors (delta approaching 0.30, price momentum toward strike, rising IV) ALSO suggest ROLL, then the combined signal is strong — recommend ROLL
+- If other factors are favorable (stable delta, price moving away from strike, falling IV), HOLD is reasonable despite spanning earnings
 
-If the gate result is **HOLD** or **FLAG**:
-- Proceed with normal moneyness/delta/momentum analysis below
-- Include any risk flags from the gate
+If the gate result is **ROLL recommended** (near ATM/ITM, 15-30 days):
+- This is a strong signal to ROLL but NOT an absolute override
+- If the position is at 50%+ profit → recommend CLOSE for profit instead (TastyTrade winner management)
+- Factor into overall WAIT/ROLL decision alongside other technical signals
+
+If the gate result is **CLOSE or ROLL immediately** (<7 days, ATM/ITM):
+- This IS a hard override — act regardless of other signals
+- The only exception: if position is at 80%+ profit, CLOSE for profit (don't roll, just take the win)
 
 ### Step 5: Populate Mandatory `earnings_analysis` Object (REQUIRED IN EVERY RESPONSE)
 
@@ -108,19 +120,19 @@ If the gate result is **HOLD** or **FLAG**:
     "days_to_earnings": 15,
     "position_expiration": "2026-04-24",
     "expiration_to_earnings_gap": -9,
-    "earnings_gate_result": "ROLL_RECOMMENDED",
-    "earnings_risk_flag": "earnings_approaching"
+    "earnings_gate_result": "FLAG_MEDIUM",
+    "earnings_risk_flag": "earnings_within_dte"
 }
 ```
 - `next_earnings_date`: The date from OVERVIEW/forecast data, or `"unknown"`
 - `days_to_earnings`: Integer, or `null` if unknown
 - `position_expiration`: The current position's expiration date
 - `expiration_to_earnings_gap`: Positive = expires before earnings (safe), negative = expires after (risk). Null if unknown.
-- `earnings_gate_result`: One of: `"HOLD"`, `"HOLD_WITH_CAUTION"`, `"FLAG"`, `"ROLL_RECOMMENDED"`, `"ROLL_URGENTLY"`, `"CLOSE_OR_ROLL"`, `"CONSERVATIVE"`
+- `earnings_gate_result`: One of: `"HOLD"`, `"HOLD_WITH_CAUTION"`, `"FLAG"`, `"FLAG_MEDIUM"`, `"FLAG_HIGH"`, `"ROLL_RECOMMENDED"`, `"ROLL_URGENTLY"`, `"CLOSE_OR_ROLL"`, `"CONSERVATIVE"`
 - `earnings_risk_flag`: The applicable flag(s), or `null` if none
 
 ### KEY PRINCIPLE
-**The risk is NOT that earnings are nearby — the risk is that your position is OPEN during earnings.** If your option expires BEFORE earnings, the earnings event poses NO risk to that position. If your option expires AFTER earnings, your position spans the earnings gap — that IS the risk.
+**The risk is NOT that earnings are nearby — the risk is that your position is OPEN during earnings AND close to the money.** If your option expires BEFORE earnings, the earnings event poses NO risk to that position. If your option expires AFTER earnings but is well OTM (delta <0.25-0.30), the risk is real but manageable — flag it, monitor it, but don't force-roll a winning position. Only force CLOSE/ROLL when the position is near ATM/ITM AND earnings are imminent. This is the TastyTrade approach: manage winners, let probability work for OTM positions.
 
 ---
 
@@ -199,8 +211,9 @@ Use:**:
 
 The gate has already determined the earnings-driven action for this position. Apply the gate result here:
 - **HOLD/FLAG**: No earnings-driven action. Continue evaluating other factors.
-- **ROLL recommended**: Recommend rolling to an expiration BEFORE earnings (with ≥7 day buffer) or well AFTER earnings (≥7 days post). This is a strong signal — factor into overall WAIT/ROLL decision.
-- **ROLL urgently / CLOSE**: Earnings proximity is the PRIMARY factor. Override other WAIT signals — recommend ROLL or CLOSE regardless of favorable Greeks.
+- **FLAG (OTM spanning earnings)**: Earnings risk is flagged but position is well OTM. DO NOT force-roll. Include flag in risk assessment. Monitor delta — if it approaches 0.30+, upgrade to ROLL. If at 50%+ profit, recommend CLOSE for profit (TastyTrade winner management).
+- **ROLL recommended (near ATM spanning earnings)**: Strong signal to ROLL. If at 50%+ profit, CLOSE for profit instead. Factor alongside other technicals.
+- **ROLL urgently / CLOSE (ATM/ITM, imminent earnings)**: Hard override — act regardless. Exception: 80%+ profit → CLOSE for profit.
 
 **Catalyst Risk:**
 - Upcoming catalysts (product launches, FDA decisions, conferences) increase gap risk similar to earnings
@@ -234,7 +247,7 @@ The gate has already determined the earnings-driven action for this position. Ap
 
 1. **Approaching ITM**: Price within 2% of strike with bullish momentum
 2. **Already ITM**: Price above strike — assignment risk is real
-3. **Earnings Risk**: Earnings Gate returned ROLL_RECOMMENDED, ROLL_URGENTLY, or CLOSE_OR_ROLL (position expiration is AFTER earnings — see MANDATORY EARNINGS GATE above)
+3. **Earnings Risk**: Earnings Gate returned ROLL_RECOMMENDED, ROLL_URGENTLY, or CLOSE_OR_ROLL (position spans earnings AND near ATM/ITM — see MANDATORY EARNINGS GATE above). FLAG results (OTM positions) are informational — factor into decision but do not force ROLL.
 4. **Ex-Dividend Risk**: Ex-div date before expiration with ITM call
 5. **Technical Breakout**: Price breaking resistance toward strike with volume
 6. **Low Extrinsic Value**: <$0.10 extrinsic with DTE > 7 and ITM — assignment imminent
@@ -341,7 +354,7 @@ Use consistent risk flag names. Key flags for open call monitors:
     "days_to_earnings": 30,
     "position_expiration": "YYYY-MM-DD",
     "expiration_to_earnings_gap": 5,
-    "earnings_gate_result": "HOLD or HOLD_WITH_CAUTION or FLAG or ROLL_RECOMMENDED or ROLL_URGENTLY or CLOSE_OR_ROLL or CONSERVATIVE",
+    "earnings_gate_result": "HOLD or HOLD_WITH_CAUTION or FLAG or FLAG_MEDIUM or FLAG_HIGH or ROLL_RECOMMENDED or ROLL_URGENTLY or CLOSE_OR_ROLL or CONSERVATIVE",
     "earnings_risk_flag": "earnings_approaching or null"
   }
 }
