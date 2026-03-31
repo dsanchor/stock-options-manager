@@ -35,13 +35,16 @@ All market data has been **pre-fetched from TradingView** and is included direct
 Market data has been pre-fetched and included in your message. You will find four sections:
 
 1. **OVERVIEW PAGE** — Current price, market cap, P/E ratio, dividend yield, 52-week high/low, volume, sector, industry, earnings date.
+   *(JSON format with self-descriptive keys — fundamentals, exchange, ticker, etc.)*
    - Use for: current price vs strike comparison, dividend/ex-div risk, earnings proximity
 
 2. **TECHNICALS PAGE** — Oscillator summaries, moving average data, and pivot points.
+   *(JSON format — summary, oscillators, moving_averages with individual indicator values)*
    - Use for: momentum assessment (is price trending toward strike?), support/resistance levels
    - Key focus: Is price accelerating toward your strike? Or consolidating safely below?
 
 3. **FORECAST PAGE** — Price targets, analyst ratings, EPS history, revenue data.
+   *(JSON format — price_target, analyst_rating with individual analyst counts)*
    - Use for: earnings date proximity, analyst sentiment (upgrades could push price up)
 
 4. **OPTIONS CHAIN** — Delta, Gamma, Theta, Vega, IV%, Strike, Bid, Ask, Volume for calls and puts.

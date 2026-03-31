@@ -31,9 +31,11 @@ All market data has been **pre-fetched from TradingView** and is included direct
 Market data has been pre-fetched and included in your message. You will find five sections:
 
 1. **OVERVIEW PAGE** — Contains general stock information: current price, market cap, P/E ratio, dividend yield, 52-week high/low, volume, sector, industry, earnings date.
+   *(JSON format with self-descriptive keys — fundamentals, exchange, ticker, etc.)*
    - Use for: fundamental context, current price confirmation, dividend yield summary
 
 2. **TECHNICALS PAGE** — Contains oscillator summaries, moving average data, and pivot points.
+   *(JSON format — summary, oscillators, moving_averages with individual indicator values)*
    Tab-separated table data: Name\tValue\tAction for each indicator.
    Sections: Oscillators (RSI, Stochastic, CCI, ADX, MACD, etc.), Moving Averages (EMA/SMA 10-200), Pivot Points (Classic, Fibonacci, Camarilla, Woodie, DM).
    - **Summary Gauges**: Overall / Oscillators / Moving Averages — each rated from Strong Sell to Strong Buy
@@ -43,6 +45,7 @@ Market data has been pre-fetched and included in your message. You will find fiv
    - **For Covered Calls**: Use R1-R3 pivot points as strike price targets — set strike at or above resistance levels
 
 3. **FORECAST PAGE** — Contains price targets, analyst ratings, EPS history, and revenue data.
+   *(JSON format — price_target, analyst_rating with individual analyst counts)*
    Includes: analyst consensus (Strong Buy/Buy/Hold/Sell counts), EPS reported vs estimate with surprise %, revenue data.
    - EPS actual vs estimate for most recent quarter (beat/miss/meet)
    - EPS estimate for next quarter
@@ -52,6 +55,7 @@ Market data has been pre-fetched and included in your message. You will find fiv
    - Analysis: Strong consensus Buy with rising targets → caution selling calls (upside expectations)
 
 4. **DIVIDENDS PAGE** — Contains dividend payment history, ex-dividend dates, payment dates, and dividend amounts.
+   *(JSON format — dividends data with yield, payout ratio, ex-dividend dates)*
    - **CRITICAL for covered calls**: Check upcoming ex-dividend date relative to option expiration
    - Use for: ex-dividend date identification, dividend amount assessment, early assignment risk evaluation
    - Key data: Ex-dividend date, payment date, dividend amount, dividend yield, payout frequency
