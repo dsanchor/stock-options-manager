@@ -355,6 +355,7 @@ async def api_add_position(request: Request, symbol: str):
             activity = cosmos.get_activity_by_id(source_activity_id)
             if activity is not None:
                 source = {
+                    "source_type": "manual_with_alert",
                     "activity_id": activity["id"],
                     "agent_type": activity.get("agent_type"),
                     "activity": activity.get("activity"),

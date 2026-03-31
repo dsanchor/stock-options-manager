@@ -123,7 +123,7 @@
                                 <div class="roll-msg" style="display:none; margin-top:0.5rem; padding:0.5rem 0.75rem; border-radius:6px; font-size:0.9rem;"></div>
                             </div>
                             {% if pos.source %}
-                            <h4 style="margin:0 0 0.75rem; color:var(--text-primary, #e0e0f0);">📊 Opened from alert</h4>
+                            <h4 style="margin:0 0 0.75rem; color:var(--text-primary, #e0e0f0);">📊 {{ "Created manually (last alert information attached)" if pos.source.source_type == "manual_with_alert" else "Opened from alert" }}</h4>
                             <div class="detail-grid">
                                 <div class="detail-field">
                                     <div class="detail-label">Strategy</div>
