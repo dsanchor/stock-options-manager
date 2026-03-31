@@ -1016,10 +1016,6 @@ class TradingViewFetcher:
                 ]
 
                 for idx, resp in enumerate(captured_responses, 1):
-                    parts.append(
-                        f"=== Response {idx}: {resp['url']} "
-                        f"({resp['size']} bytes) ==="
-                    )
                     # Pretty-print JSON when possible
                     try:
                         parsed = json.loads(resp["body"])
