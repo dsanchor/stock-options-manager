@@ -104,3 +104,32 @@
 - Preserved context-specific uses: "FDA decision", "regulatory decision", "technical signals" remain unchanged
 - Used systematic sed replacements to ensure consistency across ~800+ lines of instruction text
 - Verified zero remaining incorrect references in owned files
+
+### 2026-03-31: Deep Feature Analysis — DGI + Options Strategy
+
+**Context:** Full codebase audit to map current capabilities and propose DGI-specific features.
+
+**Current Architecture (Key Files):**
+- `src/agent_runner.py` (500+ lines) — ChatAgent execution, JSON/summary extraction, activity/alert persistence, telemetry
+- `src/cosmos_db.py` (800+ lines) — CosmosDB service: symbols, positions, activities, alerts, telemetry, settings
+- `src/tv_data_fetcher.py` (1130 lines) — Hybrid BS4 + Playwright: overview, technicals, forecast, dividends, options chain
+- `src/context.py` — Activity history injection into agent prompts (last N activities per symbol)
+- `src/main.py` — Cron-based scheduler, sequential agent execution (CC → CSP → OpenCall → OpenPut)
+- `web/app.py` (1608 lines) — FastAPI: REST APIs, dashboard, symbol CRUD, positions, chat, settings, triggers
+- 4 agent wrappers: covered_call, cash_secured_put, open_call_monitor, open_put_monitor
+- 4 instruction files: ~12-18KB each, comprehensive analysis frameworks
+- 14 HTML templates: dashboard, symbols, symbol_detail, activity/alert detail, chat, settings (3 tabs), fetch_preview
+
+**Key Observations for Feature Planning:**
+- Data model is symbol-centric with partition key = ticker; doc_types: symbol_config, activity, alert
+- Positions embedded in symbol_config with lifecycle: active → closed; supports roll traceability
+- No premium/income tracking — positions store strike/expiration but not premium collected
+- No dividend tracking beyond what TradingView provides (ex-div dates, yield)
+- No portfolio-level aggregation views (total premium, total dividend income, sector exposure)
+- No historical P&L or position outcome tracking (did assignment happen? net result?)
+- Chat exists (global + per-symbol) but has no persistent memory or strategy awareness
+- Agents run sequentially per type — no cross-agent coordination
+- TradingView fetcher gets 5 data types; options chain uses Playwright (slow ~15s per symbol)
+- User preference: symbol-centric everything, only global = cron; prefers comprehensive docs
+
+**Deliverable:** Feature proposal report (see task output below)

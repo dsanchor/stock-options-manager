@@ -716,3 +716,194 @@ This adds `telegram_notifications_enabled: True` to all existing symbols.
 - **Linus:** No impact on agent strategy logic
 - **All:** Existing symbols remain opt-in (notifications enabled) after migration
 
+
+---
+
+## Recent Decisions (Merged from Inbox)
+
+### Earnings Decision Matrix — Nuanced vs Binary
+
+**Date:** 2025-07-24  
+**Author:** Linus (Quant Dev)  
+**Status:** Implemented  
+**Impact:** Team-wide (changes agent behavior for both CC and CSP)
+
+The analysis agents were rejecting positions when earnings were ~30 days away — a blanket "no-go" that left premium income on the table. A 21-DTE position with earnings 30 days out expires 9 days before earnings and bears zero earnings risk.
+
+**Decision:** Replace the binary earnings check with a tiered **Earnings Decision Matrix** that evaluates the gap between option expiration and earnings date, not just proximity to earnings.
+
+**Tiers:**
+| Earnings Distance | Rule | Risk Flag |
+|---|---|---|
+| >30 days | Open normally | None |
+| 15-30 days | Allow if exp ≥7d before earnings | `earnings_approaching` |
+| 7-14 days | Allow if exp ≥5d before earnings (caution) | `earnings_soon` |
+| <7 days | Block | `earnings_imminent` |
+| 0-2 days after | Ideal | None |
+| Unknown | Conservative DTE (<21d CC, <30d CSP) | `unknown_earnings` |
+
+**Rationale:** The risk is the position being open during earnings, not earnings existing on the calendar. Pre-earnings IV inflation produces better premiums — sellers should capture this when expiration is safely before the event.
+
+**Files Changed:**
+- `src/tv_covered_call_instructions.py` — 6 sections updated
+- `src/tv_cash_secured_put_instructions.py` — 6 sections updated
+
+---
+
+### Alert Pre-fill Pattern for Position Forms
+
+**Date:** 2026-07  
+**Author:** Rusty  
+**Status:** Implemented  
+
+Alert data for position pre-fill is embedded as JavaScript objects in the page (via `latest_sell_alerts` template variable) rather than fetched via API. The backend extracts the latest SELL alert per watchlist agent type from the already-fetched alerts list — no extra CosmosDB query needed.
+
+**Rationale:**
+- Instant UX: checking the checkbox fills the form with zero latency
+- No new API endpoints to maintain
+- Reuses the same alert field set as the existing `from-activity` endpoint's `source` dict
+- The checkbox is purely a convenience — it pre-fills but doesn't create any link between the position and the alert
+
+**Pattern:**
+- `latest_sell_alerts` dict keyed by agent_type (`covered_call`, `cash_secured_put`)
+- Frontend maps position type to agent type: `call → covered_call`, `put → cash_secured_put`
+- Checkbox visibility gated by BOTH watchlist enabled AND alert exists with valid strike+expiration
+
+---
+
+### Alert Checkbox Attaches Source Metadata, Does Not Pre-fill Form
+
+**Date:** 2026-07  
+**Author:** Rusty  
+**Status:** Implemented  
+
+The alert checkbox on the Add Position form was pre-filling strike/expiration/notes from alert data. User wanted it to transparently attach alert source metadata instead, with no form field changes.
+
+**Decision:**
+- Checkbox sends `source_activity_id` in POST body to `/api/symbols/{symbol}/positions`
+- Backend looks up the activity and builds the same `source` dict used by the from-activity route
+- Source metadata is stored on the position document but does NOT affect form fields
+- No side effects: no watchlist disable, no cascade-delete
+
+**Files Changed:**
+- `web/app.py` — `api_add_position` route accepts optional `source_activity_id`
+- `web/templates/symbol_detail.html` — removed `applyAlertPrefill()`, updated label and submit logic
+
+---
+
+### Monitor Earnings Decision Matrix
+
+**Author:** Linus (Quant Dev)  
+**Date:** 2026-07-16  
+**Status:** Implemented  
+**Commit:** f587058
+
+The analysis agents had a sophisticated Earnings Decision Matrix but the monitor agents had only 3-5 lines of vague earnings handling. A monitor recommended selling a call with expiration AFTER earnings without flagging it.
+
+**Decision:** Port the Earnings Decision Matrix to both monitor instruction files, adapted for monitoring (HOLD/FLAG/ROLL/CLOSE) rather than opening (OPEN/AVOID/BLOCK).
+
+**Key Design Choices:**
+1. **Same tier structure** as analysis agents (>30d, 15-30d, 7-14d, <7d, just-passed, unknown) for consistency
+2. **Expiration-vs-earnings is the primary axis**: "Does my position span earnings?" drives the action
+3. **Urgency escalation**: FLAG → ROLL recommended → ROLL urgently → CLOSE as earnings get closer
+4. **Override rule**: When earnings risk is urgent and position spans earnings, it overrides favorable Greeks
+5. **Legacy compatibility**: `earnings_before_expiry` retained as alias for `earnings_within_dte`
+6. **Put-specific additions**: earnings miss gap risk and downgrade clustering added to put monitor only
+
+**Impact:**
+- Both monitor agents now apply the same earnings risk rigor as analysis agents
+- Risk flags are consistent across all 4 agent types (CC, CSP, call monitor, put monitor)
+- JSON output examples updated to demonstrate correct flag usage
+
+**Files Changed:**
+- `src/agents/tv_open_call_instructions.py` — 10-tier earnings assessment, risk flags, HOLD/FLAG/ROLL/CLOSE actions
+- `src/agents/tv_open_put_instructions.py` — 10-tier earnings assessment with put-specific gap risk and downgrade handling
+
+---
+
+### Protect all routing fields from dict-spread override
+
+**Date:** 2025-07-24  
+**Author:** Rusty (Agent Dev)  
+**Status:** Implemented  
+
+`write_activity()` and `write_alert()` in `src/cosmos_db.py` use `**data` dict spread to merge LLM-generated agent output into the CosmosDB document. The previous fix (commit 06150da) only protected `id` and `timestamp` after the spread. The `doc_type` field was left unprotected, meaning any LLM-generated dict containing a `doc_type` key would silently overwrite `"alert"` or `"activity"`, making documents invisible to queries.
+
+**Decision:** Reassert ALL routing/identity fields after the spread in both methods:
+- `write_activity()`: id, timestamp, doc_type, symbol, agent_type, is_alert
+- `write_alert()`: id, timestamp, doc_type, symbol, agent_type, activity_id
+
+**Rationale:** Any field used in CosmosDB partition keys, queries, or cross-document references must be treated as immutable infrastructure, not something the LLM can override. Defensive reassertion is cheap and prevents silent data corruption.
+
+**Impact:** Fixes alert visibility bug — alerts will now always be queryable by `doc_type = 'alert'`.
+
+---
+
+### Client-side Markdown Rendering for Chat
+
+**Date:** 2026-07-22  
+**Author:** Rusty  
+**Status:** Implemented  
+**Commit:** 23c0817  
+
+LLM chat responses contain markdown formatting (`**bold**`, `# headers`, `- lists`, tables) that was displayed as raw text.
+
+**Decision:**
+- Use `marked.js` via CDN (`https://cdn.jsdelivr.net/npm/marked/marked.min.js`) loaded in `base.html`
+- Only assistant messages get markdown rendering; user messages remain plain text
+- Assistant bubbles get `.markdown-body` class with dedicated CSS for tables, code blocks, lists, headers, blockquotes
+- Graceful fallback: if `marked` fails to load, messages render as plain text
+
+**Files Changed:**
+- `web/templates/base.html` — added marked.js CDN script tag
+- `web/templates/chat.html` — updated `addMessage()` for markdown rendering
+- `web/templates/symbol_chat.html` — same update
+- `web/static/style.css` — added `.markdown-body` and child element styles
+
+---
+
+### Risk & Moneyness columns on Symbol Detail positions table
+
+**Date:** 2026-07-15  
+**Author:** Rusty (Agent Dev)  
+**Status:** Implemented  
+**Commit:** e8d56c8
+
+The dashboard already showed assignment_risk and moneyness for position monitors, but the symbol detail page's positions table lacked this data — requiring users to scroll through activities to find the risk status of each open position.
+
+**Decision:** Enrich positions in the symbol detail route by scanning the already-fetched activities for the latest monitor activity per `position_id`. Attach `_assignment_risk` and `_moneyness` as transient fields (underscore prefix = not persisted). Reuse existing CSS classes from the dashboard.
+
+**Impact:**
+- **Files changed:** `web/app.py`, `web/templates/symbol_detail.html`, `web/static/style.css`
+- **No new queries:** Reuses the activities already fetched for the page; zero additional CosmosDB calls.
+- **Fallback:** Positions without monitor data show "—" gracefully.
+
+---
+
+### Settings must always be read from CosmosDB first
+
+**Date:** 2026-07  
+**Author:** Rusty  
+**Status:** Implemented  
+
+On deploy, user-configured settings (scheduler cron, timezone, telegram config) were being displayed incorrectly on the dashboard. The root cause: the dashboard route read settings from `config.yaml` (which resets to defaults with every new container image), while the Settings/Config page correctly read from CosmosDB.
+
+**Decision:** All web routes that display or use user-configurable settings MUST read from CosmosDB first, falling back to `config.yaml` only if CosmosDB is unavailable.
+
+**Pattern:**
+```python
+cosmos_settings = _load_settings_from_cosmos(cosmos)
+config = cosmos_settings if cosmos_settings else _load_config()
+```
+
+**Exceptions:** Connection credentials (`azure.*`, `cosmosdb.*`) should still come from `config.yaml` / env vars since they are infrastructure config, not user settings.
+
+**Changes Made:**
+- `web/app.py` dashboard route: CosmosDB-first for scheduler cron/timezone
+- `web/app.py` telegram test route: CosmosDB-first for telegram settings
+- `web/app.py` settings save: now passes timezone to `scheduler.reschedule()`
+
+**Notes:**
+- The `merge_defaults()` logic in `cosmos_db.py` is correctly implemented (never overwrites existing keys)
+- The startup banner in `run.py` still reads from `config.yaml` since CosmosDB isn't initialized yet — cosmetic only, acceptable
+

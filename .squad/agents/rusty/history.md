@@ -105,3 +105,21 @@ Two distinct UX patterns for alert→position flow:
 1. **From-activity route** (`/positions/from-activity/{id}`): Full automation — creates position, disables watchlist, cascade-deletes activities/alerts. Used when user clicks "create position" on an alert card.
 2. **Manual add with attach** (`/positions` + `source_activity_id`): User fills all fields manually; alert source metadata transparently attached. No side effects on watchlist or alerts. Checkbox is just a toggle.
 The `source` dict construction is identical in both paths — factored from the activity document via `cosmos.get_activity_by_id()`.
+
+## Spawn Manifest — 2026-03-31
+
+### rusty-alert-attach-fix
+**Status:** Merged to history  
+**Commit:** 2026-03-31T15:34:10Z (scribe consolidation)
+
+**Summary:** Fixed alert checkbox in symbol detail to transparently attach alert source data on submit instead of pre-filling form fields.
+
+**Decisions Merged:**
+1. Alert Pre-fill Pattern for Position Forms (2026-07) — JavaScript embedding of latest_sell_alerts
+2. Alert Checkbox Attaches Source Metadata (2026-07) — Backend lookup via source_activity_id
+3. Protect all routing fields from dict-spread override (2025-07-24) — Reassert doc_type/identity fields
+
+**Orchestration Log:** `.squad/orchestration-log/2026-03-31T15:34:10Z-rusty.md`
+
+**Impact Scope:** Web UI only; no downstream agent changes.
+

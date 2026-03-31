@@ -611,3 +611,51 @@ Added per-symbol notification toggle UI to enable/disable Telegram notifications
 - **Implementation:** Backend passes `{field}_iso` + `scheduler_timezone`; frontend formats client-side using `toLocaleString()` with Intl API (no external timezone libs).
 - **Reusability:** Pattern can be applied to any timestamp display in web UI.
 - **Related decision:** `.squad/decisions/decisions.md` — "Dashboard Timezone Display Pattern"
+
+### Earnings Decision Matrix Refinement (2025-07-24)
+- Replaced binary "earnings nearby = WAIT" logic with tiered Earnings Decision Matrix in both `src/tv_covered_call_instructions.py` and `src/tv_cash_secured_put_instructions.py`.
+- **Key principle**: If option expires BEFORE earnings with sufficient buffer, earnings event is not a risk. High pre-earnings IV = better premiums to capture.
+- Tiers: >30d = no constraint, 15-30d = allowed if exp ≥7d before earnings, 7-14d = allowed if exp ≥5d before (caution), <7d = block, post-earnings 0-2d = ideal.
+- Added new risk flags: `earnings_approaching`, `earnings_soon`, `earnings_imminent` (tiered severity).
+- Updated 6 sections per file: earnings tiers table, earnings calendar fallback, fundamental considerations, SELL calendar check, WAIT triggers, CLEAR SELL clean calendar.
+- Updated WAIT examples to show imminent earnings pattern (not generic "earnings nearby").
+- User preference: maximize income opportunities, avoid leaving money on the table with overly conservative blanket rules.
+- Commit: ccf299a
+
+### Monitor Earnings Decision Matrix Port (2026-07-16)
+- Ported the Earnings Decision Matrix from analysis agents (covered_call, cash_secured_put) to monitor agents (open_call_monitor, open_put_monitor)
+- Key adaptation: analysis agents decide "should I OPEN?" (OPEN/AVOID/BLOCK), monitors decide "what do I DO with my OPEN position?" (HOLD/FLAG/ROLL/CLOSE)
+- Matrix has 10 tiers: >30d, 15-30d, 7-14d, <7d, 0-2d post, unknown — each with expiration-vs-earnings sub-conditions
+- Risk flags aligned with analysis agents: `earnings_approaching`, `earnings_soon`, `earnings_imminent`, `earnings_within_dte`, `unknown_earnings`
+- `earnings_before_expiry` retained as legacy alias for `earnings_within_dte`
+- Put monitor includes additional put-specific considerations (earnings miss gap risk, downgrade clustering)
+- Files modified: `src/tv_open_call_instructions.py`, `src/tv_open_put_instructions.py`
+- Commit: f587058
+
+## Spawn Manifest — 2026-03-31
+
+### linus-monitor-earnings
+**Status:** Merged to history  
+**Commit:** 2026-03-31T15:34:10Z (scribe consolidation)
+
+**Summary:** Ported the Earnings Decision Matrix from analysis agents (covered_call, cash_secured_put) to monitor agents (open_call_monitor, open_put_monitor).
+
+**Decisions Merged:**
+1. Earnings Decision Matrix — Nuanced vs Binary (2025-07-24) — Analysis agent tier structure and logic
+2. Monitor Earnings Decision Matrix (2026-07-16, commit f587058) — Adapted for monitoring actions (HOLD/FLAG/ROLL/CLOSE)
+
+**Orchestration Log:** `.squad/orchestration-log/2026-03-31T15:34:10Z-linus.md`
+
+**Key Changes:**
+- Both monitor instruction files now implement 6-tier earnings assessment (>30d, 15-30d, 7-14d, <7d, just-passed, unknown)
+- Expiration-vs-earnings axis drives primary action (position spanning earnings = escalating urgency)
+- Earnings risk overrides favorable Greeks when urgent
+- Put monitor includes earnings miss gap risk and downgrade clustering assessment
+- Risk flags consistent across all 4 agent types (CC, CSP, call monitor, put monitor)
+
+**Files Modified:**
+- `src/agents/tv_open_call_instructions.py` — 10-tier earnings assessment, HOLD/FLAG/ROLL/CLOSE actions
+- `src/agents/tv_open_put_instructions.py` — 10-tier earnings assessment with put-specific risk additions
+
+**Impact Scope:** Agent instruction files only; no downstream architecture changes.
+
