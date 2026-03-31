@@ -786,6 +786,7 @@ async def dashboard(request: Request):
         "last_run": "", "last_run_iso": "", "next_run": next_run, "next_run_iso": next_run_iso,
         "cron_expr": cron_expr, "scheduler_timezone": scheduler_tz_str,
         "symbol_count": 0, "position_count": 0, "activity": [],
+        "tv_health": {"is_healthy": True, "last_check": None},
     }
     if cosmos is None:
         error_detail = getattr(request.app.state, "cosmos_error", "unknown")
@@ -858,6 +859,9 @@ async def dashboard(request: Request):
             "label", agent_key)
         activity.append(d)
 
+    # TradingView health status
+    tv_health = cosmos.get_tv_health() if cosmos else {"is_healthy": True, "last_check": None}
+
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "agent_tables": agent_tables,
@@ -871,6 +875,7 @@ async def dashboard(request: Request):
         "symbol_count": symbol_count,
         "position_count": position_count,
         "activity": activity,
+        "tv_health": tv_health,
     })
 
 

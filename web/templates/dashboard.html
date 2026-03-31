@@ -32,6 +32,15 @@
         <div class="summary-value">{{ position_count }}</div>
         <div class="summary-label">Open Positions</div>
     </div>
+    <div class="summary-card tv-health-card">
+        {% if tv_health.is_healthy %}
+        <div class="summary-value"><span class="health-dot health-green">●</span></div>
+        <div class="summary-label">Trading View</div>
+        {% else %}
+        <div class="summary-value"><span class="health-dot health-red">●</span></div>
+        <div class="summary-label">Trading View</div>
+        {% endif %}
+    </div>
 </div>
 
 <!-- Scheduler info -->

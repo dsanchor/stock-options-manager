@@ -819,3 +819,50 @@ class CosmosDBService:
             logger.warning("Failed to save merged settings to CosmosDB: %s", exc)
         
         return merged
+
+    # ── TradingView Health Status ─────────────────────────────────────
+
+    def get_tv_health(self) -> dict:
+        """Read the TradingView health status document.
+
+        Returns dict with keys: is_healthy, last_check, last_error, last_error_time.
+        Returns a default "healthy" dict if no status doc exists.
+        """
+        if self.settings_container is None:
+            return {"is_healthy": True, "last_check": None}
+        try:
+            doc = self.settings_container.read_item(
+                item="tv-health", partition_key="tv-health",
+            )
+            return {k: v for k, v in doc.items()
+                    if k not in ("id", "_rid", "_self", "_etag", "_attachments", "_ts")}
+        except CosmosResourceNotFoundError:
+            return {"is_healthy": True, "last_check": None}
+        except Exception as exc:
+            logger.warning("Failed to read TV health status: %s", exc)
+            return {"is_healthy": True, "last_check": None}
+
+    def update_tv_health(self, *, is_healthy: bool,
+                         error: str | None = None) -> None:
+        """Upsert the TradingView health status document (best-effort)."""
+        if self.settings_container is None:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            current = self.get_tv_health()
+            doc = {
+                "id": "tv-health",
+                "is_healthy": is_healthy,
+                "last_check": now,
+            }
+            if is_healthy:
+                doc["last_success"] = now
+                doc["last_error"] = current.get("last_error")
+                doc["last_error_time"] = current.get("last_error_time")
+            else:
+                doc["last_error"] = error or "403 Forbidden"
+                doc["last_error_time"] = now
+                doc["last_success"] = current.get("last_success")
+            self.settings_container.upsert_item(doc)
+        except Exception as exc:
+            logger.warning("Failed to update TV health status: %s", exc)

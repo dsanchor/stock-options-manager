@@ -17,6 +17,7 @@ import time
 from datetime import datetime, timezone
 
 import requests as _requests
+from requests.exceptions import HTTPError
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
@@ -687,6 +688,7 @@ class TradingViewFetcher:
     def __init__(self):
         self._playwright = None
         self._browser = None
+        self.has_403 = False
 
     async def __aenter__(self):
         # Playwright is started lazily in _ensure_browser() only when needed
@@ -710,14 +712,27 @@ class TradingViewFetcher:
     # Retry delays in seconds for transient fetch failures
     _RETRY_DELAYS = (5, 10)
 
+    def _check_403(self, resp, full_symbol: str) -> None:
+        """Flag and raise immediately on HTTP 403 (rate-limit / block)."""
+        if resp.status_code == 403:
+            self.has_403 = True
+            logger.error(
+                "TradingView returned 403 for %s — fetcher flagged, "
+                "agents will skip execution.", full_symbol,
+            )
+            resp.raise_for_status()
+
     async def _with_retry(self, fetch_coro_factory, label: str) -> str:
         """Call a fetch coroutine, retrying up to 2 times on error.
 
         ``fetch_coro_factory`` is a no-arg callable that returns a new
         awaitable each time (needed because coroutines are single-use).
+        Does NOT retry if a 403 has been detected (pointless to retry blocks).
         """
         last_error = None
         for attempt in range(1 + len(self._RETRY_DELAYS)):
+            if self.has_403:
+                return last_error or "[ERROR: TradingView 403 Forbidden — skipped]"
             try:
                 result = await fetch_coro_factory()
                 if result and not result.startswith("[ERROR:"):
@@ -728,6 +743,8 @@ class TradingViewFetcher:
                 logger.warning(
                     "%s attempt %d failed: %s", label, attempt + 1, e,
                 )
+                if self.has_403:
+                    return last_error
 
             if attempt < len(self._RETRY_DELAYS):
                 delay = self._RETRY_DELAYS[attempt]
@@ -748,6 +765,7 @@ class TradingViewFetcher:
         url = f"https://www.tradingview.com/symbols/{full_symbol}/"
         try:
             resp = _requests.get(url, headers=_HTTP_HEADERS, timeout=15)
+            self._check_403(resp, full_symbol)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "html.parser")
 
@@ -788,6 +806,7 @@ class TradingViewFetcher:
         url = f"https://www.tradingview.com/symbols/{full_symbol}/technicals/"
         try:
             resp = _requests.get(url, headers=_HTTP_HEADERS, timeout=15)
+            self._check_403(resp, full_symbol)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "html.parser")
 
@@ -842,14 +861,12 @@ class TradingViewFetcher:
         url = f"https://www.tradingview.com/symbols/{full_symbol}/forecast/"
         try:
             resp = _requests.get(url, headers=_HTTP_HEADERS, timeout=15)
+            self._check_403(resp, full_symbol)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "html.parser")
 
             data = _forecast_try_html(soup)
             if data:
-                data["source"] = "html_extraction"
-            else:
-                data = _forecast_try_json(soup)
                 if data:
                     data["source"] = "embedded_json"
                 else:
@@ -896,14 +913,12 @@ class TradingViewFetcher:
         url = f"https://www.tradingview.com/symbols/{full_symbol}/financials-dividends/"
         try:
             resp = _requests.get(url, headers=_HTTP_HEADERS, timeout=15)
+            self._check_403(resp, full_symbol)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "html.parser")
 
             data = _dividends_try_html(soup)
             if data:
-                data["source"] = "html_extraction"
-            else:
-                data = _dividends_try_json(soup)
                 if data:
                     data["source"] = "embedded_json"
                 else:
@@ -1067,6 +1082,7 @@ class TradingViewFetcher:
 
         Returns dict with keys: overview, technicals, forecast, dividends, options_chain.
         Timing stats are stored in ``self.last_fetch_stats``.
+        Sets ``self.has_403`` if any fetch returns HTTP 403.
         """
         # Convert NYSE-MO → NYSE:MO for TradingView URLs
         full_symbol = symbol.replace("-", ":")
@@ -1074,9 +1090,14 @@ class TradingViewFetcher:
         logger.info("Pre-fetching TradingView data for %s", symbol)
 
         self.last_fetch_stats: dict[str, dict] = {}
+        self.has_403 = False
+        _skip_placeholder = "[SKIPPED: TradingView 403 — fetch aborted]"
 
         # Helper that wraps a single fetch with timing
         async def _timed_fetch(resource: str, factory, label: str) -> str:
+            if self.has_403:
+                logger.warning("Skipping %s — TradingView 403 already detected", label)
+                return _skip_placeholder
             start = time.time()
             result = await self._with_retry(factory, label)
             duration = time.time() - start

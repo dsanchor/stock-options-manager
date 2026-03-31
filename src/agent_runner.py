@@ -288,6 +288,33 @@ class AgentRunner:
             # Pre-fetch all TradingView data
             data = await fetcher.fetch_all(full_symbol)
 
+            # ── 403 guard: skip agent if TradingView blocked us ───────
+            if getattr(fetcher, "has_403", False):
+                logger.warning(
+                    "TradingView 403 detected for %s — skipping agent analysis",
+                    full_symbol,
+                )
+                print(f"⛔ TradingView 403 for {full_symbol} — agent skipped")
+                cosmos.update_tv_health(is_healthy=False, error="403 Forbidden")
+                cosmos.write_activity(
+                    symbol=symbol,
+                    agent_type=agent_type,
+                    activity_data={
+                        "symbol": symbol,
+                        "exchange": exchange,
+                        "timestamp": analysis_ts,
+                        "is_alert": False,
+                        "activity": "SKIPPED",
+                        "summary": "TradingView returned 403 — agent execution skipped",
+                        "tv_403": True,
+                    },
+                    timestamp=analysis_ts,
+                )
+                return
+
+            # Mark TradingView as healthy on successful fetch
+            cosmos.update_tv_health(is_healthy=True)
+
             message = f"""Analyze {symbol} (exchange: {exchange}, full symbol: {full_symbol}).
 
 === PRE-FETCHED TRADINGVIEW DATA ===
@@ -472,6 +499,36 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
             )
 
             data = await fetcher.fetch_all(full_symbol)
+
+            # ── 403 guard: skip agent if TradingView blocked us ───────
+            if getattr(fetcher, "has_403", False):
+                logger.warning(
+                    "TradingView 403 detected for %s — skipping position monitor",
+                    full_symbol,
+                )
+                print(f"⛔ TradingView 403 for {full_symbol} — monitor skipped")
+                cosmos.update_tv_health(is_healthy=False, error="403 Forbidden")
+                cosmos.write_activity(
+                    symbol=symbol,
+                    agent_type=agent_type,
+                    activity_data={
+                        "symbol": symbol,
+                        "exchange": exchange,
+                        "current_strike": strike,
+                        "current_expiration": expiration,
+                        "position_id": position_id,
+                        "timestamp": analysis_ts,
+                        "is_alert": False,
+                        "activity": "SKIPPED",
+                        "summary": "TradingView returned 403 — monitor execution skipped",
+                        "tv_403": True,
+                    },
+                    timestamp=analysis_ts,
+                )
+                return
+
+            # Mark TradingView as healthy on successful fetch
+            cosmos.update_tv_health(is_healthy=True)
 
             message = f"""Analyze open {position_type} position for {symbol}:
 - Current strike: ${strike}
