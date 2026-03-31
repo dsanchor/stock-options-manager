@@ -464,7 +464,18 @@ class CosmosDBService:
         doc["agent_type"] = agent_type
         doc["activity_id"] = activity_id
 
-        return self.container.create_item(doc)
+        alert_doc = self.container.create_item(doc)
+
+        # Mark the linked activity so the detail page shows action buttons
+        try:
+            act_doc = self.container.read_item(activity_id,
+                                               partition_key=symbol)
+            act_doc["is_alert"] = True
+            self.container.replace_item(act_doc, act_doc)
+        except Exception:
+            pass  # Best effort — the alert itself is already created
+
+        return alert_doc
 
     # ── Activity / Alert Read (context injection) ──────────────────────
 
