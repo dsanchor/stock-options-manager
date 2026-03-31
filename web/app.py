@@ -734,7 +734,9 @@ def _build_dashboard_tables(cosmos, all_symbols, all_alerts, all_activities):
 @app.get("/", response_class=HTMLResponse)
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    config = _load_config()
+    cosmos = getattr(request.app.state, "cosmos", None)
+    cosmos_settings = _load_settings_from_cosmos(cosmos)
+    config = cosmos_settings if cosmos_settings else _load_config()
     cron_expr = config.get("scheduler", {}).get("cron", "")
     scheduler_tz_str = config.get("scheduler", {}).get("timezone", "America/New_York")
     
@@ -1080,7 +1082,7 @@ async def settings_config_save(request: Request):
 
             scheduler = getattr(request.app.state, "scheduler", None)
             if scheduler is not None:
-                scheduler.reschedule(new_cron)
+                scheduler.reschedule(new_cron, new_timezone)
         except (ValueError, KeyError):
             pass
 
@@ -1203,7 +1205,9 @@ async def settings_redirect(request: Request):
 @app.post("/api/telegram/test")
 async def telegram_test(request: Request):
     """Send a test message via Telegram."""
-    config = _load_config()
+    cosmos = getattr(request.app.state, "cosmos", None)
+    cosmos_settings = _load_settings_from_cosmos(cosmos)
+    config = cosmos_settings if cosmos_settings else _load_config()
     telegram_cfg = config.get("telegram", {})
     if not telegram_cfg.get("enabled"):
         return JSONResponse({"ok": False, "error": "Telegram not enabled"})
