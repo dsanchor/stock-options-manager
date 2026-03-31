@@ -1,6 +1,6 @@
 # Stock Options Manager
 
-Periodic options trading analysis using Microsoft Agent Framework with Playwright-based data fetching. All data — watchlists, positions, activities, and alerts — is stored in **Azure CosmosDB** (NoSQL) with a symbol-centric partition model.
+Periodic options trading analysis using Microsoft Agent Framework with hybrid TradingView data fetching — `requests` + `BeautifulSoup` + TradingView scanner API for most data, Playwright (headless Chromium) only for options chain. All data — watchlists, positions, activities, and alerts — is stored in **Azure CosmosDB** (NoSQL) with a symbol-centric partition model.
 
 ## Architecture
 
@@ -12,7 +12,7 @@ Four specialized agents handle options trading:
 
 The first two agents (sell-side) decide whether to **open** new positions. The last two (position monitors) decide whether to **hold or adjust** existing positions.
 
-Both sell-side agents use the Microsoft Agent Framework (`agent-framework`) with TradingView as the data source. Market data is pre-fetched deterministically via [Playwright](https://playwright.dev/python/) (headless Chromium) and passed to the LLM for analysis — the LLM never touches the browser directly.
+Both sell-side agents use the Microsoft Agent Framework (`agent-framework`) with TradingView as the data source. Market data is pre-fetched deterministically — overview, technicals, forecast, and dividends via `requests` + `BeautifulSoup` + TradingView scanner API; options chain via [Playwright](https://playwright.dev/python/) (headless Chromium) — and passed to the LLM for analysis. The LLM never touches the browser or makes HTTP requests directly.
 
 **Storage backend:** Azure CosmosDB with three containers: `symbols` (watchlists, positions, activities, alerts), `telemetry` (runtime performance stats with 30-day TTL), and `settings` (application configuration persistence). Each symbol is a partition key in the symbols container containing three document types: `symbol_config` (watchlist flags + positions), `activity` (full audit trail), and `alert` (actionable alerts). The telemetry container tracks TradingView fetch durations and agent run times, displayed on the Settings page. The settings container persists application configuration with partition key `/id`. See the [Azure CosmosDB Setup](#azure-cosmosdb-setup) section for provisioning.
 
@@ -44,7 +44,7 @@ Scheduler (main.py)
        (same loop, different agent instructions)
 ```
 
-**Data gathering:** Python pre-fetches ALL TradingView data deterministically — overview (targeted div extraction of 5 specific page sections), technicals, forecast, and options chain (API response interception via TradingView scanner endpoints, with DOM fallback) — using the Playwright Python package driven from `tv_data_fetcher.py`. The LLM never touches the browser. It receives the data as text and only performs analysis. See [Pre-fetch Architecture](#pre-fetch-architecture-tradingview) below.
+**Data gathering:** Python pre-fetches ALL TradingView data deterministically from `tv_data_fetcher.py`. Overview, technicals, forecast, and dividends are fetched via `requests` + `BeautifulSoup` + TradingView scanner API (`scanner.tradingview.com/america/scan2`) — no browser needed. Options chain still uses Playwright (headless Chromium) with `page.on("response")` interception because it requires browser authentication. The LLM never touches the browser or makes HTTP requests. It receives the data as text and only performs analysis. See [Pre-fetch Architecture](#pre-fetch-architecture-tradingview) below.
 
 **Per-symbol context injection:** Before each symbol is analyzed, the runner reads that symbol's recent activities from CosmosDB and injects them into the prompt. Each activity includes whether it triggered an alert (via the `is_alert` field). The LLM sees only context for the symbol it's currently analyzing — not a mix of all symbols. Context depth is configurable in `config.yaml` (`context.max_activity_entries`, default 2, range 0–5).
 
@@ -121,14 +121,17 @@ Active positions in the Symbol Detail page have a Roll button in the positions t
 
 LLMs don't reliably make multi-step browser tool calls. When given Playwright tools directly, they skip pages, fabricate navigation errors, and ignore sequencing instructions.
 
-The solution: `TradingViewFetcher` (`src/tv_data_fetcher.py`) drives Playwright's headless Chromium directly from Python — deterministically, with no LLM involvement. It fetches four pages per symbol:
+The solution: `TradingViewFetcher` (`src/tv_data_fetcher.py`) uses a hybrid approach — `requests` + `BeautifulSoup` + TradingView scanner API for most data, Playwright only for options chain. No LLM involvement in any fetching. It gathers five data sets per symbol:
 
-| Page | Method | Typical Size | Content |
+| Data | Method | Typical Size | Content |
 |------|--------|-------------|---------|
-| Overview | `page.goto` + `getElementById` (targeted) | ~variable | Upcoming earnings, key stats, employees, company info, financials overview (5 specific div sections by ID) |
-| Technicals | `page.goto` + `innerText` | ~3K chars | RSI, MACD, Stochastic, all MAs (10-200), pivot points (R1-R3, S1-S3) with Buy/Sell/Neutral alerts |
-| Forecast | `page.goto` + `innerText` | ~2.5K chars | Analyst consensus, price targets, EPS history, revenue data |
-| Options chain | `page.on("response")` interception | ~variable | Structured JSON from TradingView scanner API (`scanner.tradingview.com/global/scan2` + `options/scan2`): strikes, bids, asks, greeks, volume, OI. Falls back to DOM `innerText` if no API responses captured |
+| Overview | `requests` + `BeautifulSoup` (embedded JSON) + scanner API for fundamentals | ~variable | Market cap, P/E, EPS, dividend yield, sector, employees, company description |
+| Technicals | Scanner API (`scanner.tradingview.com/america/scan2`) | ~3K chars | Oscillators (RSI, MACD, Stochastic), moving averages (EMA/SMA 10-200), summary recommendations with Buy/Sell/Neutral signals |
+| Forecast | Scanner API (`scanner.tradingview.com/america/scan2`) | ~2.5K chars | Analyst consensus, price targets (high/median/low), ratings distribution |
+| Dividends | `requests` + `BeautifulSoup` + scanner API | ~variable | Dividend yield, amount, ex-date, payment frequency, payout ratio |
+| Options chain | Playwright `page.on("response")` interception | ~variable | Structured JSON from TradingView scanner API (`scanner.tradingview.com/global/scan2` + `options/scan2`): strikes, bids, asks, greeks, volume, OI. Requires browser authentication — scanner API rejects unauthenticated options requests. Falls back to DOM `innerText` if no API responses captured |
+
+Playwright and Chromium are initialized lazily — they only start when options chain is actually fetched, saving resources when only the four HTTP-based fetchers run.
 
 The agent is created with **no tools** — it only analyzes the pre-fetched data included in its prompt. This is the key pattern: move deterministic multi-step workflows to the host language; let the LLM do what it's good at — analysis.
 
@@ -219,7 +222,7 @@ stock-options-manager/
 │   ├── cosmos_db.py                      # CosmosDB service layer — all database operations
 │   ├── context.py                        # Context injection adapter — formats CosmosDB data for prompts
 │   ├── agent_runner.py                   # Core execution engine — TradingView pre-fetch + per-symbol loop
-│   ├── tv_data_fetcher.py                # TradingView pre-fetch module — drives Playwright from Python
+│   ├── tv_data_fetcher.py                # Hybrid TradingView data fetcher (BeautifulSoup + scanner API for most data, Playwright for options chain)
 │   ├── covered_call_agent.py             # Covered call wrapper
 │   ├── cash_secured_put_agent.py         # Cash secured put wrapper
 │   ├── open_call_monitor_agent.py        # Open call position monitor wrapper
@@ -280,12 +283,14 @@ stock-options-manager/
 python -m venv venv
 source venv/bin/activate 
 pip install -r requirements.txt
-playwright install chromium
+playwright install chromium  # Only needed for options chain fetching
 ```
 
 This installs:
 - `agent-framework[foundry]` - Microsoft Agent Framework with Foundry support
-- `playwright` - Headless Chromium for TradingView data fetching
+- `beautifulsoup4` - HTML parsing for TradingView overview and dividend data
+- `requests` - HTTP client for TradingView scanner API (overview, technicals, forecast, dividends)
+- `playwright` - Headless Chromium for options chain fetching only (requires browser authentication)
 - `pyyaml`, `croniter`, `python-dotenv` - Configuration and scheduling
 
 #### 2. Configure Environment Variables
@@ -302,7 +307,9 @@ export AZURE_OPENAI_API_KEY="your-api-key-here"
 export COSMOSDB_ENDPOINT="https://your-account.documents.azure.com:443/"
 export COSMOSDB_KEY="your-primary-key"
 
-# No API key needed for TradingView — data is free via Playwright browser automation
+# No API key needed for TradingView — overview, technicals, forecast, and dividend data
+# is fetched via HTTP requests + TradingView scanner API. Only options chain requires
+# Playwright browser automation (for authentication).
 ```
 
 #### 3. (Optional) Set Up Telegram Notifications
@@ -402,7 +409,7 @@ The dashboard runs on `http://localhost:8000` by default (configurable in `confi
 
 ### Running with Docker
 
-Build the image (pre-installs Playwright + Chromium — no Node.js needed):
+Build the image (pre-installs Playwright + Chromium for options chain fetching — no Node.js needed):
 
 ```bash
 docker build -t stock-options-manager .
@@ -680,9 +687,11 @@ Make sure you've exported the environment variable with your Azure AI Foundry pr
 - Run `bash scripts/provision_cosmosdb.sh` to create missing resources
 
 ### Playwright / Chromium Issues
+- Playwright is only used for options chain fetching (overview, technicals, forecast, and dividends use HTTP requests + scanner API — Playwright issues won't affect them)
 - Ensure Chromium is installed: `playwright install chromium`
 - First run may be slow while downloading Chromium
 - In Docker, Chromium is pre-installed during image build
+- If overview/technicals/forecast/dividends fail, check network connectivity and TradingView scanner API availability
 
 ### Authentication Errors
 Ensure your `AZURE_OPENAI_API_KEY` environment variable is set correctly. You can get your API key from the Azure Portal under your Azure OpenAI resource.
@@ -708,7 +717,7 @@ Key components:
 - `agent_framework.Agent` - Main agent class
 - `agent_framework.foundry.FoundryChatClient` - Azure AI Foundry integration
 
-TradingView data is fetched via the Python Playwright package using headless Chromium. The browser is driven from Python (`tv_data_fetcher.py`), not by the LLM. The LLM receives pre-fetched data as text and performs analysis only — no tools are given to the agent.
+TradingView data is fetched via a hybrid approach: overview, technicals, forecast, and dividends use `requests` + `BeautifulSoup` + TradingView scanner API (`scanner.tradingview.com/america/scan2`); options chain uses Playwright with headless Chromium (requires browser authentication). All fetching is driven from Python (`tv_data_fetcher.py`), not by the LLM. The LLM receives pre-fetched data as text and performs analysis only — no tools are given to the agent.
 
 ---
 
