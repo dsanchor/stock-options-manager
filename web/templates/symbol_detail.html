@@ -310,6 +310,12 @@
             <input type="text" id="posNotes" placeholder="Notes (optional)" class="input-field" style="flex:1">
             <button class="btn btn-primary" id="btnAddPosition">+ Add</button>
         </div>
+        <div id="alertPrefillRow" style="display:none; margin:0.5rem 0 0; align-items:center; gap:0.5rem;">
+            <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer; font-size:0.92em;">
+                <input type="checkbox" id="chkAlertPrefill">
+                <span id="alertPrefillLabel"></span>
+            </label>
+        </div>
         <div id="posError" class="alert alert-error" style="display:none; margin:0.75rem 0 0;"></div>
         <div id="posSuccess" class="alert alert-success" style="display:none; margin:0.75rem 0 0;"></div>
     </div>
@@ -426,6 +432,66 @@
 <script>
 (function() {
     var SYMBOL = '{{ symbol_doc.symbol }}';
+
+    // Alert pre-fill data (embedded by backend)
+    var WATCHLIST = {
+        covered_call: {{ symbol_doc.watchlist.covered_call | tojson }},
+        cash_secured_put: {{ symbol_doc.watchlist.cash_secured_put | tojson }}
+    };
+    var LATEST_SELL_ALERTS = {
+        covered_call: {{ latest_sell_alerts.covered_call | tojson }},
+        cash_secured_put: {{ latest_sell_alerts.cash_secured_put | tojson }}
+    };
+    var AGENT_TYPE_MAP = { call: 'covered_call', put: 'cash_secured_put' };
+
+    function updateAlertPrefillCheckbox() {
+        var posType = document.getElementById('posType').value;
+        var agentType = AGENT_TYPE_MAP[posType];
+        var row = document.getElementById('alertPrefillRow');
+        var chk = document.getElementById('chkAlertPrefill');
+        var label = document.getElementById('alertPrefillLabel');
+        var alert = agentType ? LATEST_SELL_ALERTS[agentType] : null;
+        var watching = agentType ? WATCHLIST[agentType] : false;
+
+        if (watching && alert && alert.strike && alert.expiration) {
+            var dateStr = (alert.timestamp || '').substring(0, 10);
+            var agentLabel = agentType === 'covered_call' ? 'Covered Call' : 'Cash-Secured Put';
+            label.textContent = 'Pre-fill from latest alert (' + agentLabel + ', ' + dateStr + ')';
+            row.style.display = 'flex';
+        } else {
+            row.style.display = 'none';
+            chk.checked = false;
+        }
+    }
+
+    function applyAlertPrefill() {
+        var posType = document.getElementById('posType').value;
+        var agentType = AGENT_TYPE_MAP[posType];
+        var chk = document.getElementById('chkAlertPrefill');
+        var alert = agentType ? LATEST_SELL_ALERTS[agentType] : null;
+
+        if (chk.checked && alert) {
+            document.getElementById('posStrike').value = alert.strike || '';
+            document.getElementById('posExpiration').value = alert.expiration || '';
+            var notes = [];
+            if (alert.premium) notes.push('Premium: $' + alert.premium);
+            if (alert.iv) notes.push('IV: ' + alert.iv + '%');
+            if (alert.confidence) notes.push('Confidence: ' + alert.confidence);
+            if (alert.reason) notes.push(alert.reason);
+            document.getElementById('posNotes').value = notes.join(' | ');
+        } else {
+            document.getElementById('posStrike').value = '';
+            document.getElementById('posExpiration').value = '';
+            document.getElementById('posNotes').value = '';
+        }
+    }
+
+    document.getElementById('posType').addEventListener('change', function() {
+        document.getElementById('chkAlertPrefill').checked = false;
+        updateAlertPrefillCheckbox();
+    });
+    document.getElementById('chkAlertPrefill').addEventListener('change', applyAlertPrefill);
+    updateAlertPrefillCheckbox();
 
     // Add position
     document.getElementById('btnAddPosition').addEventListener('click', async function() {

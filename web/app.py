@@ -920,11 +920,34 @@ async def symbol_detail_page(request: Request, symbol: str):
         alerts.extend(alts)
     alerts.sort(key=lambda s: s.get("timestamp", ""), reverse=True)
 
+    # Latest SELL alert per watchlist agent type (for position pre-fill)
+    latest_sell_alerts: Dict[str, Dict | None] = {
+        "covered_call": None,
+        "cash_secured_put": None,
+    }
+    for alt in alerts:
+        at = alt.get("agent_type")
+        if at in latest_sell_alerts and latest_sell_alerts[at] is None:
+            latest_sell_alerts[at] = {
+                "agent_type": at,
+                "strike": alt.get("strike"),
+                "expiration": alt.get("expiration"),
+                "premium": alt.get("premium"),
+                "confidence": alt.get("confidence"),
+                "reason": alt.get("reason"),
+                "iv": alt.get("iv"),
+                "underlying_price": alt.get("underlying_price"),
+                "risk_flags": alt.get("risk_flags", []),
+                "activity_id": alt.get("activity_id"),
+                "timestamp": alt.get("timestamp"),
+            }
+
     return templates.TemplateResponse("symbol_detail.html", {
         "request": request,
         "symbol_doc": doc,
         "activities": activities,
         "alerts": alerts,
+        "latest_sell_alerts": latest_sell_alerts,
     })
 
 
