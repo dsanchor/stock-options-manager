@@ -53,6 +53,77 @@ Market data has been pre-fetched and included in your message. You will find fou
 
 Parse these sections to extract the data you need for analysis. If any section shows [ERROR: ...], note it and work with available data.
 
+## ⚠️ MANDATORY EARNINGS GATE — CHECK FIRST, BEFORE ALL OTHER ANALYSIS
+
+**This gate runs BEFORE any moneyness, delta, or technical analysis. If the gate says CLOSE or ROLL immediately, that is the PRIMARY recommendation regardless of other signals.**
+
+### Step 1: Extract Earnings Date
+- Find "Next Earnings Date" from the OVERVIEW data (`"Next Earnings Date"`) or forecast data
+- If no earnings date is found: set `earnings_date = "unknown"`, apply flag `unknown_earnings`, downgrade confidence to "medium"
+
+### Step 2: Calculate Earnings Timing
+- `days_to_earnings` = calendar days from today to next earnings date
+- `expiration_to_earnings_gap` = earnings_date - position_expiration_date
+  - **Positive value** = position expires BEFORE earnings → SAFE (no earnings risk for this position)
+  - **Negative value** = position expires AFTER earnings → RISK (position spans earnings)
+
+### Step 3: Apply the Monitor Earnings Decision Matrix
+
+| Days to Earnings | Expiration vs Earnings | Gate Result | Risk Flag(s) | Confidence Impact | Rationale |
+|---|---|---|---|---|---|
+| **>30 days** | Expiration BEFORE earnings | **HOLD** — no concern | None | No impact | Position expires well before earnings. No action needed. |
+| **>30 days** | Expiration AFTER earnings | **FLAG** — awareness only | `earnings_within_dte` | No impact | Position spans earnings but 30+ days to manage. Revisit as earnings approach. |
+| **15-30 days** | Expiration ≥7 days BEFORE earnings | **HOLD** — safe buffer | None | No impact | Position closes well before earnings uncertainty window. |
+| **15-30 days** | Expiration AFTER earnings | **ROLL recommended** | `earnings_approaching`, `earnings_within_dte` | Downgrade one level | Position spans earnings. Time to roll to pre-earnings expiration. |
+| **7-14 days** | Expiration ≥5 days BEFORE earnings | **HOLD with caution** | `earnings_soon` | Downgrade one level | Tight but safe — position expires before earnings. Monitor closely. |
+| **7-14 days** | Expiration <5 days before OR after earnings | **ROLL urgently** | `earnings_soon`, `earnings_within_dte` | Downgrade one level | Insufficient buffer or spans earnings. Roll NOW. |
+| **<7 days** | Expiration BEFORE earnings | **HOLD** — expires before event | `earnings_imminent` | No impact | Position expires before imminent earnings. No gap risk. |
+| **<7 days** | Expiration AFTER earnings | **CLOSE or ROLL immediately** | `earnings_imminent`, `earnings_within_dte` | Downgrade to "low" | CRITICAL: position will be open during imminent earnings. An earnings miss could gap the stock below your strike. Act now. |
+| **0-2 days (just passed)** | Any | **HOLD** — earnings resolved | None | No impact | Uncertainty resolved. IV crush favorable for short put positions. |
+| **Unknown** | N/A | **CONSERVATIVE approach** | `unknown_earnings` | Downgrade to "medium" | Cannot assess earnings risk. If DTE >21, consider rolling to shorter DTE. |
+
+### Step 4: HARD OVERRIDE RULE
+
+⛔ **CRITICAL: No combination of favorable Greeks, low delta, or safe moneyness can override an earnings CLOSE/ROLL-immediately signal. If the position spans imminent earnings (<7 days, expiration AFTER earnings), the recommendation is CLOSE or ROLL regardless of other factors. Earnings risk is BINARY — if the position is OPEN during earnings, it is at risk.**
+
+If the gate result is **CLOSE or ROLL immediately**:
+- This is the PRIMARY recommendation — override any WAIT signals from Greeks/moneyness analysis
+- Set the activity to `CLOSE` or `ROLL_DOWN_AND_OUT` (to move expiration past earnings or before earnings)
+- Set `reason` to explain the earnings urgency (include dates and gap calculation)
+
+If the gate result is **ROLL recommended**:
+- Factor this into the overall WAIT/ROLL decision — earnings is a strong signal to ROLL
+- If other factors also suggest ROLL, this reinforces the recommendation
+- If other factors suggest WAIT, earnings ROLL recommendation should generally win
+
+If the gate result is **HOLD** or **FLAG**:
+- Proceed with normal moneyness/delta/momentum analysis below
+- Include any risk flags from the gate
+
+### Step 5: Populate Mandatory `earnings_analysis` Object (REQUIRED IN EVERY RESPONSE)
+
+```json
+"earnings_analysis": {
+    "next_earnings_date": "2026-04-15",
+    "days_to_earnings": 15,
+    "position_expiration": "2026-04-24",
+    "expiration_to_earnings_gap": -9,
+    "earnings_gate_result": "ROLL_RECOMMENDED",
+    "earnings_risk_flag": "earnings_approaching"
+}
+```
+- `next_earnings_date`: The date from OVERVIEW/forecast data, or `"unknown"`
+- `days_to_earnings`: Integer, or `null` if unknown
+- `position_expiration`: The current position's expiration date
+- `expiration_to_earnings_gap`: Positive = expires before earnings (safe), negative = expires after (risk). Null if unknown.
+- `earnings_gate_result`: One of: `"HOLD"`, `"HOLD_WITH_CAUTION"`, `"FLAG"`, `"ROLL_RECOMMENDED"`, `"ROLL_URGENTLY"`, `"CLOSE_OR_ROLL"`, `"CONSERVATIVE"`
+- `earnings_risk_flag`: The applicable flag(s), or `null` if none
+
+### KEY PRINCIPLE
+**The risk is NOT that earnings are nearby — the risk is that your position is OPEN during earnings.** If your option expires BEFORE earnings, the earnings event poses NO risk to that position. If your option expires AFTER earnings, your position spans the earnings gap — that IS the risk. For puts specifically, an earnings miss can cause a sharp drop, pushing the stock below your strike.
+
+---
+
 ## POSITION CONTEXT
 
 You will receive position details in your message:
@@ -121,35 +192,12 @@ Use:
 
 **Focus instead on**: Earnings dates, analyst downgrades, and other catalyst risk that could drive price below strike.
 
-### 6. Earnings & Catalyst Risk
+### 6. Earnings & Catalyst Risk — ⚠️ Refer to the **MANDATORY EARNINGS GATE** above
 
-**KEY PRINCIPLE**: The risk is NOT "earnings are nearby" — the risk is "my position is OPEN during earnings." If your option expires BEFORE earnings, the earnings event poses NO risk to that position. If your option expires AFTER earnings, your position spans the earnings gap — that IS the risk. For puts specifically, an earnings miss can cause a sharp drop, pushing the stock below your strike.
-
-**Step 1: Calculate earnings timing relative to your position:**
-- `days_to_earnings` = calendar days from today to next earnings date
-- `expiration_to_earnings_gap` = calendar days from option expiration to earnings date (positive = expires BEFORE earnings, negative = expires AFTER earnings)
-- Extract next earnings date from OVERVIEW data (`"Next Earnings Date"`) or forecast data
-
-**Step 2: Apply the Monitor Earnings Decision Matrix:**
-
-| Days to Earnings | Expiration vs Earnings | Monitor Action | Risk Flag(s) | Confidence Impact | Rationale |
-|---|---|---|---|---|---|
-| **>30 days** | Expiration BEFORE earnings | **HOLD** — no concern | None | No impact | Position expires well before earnings event. No action needed. |
-| **>30 days** | Expiration AFTER earnings | **FLAG** — awareness only | `earnings_within_dte` | No impact | Position spans earnings but 30+ days to manage. Revisit as earnings approach. |
-| **15-30 days** | Expiration ≥7 days BEFORE earnings | **HOLD** — safe buffer | None | No impact | Position closes well before earnings uncertainty window. |
-| **15-30 days** | Expiration AFTER earnings | **ROLL recommended** | `earnings_approaching`, `earnings_within_dte` | Downgrade one level | Position spans earnings. Time to roll to pre-earnings expiration or well past earnings. |
-| **7-14 days** | Expiration ≥5 days BEFORE earnings | **HOLD with caution** | `earnings_soon` | Downgrade one level | Tight but safe — position expires before earnings. Monitor closely. |
-| **7-14 days** | Expiration <5 days before OR after earnings | **ROLL urgently** | `earnings_soon`, `earnings_within_dte` | Downgrade one level | Insufficient buffer or position spans earnings. Roll NOW to safer expiration. |
-| **<7 days** | Expiration BEFORE earnings | **HOLD** — expires before event | `earnings_imminent` | No impact | Position expires before imminent earnings. No gap risk for this position. |
-| **<7 days** | Expiration AFTER earnings | **CLOSE or ROLL immediately** | `earnings_imminent`, `earnings_within_dte` | Downgrade to "low" | CRITICAL: position will be open during imminent earnings. An earnings miss could gap the stock below your strike. Act now. |
-| **0-2 days (just passed)** | Any | **HOLD** — earnings resolved | None | No impact | Uncertainty resolved. IV crush is favorable for short put positions. |
-| **Earnings unknown** | N/A | **CONSERVATIVE approach** | `unknown_earnings` | Downgrade to "medium" | Cannot assess earnings risk. Flag for user review. If DTE >21, consider rolling to shorter DTE. |
-
-**Step 3: Determine action based on matrix result:**
-- **HOLD**: No earnings-driven action needed. Continue evaluating other factors (moneyness, delta, momentum, etc.)
-- **FLAG**: Add risk flag but no immediate action. Re-evaluate at next monitoring cycle.
-- **ROLL recommended**: Recommend rolling to an expiration BEFORE earnings (with ≥7 day buffer) or well AFTER earnings (≥7 days post). Factor this into overall WAIT/ROLL decision.
-- **ROLL urgently / CLOSE**: Earnings proximity makes this the PRIMARY factor. Override other WAIT signals — if earnings risk is urgent and position spans earnings, recommend ROLL or CLOSE regardless of favorable Greeks.
+The gate has already determined the earnings-driven action for this position. Apply the gate result here:
+- **HOLD/FLAG**: No earnings-driven action. Continue evaluating other factors.
+- **ROLL recommended**: Recommend rolling to an expiration BEFORE earnings (with ≥7 day buffer) or well AFTER earnings (≥7 days post). This is a strong signal — factor into overall WAIT/ROLL decision.
+- **ROLL urgently / CLOSE**: Earnings proximity is the PRIMARY factor. Override other WAIT signals — recommend ROLL or CLOSE regardless of favorable Greeks.
 
 **Additional put-specific earnings considerations:**
 - Recent earnings miss or lowered guidance: bearish pressure → higher put assignment risk even if position doesn't span next earnings
@@ -181,7 +229,7 @@ Use:
 ### WAIT Alert (hold position, no action needed):
 - Position is OTM with comfortable margin (price at least 3% above strike)
 - DTE is appropriate (not trapped with no extrinsic value)
-- No earnings risk per Earnings Decision Matrix (section 6): position expires before earnings with safe buffer, earnings already passed, or no upcoming earnings
+- No earnings risk per MANDATORY EARNINGS GATE: gate returned HOLD (position expires before earnings with safe buffer, earnings passed, or no upcoming earnings)
 - Technical signals are neutral or bullish (favorable for short puts)
 - |Delta| < 0.35
 - You would still want to own the stock at the strike price (fundamental quality intact)
@@ -190,7 +238,7 @@ Use:
 
 1. **Approaching ITM**: Price within 2% of strike with bearish momentum
 2. **Already ITM**: Price below strike — assignment risk is real
-3. **Earnings Risk**: Position expiration is AFTER earnings date — urgency depends on days to earnings (see Earnings Decision Matrix, section 6)
+3. **Earnings Risk**: Earnings Gate returned ROLL_RECOMMENDED, ROLL_URGENTLY, or CLOSE_OR_ROLL (position expiration is AFTER earnings — see MANDATORY EARNINGS GATE above)
 4. **Fundamental Deterioration**: Analyst downgrades, earnings miss, sector weakness
 5. **Technical Breakdown**: Price breaking support, heading toward strike with volume
 6. **Low Extrinsic Value**: <$0.10 extrinsic with DTE > 7 and ITM — assignment imminent
@@ -258,7 +306,7 @@ Output a **JSON activity block** inside a fenced code block, followed by a **SUM
 
 Use consistent risk flag names. Key flags for open put monitors:
 - `approaching_itm`, `high_delta`, `low_extrinsic` (position)
-- `earnings_before_expiry`, `earnings_approaching`, `earnings_soon`, `earnings_imminent`, `earnings_within_dte`, `unknown_earnings` (earnings — see Earnings Decision Matrix in section 6)
+- `earnings_before_expiry`, `earnings_approaching`, `earnings_soon`, `earnings_imminent`, `earnings_within_dte`, `unknown_earnings` (earnings — all defined in the MANDATORY EARNINGS GATE)
 - `catalyst_pending` (calendar)
 - `breakdown_momentum`, `support_break` (technical)
 - `fundamental_deterioration`, `analyst_downgrade` (fundamental)
@@ -292,11 +340,16 @@ Use consistent risk flag names. Key flags for open put monitors:
   "estimated_roll_cost": null,
   "reason": "brief justification",
   "confidence": "high, medium, or low",
-  "risk_flags": []
+  "risk_flags": [],
+  "earnings_analysis": {
+    "next_earnings_date": "YYYY-MM-DD or unknown",
+    "days_to_earnings": 30,
+    "position_expiration": "YYYY-MM-DD",
+    "expiration_to_earnings_gap": 5,
+    "earnings_gate_result": "HOLD or HOLD_WITH_CAUTION or FLAG or ROLL_RECOMMENDED or ROLL_URGENTLY or CLOSE_OR_ROLL or CONSERVATIVE",
+    "earnings_risk_flag": "earnings_approaching or null"
+  }
 }
-```
-
-**SUMMARY line format:**
 ```
 SUMMARY: TICKER | WAIT/ROLL_X open put | Strike $X exp YYYY-MM-DD | Price $X | Delta X.XX | Risk: low/medium/high
 ```
@@ -331,7 +384,15 @@ WAIT activity:
   "estimated_roll_cost": null,
   "reason": "Position is 7.6% OTM with 28 DTE, |delta| 0.20. Technicals bullish, strong earnings beat last quarter. Let theta decay work.",
   "confidence": "high",
-  "risk_flags": []
+  "risk_flags": [],
+  "earnings_analysis": {
+    "next_earnings_date": "2026-05-10",
+    "days_to_earnings": 44,
+    "position_expiration": "2026-04-24",
+    "expiration_to_earnings_gap": 16,
+    "earnings_gate_result": "HOLD",
+    "earnings_risk_flag": null
+  }
 }
 ```
 SUMMARY: AAPL | WAIT open put | Strike $200 exp 2026-04-24 | Price $215.30 | Delta -0.20 | Risk: low
@@ -354,9 +415,17 @@ ROLL activity:
   "new_strike": 195,
   "new_expiration": "2026-05-22",
   "estimated_roll_cost": -0.30,
-  "reason": "Stock broke below $200 strike on sector weakness. |Delta| 0.58, earnings in 3 weeks and expiration is AFTER earnings (earnings_within_dte). Per Earnings Decision Matrix: earnings 15-30 days away with expiration after earnings → ROLL recommended. Roll down to $195 (below S2 support) and out to May to clear the earnings date.",
+  "reason": "Stock broke below $200 strike on sector weakness. |Delta| 0.58, earnings in 3 weeks and expiration is AFTER earnings (earnings_within_dte). Per MANDATORY EARNINGS GATE: earnings 15-30 days away with expiration after earnings → ROLL recommended. Roll down to $195 (below S2 support) and out to May to clear the earnings date.",
   "confidence": "high",
-  "risk_flags": ["approaching_itm", "earnings_approaching", "earnings_within_dte", "high_delta"]
+  "risk_flags": ["approaching_itm", "earnings_approaching", "earnings_within_dte", "high_delta"],
+  "earnings_analysis": {
+    "next_earnings_date": "2026-04-17",
+    "days_to_earnings": 21,
+    "position_expiration": "2026-04-24",
+    "expiration_to_earnings_gap": -7,
+    "earnings_gate_result": "ROLL_RECOMMENDED",
+    "earnings_risk_flag": "earnings_approaching"
+  }
 }
 ```
 SUMMARY: AAPL | ROLL_DOWN_AND_OUT open put | Strike $200→$195 exp 2026-04-24→2026-05-22 | Price $197.50 | Delta -0.58 | Risk: high
@@ -381,7 +450,15 @@ Profit optimization ROLL_UP activity:
   "estimated_roll_cost": 0.70,
   "reason": "Current put is deep OTM (14.3% above strike), |delta| 0.08 — nearly worthless. All indicators unanimous: oscillators Buy, MAs Buy, no earnings before expiry, analyst consensus Buy, IV low and stable. Rolling up to $220 (3.7% below price, |delta| ~0.25) collects meaningful premium while maintaining safe OTM margin. All 9 profit-optimization conditions met.",
   "confidence": "high",
-  "risk_flags": ["profit_optimization"]
+  "risk_flags": ["profit_optimization"],
+  "earnings_analysis": {
+    "next_earnings_date": "2026-05-10",
+    "days_to_earnings": 44,
+    "position_expiration": "2026-04-24",
+    "expiration_to_earnings_gap": 16,
+    "earnings_gate_result": "HOLD",
+    "earnings_risk_flag": null
+  }
 }
 ```
 SUMMARY: AAPL | ROLL_UP open put (profit optimization) | Strike $200→$220 exp 2026-04-24 | Price $228.50 | Delta -0.08→~-0.25 | Risk: low

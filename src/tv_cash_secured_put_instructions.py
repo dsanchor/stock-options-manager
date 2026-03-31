@@ -95,7 +95,78 @@ Market data has been pre-fetched and included in your message. You will find fiv
 
 Parse these sections to extract the data you need for analysis. If any section shows [ERROR: ...], note it and work with available data.
 
-### Phase 2: Analysis & Synthesis (no additional page navigations needed)
+## ⚠️ MANDATORY EARNINGS GATE — CHECK FIRST, BEFORE ALL OTHER ANALYSIS
+
+**This gate runs BEFORE any technical, volatility, or fundamental analysis. If the gate says BLOCKED, STOP — output WAIT immediately. No other signal can override this gate.**
+
+### Step 1: Extract Earnings Date
+- Find "Next Earnings Date" from the OVERVIEW data or forecast data
+- If no earnings date is found: set `earnings_date = "unknown"`, apply flag `unknown_earnings`, use conservative DTE (<30 days), downgrade confidence to "medium"
+
+### Step 2: Calculate Earnings Timing
+- `days_to_earnings` = calendar days from today to next earnings date
+- `expiration_to_earnings_gap` = earnings_date - candidate_expiration_date
+  - **Positive value** = expiration is BEFORE earnings → SAFE
+  - **Negative value** = expiration is AFTER earnings → RISK
+
+### Step 3: Apply the Watcher Earnings Decision Matrix
+
+| Days to Earnings | Expiration vs Earnings | Gate Result | Risk Flag | Confidence Impact | Rationale |
+|---|---|---|---|---|---|
+| **>30 days** | Expiration before earnings | **OPEN NORMALLY** | None | No impact | Earnings too far out. Capture elevated pre-earnings IV. |
+| **15-30 days** | Expiration ≥7 days BEFORE earnings | **ALLOWED** | `earnings_approaching` | No impact | Safe buffer. Premium boosted by approaching earnings IV. |
+| **15-30 days** | Expiration AFTER earnings | **BLOCKED → WAIT** | `earnings_within_dte` | N/A — WAIT | Position would span earnings. Gap/assignment risk. |
+| **7-14 days** | Expiration ≥5 days BEFORE earnings | **ALLOWED WITH CAUTION** | `earnings_soon` | Downgrade one level | Tight but viable. Verify expiration clears earnings by ≥5 days. Strike should be >10% below current price for extra safety. |
+| **7-14 days** | Expiration <5 days before OR after earnings | **BLOCKED → WAIT** | `earnings_within_dte` | N/A — WAIT | Insufficient buffer or spans earnings. |
+| **<7 days** | Any expiration | **BLOCKED → WAIT** | `earnings_imminent` | N/A — WAIT | Too close. Wait for post-earnings setup. |
+| **0-2 days (just passed)** | Any | **IDEAL — OPEN** | None | No impact | Post-earnings IV crush still elevated, uncertainty resolved. Best CSP entry point. |
+| **Unknown** | N/A | **CONSERVATIVE DTE** | `unknown_earnings` | Downgrade to "medium" | Assume earnings could be ~30 days away. Apply DTE <30 days. |
+
+### Step 4: HARD OVERRIDE RULE
+
+⛔ **CRITICAL: No combination of bullish technicals, strong fundamentals, or favorable IV can override an earnings BLOCK. Earnings risk is BINARY — if the position would be OPEN during earnings, it is at risk regardless of other signals. The ONLY exception is when the option expires BEFORE earnings with sufficient buffer per the matrix above.**
+
+If the gate result is **BLOCKED → WAIT**:
+- Set `activity = "WAIT"` — this is FINAL. Do NOT proceed to evaluate technicals, Greeks, or premiums.
+- Set `reason` to explain the earnings block (include dates and gap calculation)
+- Set `waiting_for` to describe what would unblock (e.g., "post-earnings IV crush opportunity" or "expiration that clears earnings date")
+- You MUST still complete the `earnings_analysis` object in your output
+
+If the gate result is **ALLOWED** or **ALLOWED WITH CAUTION**:
+- Proceed with full technical/volatility/fundamental analysis below
+- Apply any confidence downgrade noted in the matrix
+- Include the earnings risk flag in `risk_flags`
+
+### Step 5: Populate Mandatory `earnings_analysis` Object (REQUIRED IN EVERY RESPONSE)
+
+```json
+"earnings_analysis": {
+    "next_earnings_date": "2026-04-15",
+    "days_to_earnings": 15,
+    "expiration_date": "2026-04-10",
+    "expiration_to_earnings_gap": 5,
+    "earnings_gate_result": "ALLOWED",
+    "earnings_risk_flag": "earnings_approaching"
+}
+```
+- `next_earnings_date`: The date from OVERVIEW/forecast data, or `"unknown"`
+- `days_to_earnings`: Integer, or `null` if unknown
+- `expiration_date`: The candidate or recommended expiration date
+- `expiration_to_earnings_gap`: Positive = before earnings (safe), negative = after (risk). Null if unknown.
+- `earnings_gate_result`: One of: `"OPEN_NORMALLY"`, `"ALLOWED"`, `"ALLOWED_WITH_CAUTION"`, `"BLOCKED"`, `"IDEAL"`, `"CONSERVATIVE_DTE"`
+- `earnings_risk_flag`: The applicable flag from the matrix, or `null` if none
+
+### KEY PRINCIPLE
+**The risk is NOT that earnings are nearby — the risk is that your position is OPEN during earnings.** If your option expires BEFORE earnings, the earnings event poses NO risk to that position. Use this to your advantage: pre-earnings IV boost gives better premiums. For CSPs specifically, post-earnings is IDEAL (IV crush + resolved uncertainty).
+
+### DTE Selection Priority (when earnings are 15-30 days away)
+- PREFER expirations that fall BEFORE earnings (capture pre-earnings IV premium without earnings risk)
+- Target: expiration 7+ days before earnings for comfort, 5+ days minimum
+- For CSPs: post-earnings (0-2 days after) remains the IDEAL entry — but pre-earnings with safe expiration is the next best thing
+
+---
+
+### Phase 2: Analysis & Synthesis (ONLY if Earnings Gate allows — no additional page navigations needed)
 
 The agent synthesizes all gathered data into a comprehensive analysis:
 
@@ -170,34 +241,9 @@ The agent synthesizes all gathered data into a comprehensive analysis:
      - Recent price action vs MA distances can indicate volatility regime
    - Target: Elevated IV% from expanded options chain + recent selloff = attractive put premiums
 
-9. **Earnings & Calendar Risk**
-    - Extract next earnings date from the forecast data — look for upcoming earnings date, EPS estimates, and reporting schedule
-    - **Timing Strategy for Put Selling — Earnings-Aware Approach**:
-
-    **KEY PRINCIPLE**: The risk is NOT "earnings are nearby" — the risk is "my position is OPEN during earnings." If your option expires BEFORE earnings, the earnings event poses NO risk to that position. High IV before earnings means BETTER premiums — capture this when expiration is safely before earnings. For CSPs specifically, post-earnings is IDEAL (IV crush + resolved uncertainty).
-
-    **Step 1: Calculate days_to_earnings and compare to candidate expiration date:**
-    - `days_to_earnings` = calendar days from today to next earnings date
-    - `expiration_to_earnings_gap` = calendar days from option expiration to earnings date (positive = expires before earnings)
-
-    **Step 2: Apply the Earnings Decision Matrix:**
-
-| Days to Earnings | Expiration vs Earnings | CSP Guidance | Risk Flag | Confidence Impact | Rationale |
-|---|---|---|---|---|---|
-| **>30 days** | Any (expires before earnings) | **OPEN NORMALLY** | None | No impact | Earnings too far out to matter. Capture elevated pre-earnings IV for premium. |
-| **15-30 days** | Expiration ≥7 days BEFORE earnings | **ALLOWED** | `earnings_approaching` | No impact | Safe buffer. Position closes well before uncertainty window. Premium boosted by approaching earnings IV. |
-| **15-30 days** | Expiration AFTER earnings | **AVOID** | `earnings_within_dte` | N/A — WAIT | Position would span earnings. Gap/assignment risk. |
-| **7-14 days** | Expiration ≥5 days BEFORE earnings | **ALLOWED WITH CAUTION** | `earnings_soon` | Downgrade one level | Tight but viable. Short DTE captures theta. Verify expiration clears earnings by ≥5 days. Strike should be >10% below current price for extra safety. |
-| **7-14 days** | Expiration <5 days before OR after earnings | **AVOID** | `earnings_within_dte` | N/A — WAIT | Insufficient buffer or spans earnings. |
-| **<7 days** | Any | **BLOCK** | `earnings_imminent` | N/A — WAIT | Too close. IV crush risk, gap risk, assignment risk. Wait for post-earnings setup. |
-| **0-2 (just passed)** | Any | **IDEAL** | None | No impact | Post-earnings IV crush still elevated, uncertainty resolved. Best CSP entry point. |
-| **Earnings unknown** | N/A | **CONSERVATIVE DTE** | `unknown_earnings` | Downgrade to "medium" | Assume earnings could be ~30 days away. Apply DTE <30 days. |
-
-    **Step 3: DTE Selection Priority (when earnings are 15-30 days away):**
-    - PREFER expirations that fall BEFORE earnings (capture pre-earnings IV premium without earnings risk)
-    - Target: expiration 7+ days before earnings for comfort, 5+ days minimum
-    - For CSPs: post-earnings (0-2 days after) remains the IDEAL entry — but pre-earnings with safe expiration is the next best thing
-
+9. **Earnings & Calendar Risk** — ⚠️ Refer to the **MANDATORY EARNINGS GATE** above. The gate has already determined whether this analysis should proceed.
+    - If the Earnings Gate returned BLOCKED → you should have already output WAIT. Do NOT continue.
+    - If the Earnings Gate returned ALLOWED or ALLOWED WITH CAUTION → note the risk flag and confidence impact from the gate, then continue analysis.
     - Review recent earnings from forecast data:
       - Recent beat → positive momentum → support for current levels
       - Recent miss → may have caused the selloff → assess if one-time or structural
@@ -254,11 +300,11 @@ The agent synthesizes all gathered data into a comprehensive analysis:
   - Never compromise on investment worthiness assessment regardless of available data
 
 - **Earnings Calendar:**
+  - ⚠️ Refer to the **MANDATORY EARNINGS GATE** section above — it is the authoritative source for all earnings-related decisions
   - Extract from forecast data — look for upcoming earnings date and EPS estimates
-  - Refer to **Earnings Decision Matrix** in section 9 above for DTE guidance
   - **Best opportunity zone for CSP**: Post-earnings (0-2 days after) = resolved uncertainty + elevated IV = optimal. Second best: earnings 15-30 days away + expiration ≥7 days before earnings.
-  - **Safe zone**: Expiration before earnings (with appropriate buffer per matrix), or post-earnings
-  - **Avoid**: Expiration that spans or is too close to earnings date
+  - **Safe zone**: Expiration before earnings (with appropriate buffer per gate matrix), or post-earnings
+  - **Blocked**: Expiration that spans or is too close to earnings date → gate returns BLOCKED → WAIT
   - If earnings date is not available from forecast page, note this as a risk factor (`risk_flags: ["unknown_earnings"]`), apply conservative DTE (<30 days), and downgrade confidence to "medium"
 
 ## ANALYSIS FRAMEWORK
@@ -333,13 +379,14 @@ The agent synthesizes all gathered data into a comprehensive analysis:
   - Theta decay accelerates in final 30 days
 - **Avoid**: <20 DTE (too little premium) or >60 DTE (too much time risk)
 
-**Calendar Considerations (apply **Earnings Decision Matrix** from section 9):**
+**Calendar Considerations** — ⚠️ **enforced by the MANDATORY EARNINGS GATE above** (the gate has already run before you reach this section):
 - **Earnings Timing**:
-  - IDEAL: Sell 1-3 days after earnings (capture IV crush, uncertainty resolved)
-  - ALLOWED: Earnings 15-30 days away if expiration ≥7 days before earnings — capture elevated pre-earnings IV safely
-  - ALLOWED WITH CAUTION: Earnings 7-14 days away if expiration ≥5 days before earnings AND strike >10% below current price
-  - BLOCK: Earnings <7 days away — wait for post-earnings setup
-  - **Key test**: Does the option expire BEFORE the earnings date with sufficient buffer? If YES, earnings are not a blocker.
+  - The Earnings Gate has already determined if this position is allowed. If you reached this point, the gate did not BLOCK.
+  - Verify the `earnings_gate_result` in your `earnings_analysis` object matches the action you're taking.
+  - IDEAL: Post-earnings (0-2 days after) — gate returns `IDEAL`
+  - ALLOWED: Earnings 15-30 days away with expiration ≥7 days before earnings — gate returns `ALLOWED`
+  - ALLOWED WITH CAUTION: Earnings 7-14 days away with expiration ≥5 days before earnings AND strike >10% below current price — gate returns `ALLOWED_WITH_CAUTION`
+  - **Key test**: The `expiration_to_earnings_gap` in your `earnings_analysis` object is the definitive test.
 - **Dividend Dates & Ex-Dividend Impact** (less critical for puts but still relevant):
   - **What happens**: On ex-dividend date, stock price typically drops by dividend amount
   - **Early assignment risk on puts**: RARE but possible if put is deep ITM before ex-div
@@ -382,13 +429,12 @@ The agent synthesizes all gathered data into a comprehensive analysis:
    - Theta ≥ $0.05/day
    - Premium represents ≥ 2% discount to current price if assigned
 
-5. **Calendar Check** (apply **Earnings Decision Matrix** from section 9):
-   - Earnings >30 days away: No constraint — open normally
-   - Earnings 15-30 days away: ALLOWED if expiration ≥7 days before earnings date. Add `risk_flags: ["earnings_approaching"]`
-   - Earnings 7-14 days away: ALLOWED if expiration ≥5 days before earnings date AND strike >10% below current price. Add `risk_flags: ["earnings_soon"]`, downgrade confidence one level
-   - Earnings <7 days away: BLOCK — wait for post-earnings setup
-   - Earnings just passed (0-2 days ago): IDEAL — open normally
-   - **The key test**: Does the option expire BEFORE the earnings date with sufficient buffer? If YES, earnings are not a blocker.
+5. **Calendar Check** — ⚠️ **enforced by the MANDATORY EARNINGS GATE** (already run as pre-check):
+   - The Earnings Gate has already determined if this position is allowed. If you reached this point, the gate did not BLOCK.
+   - Verify the `earnings_gate_result` in your `earnings_analysis` object matches the action you're taking.
+   - If gate returned `ALLOWED`: include `risk_flags: ["earnings_approaching"]` as applicable
+   - If gate returned `ALLOWED_WITH_CAUTION`: include `risk_flags: ["earnings_soon"]`, downgrade confidence one level, AND strike must be >10% below current price
+   - If gate returned `IDEAL` or `OPEN_NORMALLY`: no earnings constraint
    - If after earnings: Ideal, any reasonable timeframe works
    - No known negative catalysts (litigation, regulatory decisions) within DTE
 
@@ -422,7 +468,7 @@ The agent synthesizes all gathered data into a comprehensive analysis:
    - No clear support level nearby
 
 4. **Catalyst Risk**:
-   - Earnings <7 days away (imminent — cannot safely expire before), OR option expiration spans earnings date without sufficient buffer (see Earnings Decision Matrix in section 9)
+   - Earnings Gate returned BLOCKED (earnings <7 days away, or option expiration spans earnings without sufficient buffer — see MANDATORY EARNINGS GATE above)
    - FDA decision, litigation outcome, regulatory ruling within DTE
    - Merger deal pending that could break
 
@@ -589,7 +635,15 @@ Use consistent risk flag names across all agents. Categories:
   "reason": "brief justification",
   "waiting_for": null,
   "confidence": "high, medium, or low",
-  "risk_flags": []
+  "risk_flags": [],
+  "earnings_analysis": {
+    "next_earnings_date": "YYYY-MM-DD or unknown",
+    "days_to_earnings": 30,
+    "expiration_date": "YYYY-MM-DD",
+    "expiration_to_earnings_gap": 5,
+    "earnings_gate_result": "OPEN_NORMALLY or ALLOWED or ALLOWED_WITH_CAUTION or BLOCKED or IDEAL or CONSERVATIVE_DTE",
+    "earnings_risk_flag": "earnings_approaching or null"
+  }
 }
 ```
 
@@ -626,10 +680,18 @@ Strong SELL activity (all criteria met, no risk flags):
   "premium_pct": 2.1,
   "underlying_price": 465.0,
   "support_level": 455.0,
-  "reason": "Support at $455, oversold RSI 28, post-earnings IV crush (0-2 days after per Earnings Tiers), strong fundamentals, premium 2.1%",
+  "reason": "Support at $455, oversold RSI 28, post-earnings IV crush (0-2 days after per Earnings Gate), strong fundamentals, premium 2.1%",
   "waiting_for": null,
   "confidence": "high",
-  "risk_flags": []
+  "risk_flags": [],
+  "earnings_analysis": {
+    "next_earnings_date": "2024-01-13",
+    "days_to_earnings": -2,
+    "expiration_date": "2024-02-16",
+    "expiration_to_earnings_gap": -34,
+    "earnings_gate_result": "IDEAL",
+    "earnings_risk_flag": null
+  }
 }
 ```
 SUMMARY: NVDA | SELL cash-secured put | Strike $450 exp 2024-02-16 | IV 42% (Rank 68) | Premium $9.45 (2.1%)
@@ -655,7 +717,15 @@ Quality setup SELL:
   "reason": "Pullback to 50-day MA support, delta -0.28, premium 1.8%, insider buying last week",
   "waiting_for": null,
   "confidence": "high",
-  "risk_flags": []
+  "risk_flags": [],
+  "earnings_analysis": {
+    "next_earnings_date": "2024-03-10",
+    "days_to_earnings": 55,
+    "expiration_date": "2024-02-16",
+    "expiration_to_earnings_gap": 23,
+    "earnings_gate_result": "OPEN_NORMALLY",
+    "earnings_risk_flag": null
+  }
 }
 ```
 SUMMARY: MSFT | SELL cash-secured put | Strike $360 exp 2024-02-16 | IV 26% (Rank 55) | Premium $6.48 (1.8%)
@@ -681,7 +751,15 @@ WAIT for fundamentals:
   "reason": "High IV but deteriorating financials, revenue declining 3 consecutive quarters",
   "waiting_for": "evidence of business turnaround, stable revenue",
   "confidence": "low",
-  "risk_flags": ["weak_fundamentals"]
+  "risk_flags": ["weak_fundamentals"],
+  "earnings_analysis": {
+    "next_earnings_date": "2024-02-05",
+    "days_to_earnings": 21,
+    "expiration_date": null,
+    "expiration_to_earnings_gap": null,
+    "earnings_gate_result": "OPEN_NORMALLY",
+    "earnings_risk_flag": null
+  }
 }
 ```
 SUMMARY: SNAP | WAIT | IV 65% (Rank 80) but weak fundamentals | Waiting for: business turnaround
@@ -704,10 +782,18 @@ WAIT for earnings (imminent — <7 days, cannot expire before):
   "premium_pct": null,
   "underlying_price": 245.0,
   "support_level": null,
-  "reason": "Earnings on 2024-01-19 (4 days away) — too close to find expiration with safe buffer. Wait for post-earnings IV crush setup (ideal: sell 1-3 days after).",
+  "reason": "Earnings on 2024-01-19 (4 days away) — EARNINGS GATE returned BLOCKED. Too close to find expiration with safe buffer. Wait for post-earnings IV crush setup (ideal: sell 1-3 days after).",
   "waiting_for": "earnings results, IV crush opportunity post-announcement (optimal CSP entry)",
   "confidence": "medium",
-  "risk_flags": ["earnings_imminent"]
+  "risk_flags": ["earnings_imminent"],
+  "earnings_analysis": {
+    "next_earnings_date": "2024-01-19",
+    "days_to_earnings": 4,
+    "expiration_date": null,
+    "expiration_to_earnings_gap": null,
+    "earnings_gate_result": "BLOCKED",
+    "earnings_risk_flag": "earnings_imminent"
+  }
 }
 ```
 SUMMARY: TSLA | WAIT | IV 55% (Rank 72) but earnings in 4 days — imminent | Waiting for: post-earnings IV crush
@@ -733,7 +819,15 @@ WAIT for support clarity:
   "reason": "Breaking support at $140, next support unclear, momentum strongly negative",
   "waiting_for": "price stabilization, clear support formation at $130-135 zone",
   "confidence": "low",
-  "risk_flags": ["support_break"]
+  "risk_flags": ["support_break"],
+  "earnings_analysis": {
+    "next_earnings_date": "2024-02-20",
+    "days_to_earnings": 36,
+    "expiration_date": null,
+    "expiration_to_earnings_gap": null,
+    "earnings_gate_result": "OPEN_NORMALLY",
+    "earnings_risk_flag": null
+  }
 }
 ```
 SUMMARY: AMD | WAIT | IV 48% (Rank 58) but support breaking | Waiting for: support at $130-135
@@ -763,9 +857,8 @@ A **CLEAR SELL ALERT** should be flagged (for the sell alert log) when ALL of th
    - Delta between -0.25 and -0.30 (sweet spot)
    - Put IV significantly elevated vs. historical norms
 
-5. **Clean Calendar**:
-   - Post-earnings (1-5 days after) capturing IV crush, OR
-   - Earnings >30 days away, OR earnings 15-30 days away with expiration ≥7 days before earnings (per Earnings Decision Matrix)
+5. **Clean Calendar** (verified by MANDATORY EARNINGS GATE):
+   - Earnings Gate returned `IDEAL` (post-earnings 1-5 days), `OPEN_NORMALLY` (>30 days), or `ALLOWED` (15-30 days with safe buffer)
    - No pending negative catalysts
 
 6. **Market Context Supportive**:
