@@ -94,15 +94,43 @@ class TradingViewFetcher:
     # ------------------------------------------------------------------
 
     async def fetch_overview(self, full_symbol: str) -> str:
-        """Fetch overview page content from #tv-content."""
+        """Fetch overview page content using Playwright locators for targeted extraction."""
         url = f"https://www.tradingview.com/symbols/{full_symbol}/"
+        page = await self._browser.new_page()
         try:
-            text = await self._fetch_page_text(url)
-            content = text or "[ERROR: No text content in overview response]"
-            return f"STOCK OVERVIEW\n\n{content}"
+            await page.goto(url, wait_until="networkidle", timeout=30000)
+            await page.wait_for_timeout(2000)
+            
+            # Try to locate "Fundamentals and stats" section using locators
+            try:
+                # Find the H1 with "Fundamentals and stats" text
+                h1_locator = page.locator('h1:has-text("Fundamentals and stats")')
+                # Get the parent container
+                parent_locator = h1_locator.locator('..')
+                # Wait for the element to be visible (10 second timeout)
+                await parent_locator.wait_for(state="visible", timeout=10000)
+                # Extract the inner text
+                text = await parent_locator.inner_text()
+                content = text or "[ERROR: No text content in fundamentals section]"
+                logger.info("Successfully extracted fundamentals section for %s", full_symbol)
+                return f"STOCK OVERVIEW\n\n{content}"
+            except Exception as locator_error:
+                # Fallback to old approach if locator fails
+                logger.warning(
+                    "Locator approach failed for %s (%s), falling back to _fetch_page_text",
+                    full_symbol, locator_error
+                )
+                await page.close()
+                page = None  # Prevent double-close in finally
+                text = await self._fetch_page_text(url)
+                content = text or "[ERROR: No text content in overview response]"
+                return f"STOCK OVERVIEW\n\n{content}"
         except Exception as e:
             logger.error("Failed to fetch overview for %s: %s", full_symbol, e)
             return f"STOCK OVERVIEW\n\n[ERROR: {e}]"
+        finally:
+            if page:
+                await page.close()
 
     async def fetch_technicals(self, full_symbol: str) -> str:
         """Fetch technicals page content from #tv-content."""
@@ -127,15 +155,38 @@ class TradingViewFetcher:
             return f"STOCK FORECAST\n\n[ERROR: {e}]"
 
     async def fetch_dividends(self, full_symbol: str) -> str:
-        """Fetch dividends page content from #tv-content."""
+        """Fetch dividends page content using Playwright locators for targeted extraction."""
         url = f"https://www.tradingview.com/symbols/{full_symbol}/financials-dividends/"
+        page = await self._browser.new_page()
         try:
-            text = await self._fetch_page_text(url)
-            content = text or "[ERROR: No text content in dividends response]"
-            return f"STOCK DIVIDENDS\n\n{content}"
+            await page.goto(url, wait_until="networkidle", timeout=30000)
+            await page.wait_for_timeout(2000)
+
+            # Try to locate "Fundamentals and stats" section using locators
+            try:
+                h1_locator = page.locator('h1:has-text("Fundamentals and stats")')
+                parent_locator = h1_locator.locator('..')
+                await parent_locator.wait_for(state="visible", timeout=10000)
+                text = await parent_locator.inner_text()
+                content = text or "[ERROR: No text content in fundamentals section]"
+                logger.info("Successfully extracted fundamentals section for dividends %s", full_symbol)
+                return f"STOCK DIVIDENDS\n\n{content}"
+            except Exception as locator_error:
+                logger.warning(
+                    "Locator approach failed for dividends %s (%s), falling back to _fetch_page_text",
+                    full_symbol, locator_error
+                )
+                await page.close()
+                page = None
+                text = await self._fetch_page_text(url)
+                content = text or "[ERROR: No text content in dividends response]"
+                return f"STOCK DIVIDENDS\n\n{content}"
         except Exception as e:
             logger.error("Failed to fetch dividends for %s: %s", full_symbol, e)
             return f"STOCK DIVIDENDS\n\n[ERROR: {e}]"
+        finally:
+            if page:
+                await page.close()
 
     # Exact TradingView scanner endpoints that carry options chain data
     _OPTIONS_SCAN_URLS = [
