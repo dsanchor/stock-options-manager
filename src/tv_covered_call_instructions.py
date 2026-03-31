@@ -136,17 +136,33 @@ The agent synthesizes all gathered data into a comprehensive analysis:
 8. **Earnings & Calendar Risk**
    - Extract next earnings date from the forecast data — look for upcoming earnings date, EPS estimates, and reporting schedule
    - **CRITICAL for Covered Calls**: IV crush benefits the call seller (option loses value), BUT earnings gaps can cause assignment if call goes ITM during the gap
-   - **Timing Strategy for Call Selling — Earnings Tiers**:
+   - **Timing Strategy for Call Selling — Earnings-Aware Approach**:
+   
+   **KEY PRINCIPLE**: The risk is NOT "earnings are nearby" — the risk is "my position is OPEN during earnings." If your option expires BEFORE earnings, the earnings event poses NO risk to that position. High IV before earnings means BETTER premiums — capture this when expiration is safely before earnings.
 
-| Days to Earnings | CC Guidance | Rationale |
-|---|---|---|
-| 0-2 (just passed) | **IDEAL** | IV crush helps seller, uncertainty resolved, assignment risk minimal |
-| 3-7 before | **AVOID** | Maximum uncertainty window, gap risk is highest |
-| 8-14 before | **CAUTION** | Close to uncertainty, only if strike >10% above analyst targets |
-| 15+ before | **OK** | Standard approach, far from uncertainty window |
-| Earnings unknown | **APPLY CONSERVATIVE DTE** | Use expiration <21 DTE to minimize gap risk |
+   **Step 1: Calculate days_to_earnings and compare to candidate expiration date:**
+   - `days_to_earnings` = calendar days from today to next earnings date
+   - `expiration_to_earnings_gap` = calendar days from option expiration to earnings date (positive = expires before earnings)
 
-   - **IV Crush Perspective**: IV contraction after earnings helps short call sellers (your option decays faster). This is favorable. However, assignment risk from gaps supersedes the IV benefit.
+   **Step 2: Apply the Earnings Decision Matrix:**
+
+| Days to Earnings | Expiration vs Earnings | CC Guidance | Risk Flag | Confidence Impact | Rationale |
+|---|---|---|---|---|---|
+| **>30 days** | Any (expires before earnings) | **OPEN NORMALLY** | None | No impact | Earnings too far out to matter. Capture elevated pre-earnings IV for premium. |
+| **15-30 days** | Expiration ≥7 days BEFORE earnings | **ALLOWED** | `earnings_approaching` | No impact | Safe buffer. Position closes well before uncertainty window. Premium boosted by approaching earnings IV. |
+| **15-30 days** | Expiration AFTER earnings | **AVOID** | `earnings_within_dte` | N/A — WAIT | Position would span earnings. Gap/assignment risk. |
+| **7-14 days** | Expiration ≥5 days BEFORE earnings | **ALLOWED WITH CAUTION** | `earnings_soon` | Downgrade one level | Tight but viable. Short DTE captures theta. Verify expiration clears earnings by ≥5 days. |
+| **7-14 days** | Expiration <5 days before OR after earnings | **AVOID** | `earnings_within_dte` | N/A — WAIT | Insufficient buffer or spans earnings. |
+| **<7 days** | Any | **BLOCK** | `earnings_imminent` | N/A — WAIT | Too close. IV crush risk, gap risk, assignment risk. Wait for post-earnings setup. |
+| **0-2 (just passed)** | Any | **IDEAL** | None | No impact | IV crush helps seller, uncertainty resolved, assignment risk minimal. |
+| **Earnings unknown** | N/A | **CONSERVATIVE DTE** | `unknown_earnings` | Downgrade to "medium" | Use expiration <21 DTE to minimize gap risk. |
+
+   **Step 3: DTE Selection Priority (when earnings are 15-30 days away):**
+   - PREFER expirations that fall BEFORE earnings (capture pre-earnings IV premium without earnings risk)
+   - Target: expiration 7+ days before earnings for comfort, 5+ days minimum
+   - This naturally selects shorter DTEs when earnings are approaching — which is fine because theta decay is fastest in the final 30 days
+
+   - **IV Crush Perspective**: IV inflation before earnings means BETTER premiums for sellers. If your option expires before earnings, you capture this elevated premium without bearing the earnings event risk. This is the optimal scenario. However, if your option spans the earnings date, assignment risk from gaps supersedes the IV benefit.
    - Check recent earnings results from forecast data: beat vs miss affects near-term sentiment
    - Note any mentions of upcoming catalysts (FDA decisions, product launches, conferences)
 
@@ -196,9 +212,11 @@ The agent synthesizes all gathered data into a comprehensive analysis:
 
 - **Earnings Calendar:**
   - Extract from forecast data — look for upcoming earnings date and EPS estimates
-  - Refer to **Earnings Tiers** table in section 8 above for DTE guidance
-  - Safe zone: Expiration >7 days after earnings, or entire expiration before earnings
-  - If earnings date is not available from forecast page, note this as a risk factor, apply conservative DTE (<21 days), and downgrade confidence to "medium"
+  - Refer to **Earnings Decision Matrix** in section 8 above for DTE guidance
+  - **Best opportunity zone**: Earnings 15-30 days away + expiration ≥7 days before earnings = elevated IV premium with zero earnings risk
+  - **Safe zone**: Expiration before earnings (with appropriate buffer per matrix), or >7 days after earnings
+  - **Avoid**: Expiration that spans or is too close to earnings date
+  - If earnings date is not available from forecast page, note this as a risk factor (`risk_flags: ["unknown_earnings"]`), apply conservative DTE (<21 days), and downgrade confidence to "medium"
 
 ## ANALYSIS FRAMEWORK
 
@@ -242,9 +260,10 @@ The agent synthesizes all gathered data into a comprehensive analysis:
 - **Avoid**: <21 DTE (too little premium) or >60 DTE (too much time risk)
 
 **Fundamental Considerations:**
-- **Earnings Proximity**: NEVER sell calls expiring after next earnings (IV crush risk irrelevant since you're short)
-  - Actually, IV crush helps you (option loses value) but earnings can cause gaps
-  - Safe zone: >7 days after earnings, or expiration before earnings
+- **Earnings Proximity** (apply the **Earnings Decision Matrix** from section 8):
+  - **If option expires BEFORE earnings**: Position is safe — earnings event happens after your obligation ends. This is the preferred approach when earnings are 15-30 days away. Elevated pre-earnings IV = better premium.
+  - **If option expires AFTER earnings**: Earnings gap risk exists — could cause assignment if call goes deep ITM. Avoid unless earnings are >30 days out and you're comfortable with the risk.
+  - **Key**: Evaluate the `expiration_to_earnings_gap`, not just `days_to_earnings`. A 21-DTE position with earnings 30 days away is perfectly safe (expires 9 days before earnings).
 - **Dividend Dates & Ex-Dividend Risk** (CRITICAL for covered calls):
   - **What happens**: On ex-dividend date, stock price typically drops by dividend amount
   - **Early assignment risk**: If call is ITM before ex-div, call holder may exercise early to capture dividend
@@ -282,8 +301,13 @@ The agent synthesizes all gathered data into a comprehensive analysis:
    - Strike at or above nearest resistance level
    - NOT breaking out of consolidation pattern
 
-4. **Calendar Check**:
-   - NO earnings within DTE window
+4. **Calendar Check** (apply **Earnings Decision Matrix** from section 8):
+   - Earnings >30 days away: No constraint — open normally
+   - Earnings 15-30 days away: ALLOWED if expiration ≥7 days before earnings date. Add `risk_flags: ["earnings_approaching"]`
+   - Earnings 7-14 days away: ALLOWED if expiration ≥5 days before earnings date. Add `risk_flags: ["earnings_soon"]`, downgrade confidence one level
+   - Earnings <7 days away: BLOCK — wait for post-earnings setup
+   - Earnings just passed (0-2 days ago): IDEAL — open normally
+   - **The key test**: Does the option expire BEFORE the earnings date with sufficient buffer? If YES, earnings are not a blocker.
    - NO known catalysts (FDA, product launch) within DTE
    - Ex-dividend date check:
      - IDEAL: Ex-div AFTER expiration (no assignment risk)
@@ -304,7 +328,7 @@ The agent synthesizes all gathered data into a comprehensive analysis:
 ### WAIT Alert Triggers (ANY triggers wait):
 
 1. **IV Too Low**: IV Rank < 40 AND IV Percentile < 50
-2. **Earnings Risk**: Earnings date within option expiration window
+2. **Earnings Risk**: Earnings <7 days away (imminent — cannot safely expire before), OR option expiration spans earnings date without sufficient buffer (see Earnings Decision Matrix in section 8)
 3. **Technical Breakout**: Price breaking above resistance with volume
 4. **Strong Uptrend**: Price > 20MA > 50MA with both MAs rising
 5. **Catalyst Pending**: FDA approval, merger closing, product launch within DTE
@@ -381,7 +405,7 @@ Output a **JSON activity block** inside a fenced code block, followed by a **SUM
 ### Unified Risk Flag Taxonomy
 
 Use consistent risk flag names. See **Cash-Secured Put instructions** for the complete Unified Risk Flag Taxonomy. Key flags for covered calls:
-- `earnings_within_dte`, `catalyst_pending`, `earnings_uncertainty` (timing)
+- `earnings_within_dte`, `earnings_approaching`, `earnings_soon`, `earnings_imminent`, `catalyst_pending`, `earnings_uncertainty`, `unknown_earnings` (timing)
 - `breakout_momentum`, `breakdown_momentum`, `resistance_level` (technical)
 - `low_iv`, `iv_too_low` (volatility)
 - `weak_fundamentals`, `analyst_downgrade` (fundamental)
@@ -475,7 +499,7 @@ WAIT activity:
 ```
 SUMMARY: MSFT | WAIT | IV 22% (Rank 25) too low | Waiting for: volatility expansion
 
-WAIT for earnings:
+WAIT for earnings (imminent — <7 days, cannot expire before):
 ```json
 {
   "timestamp": "2024-01-15T10:30:00Z",
@@ -492,13 +516,13 @@ WAIT for earnings:
   "premium": null,
   "premium_pct": null,
   "underlying_price": 245.0,
-  "reason": "Earnings on 2024-01-24, too risky despite high IV",
-  "waiting_for": "post-earnings IV crush and price stabilization",
+  "reason": "Earnings on 2024-01-20 (5 days away) — too close to find expiration with safe buffer. High IV but gap/assignment risk outweighs premium.",
+  "waiting_for": "post-earnings IV crush and price stabilization (ideal: sell 1-2 days after earnings)",
   "confidence": "medium",
-  "risk_flags": ["earnings_soon"]
+  "risk_flags": ["earnings_imminent"]
 }
 ```
-SUMMARY: TSLA | WAIT | IV 45% (Rank 70) but earnings 2024-01-24 | Waiting for: post-earnings IV crush
+SUMMARY: TSLA | WAIT | IV 45% (Rank 70) but earnings in 5 days — imminent | Waiting for: post-earnings setup
 
 ## CLEAR SELL ALERT CRITERIA
 
@@ -514,7 +538,7 @@ A **CLEAR SELL ALERT** should be flagged (for the sell alert log) when ALL of th
    - Price at or within 2% of resistance level
 
 3. **Clean Calendar**:
-   - No earnings for at least 60 days
+   - Earnings >30 days away OR post-earnings (0-5 days after) — elevated IV without earnings risk
    - No known catalysts
    - No recent insider buying
 

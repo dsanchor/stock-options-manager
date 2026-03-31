@@ -172,14 +172,31 @@ The agent synthesizes all gathered data into a comprehensive analysis:
 
 9. **Earnings & Calendar Risk**
     - Extract next earnings date from the forecast data — look for upcoming earnings date, EPS estimates, and reporting schedule
-    - **Timing Strategy for Put Selling — Earnings Tiers**:
+    - **Timing Strategy for Put Selling — Earnings-Aware Approach**:
 
-| Days to Earnings | CSP Guidance | Rationale |
-|---|---|---|
-| 0-2 (just passed) | **IDEAL** | Post-earnings IV crush still elevated, uncertainty resolved |
-| 3-7 before | **AVOID** | Maximum uncertainty window, unpredictable price action |
-| 8-14 before | **ACCEPTABLE** | If strike well below support (>10% OTM), uncertainty manageable |
-| 15+ before | **OK** | Standard approach, far from uncertainty window |
+    **KEY PRINCIPLE**: The risk is NOT "earnings are nearby" — the risk is "my position is OPEN during earnings." If your option expires BEFORE earnings, the earnings event poses NO risk to that position. High IV before earnings means BETTER premiums — capture this when expiration is safely before earnings. For CSPs specifically, post-earnings is IDEAL (IV crush + resolved uncertainty).
+
+    **Step 1: Calculate days_to_earnings and compare to candidate expiration date:**
+    - `days_to_earnings` = calendar days from today to next earnings date
+    - `expiration_to_earnings_gap` = calendar days from option expiration to earnings date (positive = expires before earnings)
+
+    **Step 2: Apply the Earnings Decision Matrix:**
+
+| Days to Earnings | Expiration vs Earnings | CSP Guidance | Risk Flag | Confidence Impact | Rationale |
+|---|---|---|---|---|---|
+| **>30 days** | Any (expires before earnings) | **OPEN NORMALLY** | None | No impact | Earnings too far out to matter. Capture elevated pre-earnings IV for premium. |
+| **15-30 days** | Expiration ≥7 days BEFORE earnings | **ALLOWED** | `earnings_approaching` | No impact | Safe buffer. Position closes well before uncertainty window. Premium boosted by approaching earnings IV. |
+| **15-30 days** | Expiration AFTER earnings | **AVOID** | `earnings_within_dte` | N/A — WAIT | Position would span earnings. Gap/assignment risk. |
+| **7-14 days** | Expiration ≥5 days BEFORE earnings | **ALLOWED WITH CAUTION** | `earnings_soon` | Downgrade one level | Tight but viable. Short DTE captures theta. Verify expiration clears earnings by ≥5 days. Strike should be >10% below current price for extra safety. |
+| **7-14 days** | Expiration <5 days before OR after earnings | **AVOID** | `earnings_within_dte` | N/A — WAIT | Insufficient buffer or spans earnings. |
+| **<7 days** | Any | **BLOCK** | `earnings_imminent` | N/A — WAIT | Too close. IV crush risk, gap risk, assignment risk. Wait for post-earnings setup. |
+| **0-2 (just passed)** | Any | **IDEAL** | None | No impact | Post-earnings IV crush still elevated, uncertainty resolved. Best CSP entry point. |
+| **Earnings unknown** | N/A | **CONSERVATIVE DTE** | `unknown_earnings` | Downgrade to "medium" | Assume earnings could be ~30 days away. Apply DTE <30 days. |
+
+    **Step 3: DTE Selection Priority (when earnings are 15-30 days away):**
+    - PREFER expirations that fall BEFORE earnings (capture pre-earnings IV premium without earnings risk)
+    - Target: expiration 7+ days before earnings for comfort, 5+ days minimum
+    - For CSPs: post-earnings (0-2 days after) remains the IDEAL entry — but pre-earnings with safe expiration is the next best thing
 
     - Review recent earnings from forecast data:
       - Recent beat → positive momentum → support for current levels
@@ -238,8 +255,10 @@ The agent synthesizes all gathered data into a comprehensive analysis:
 
 - **Earnings Calendar:**
   - Extract from forecast data — look for upcoming earnings date and EPS estimates
-  - Refer to **Earnings Tiers** table in section 9 above for DTE guidance
-  - Post-earnings timing is ESPECIALLY important for CSP — resolved uncertainty + elevated IV = optimal entry
+  - Refer to **Earnings Decision Matrix** in section 9 above for DTE guidance
+  - **Best opportunity zone for CSP**: Post-earnings (0-2 days after) = resolved uncertainty + elevated IV = optimal. Second best: earnings 15-30 days away + expiration ≥7 days before earnings.
+  - **Safe zone**: Expiration before earnings (with appropriate buffer per matrix), or post-earnings
+  - **Avoid**: Expiration that spans or is too close to earnings date
   - If earnings date is not available from forecast page, note this as a risk factor (`risk_flags: ["unknown_earnings"]`), apply conservative DTE (<30 days), and downgrade confidence to "medium"
 
 ## ANALYSIS FRAMEWORK
@@ -314,11 +333,13 @@ The agent synthesizes all gathered data into a comprehensive analysis:
   - Theta decay accelerates in final 30 days
 - **Avoid**: <20 DTE (too little premium) or >60 DTE (too much time risk)
 
-**Calendar Considerations:**
+**Calendar Considerations (apply **Earnings Decision Matrix** from section 9):**
 - **Earnings Timing**:
   - IDEAL: Sell 1-3 days after earnings (capture IV crush, uncertainty resolved)
-  - ACCEPTABLE: Sell >7 days before earnings if strike well below support
-  - AVOID: Selling 3-7 days before earnings (max uncertainty)
+  - ALLOWED: Earnings 15-30 days away if expiration ≥7 days before earnings — capture elevated pre-earnings IV safely
+  - ALLOWED WITH CAUTION: Earnings 7-14 days away if expiration ≥5 days before earnings AND strike >10% below current price
+  - BLOCK: Earnings <7 days away — wait for post-earnings setup
+  - **Key test**: Does the option expire BEFORE the earnings date with sufficient buffer? If YES, earnings are not a blocker.
 - **Dividend Dates & Ex-Dividend Impact** (less critical for puts but still relevant):
   - **What happens**: On ex-dividend date, stock price typically drops by dividend amount
   - **Early assignment risk on puts**: RARE but possible if put is deep ITM before ex-div
@@ -361,8 +382,13 @@ The agent synthesizes all gathered data into a comprehensive analysis:
    - Theta ≥ $0.05/day
    - Premium represents ≥ 2% discount to current price if assigned
 
-5. **Calendar Check**:
-   - If before earnings: Earnings >7 days away AND strike >10% below current price
+5. **Calendar Check** (apply **Earnings Decision Matrix** from section 9):
+   - Earnings >30 days away: No constraint — open normally
+   - Earnings 15-30 days away: ALLOWED if expiration ≥7 days before earnings date. Add `risk_flags: ["earnings_approaching"]`
+   - Earnings 7-14 days away: ALLOWED if expiration ≥5 days before earnings date AND strike >10% below current price. Add `risk_flags: ["earnings_soon"]`, downgrade confidence one level
+   - Earnings <7 days away: BLOCK — wait for post-earnings setup
+   - Earnings just passed (0-2 days ago): IDEAL — open normally
+   - **The key test**: Does the option expire BEFORE the earnings date with sufficient buffer? If YES, earnings are not a blocker.
    - If after earnings: Ideal, any reasonable timeframe works
    - No known negative catalysts (litigation, regulatory decisions) within DTE
 
@@ -396,7 +422,7 @@ The agent synthesizes all gathered data into a comprehensive analysis:
    - No clear support level nearby
 
 4. **Catalyst Risk**:
-   - Earnings in 3-7 days (uncertainty window per Earnings Tiers table)
+   - Earnings <7 days away (imminent — cannot safely expire before), OR option expiration spans earnings date without sufficient buffer (see Earnings Decision Matrix in section 9)
    - FDA decision, litigation outcome, regulatory ruling within DTE
    - Merger deal pending that could break
 
@@ -501,9 +527,12 @@ Use consistent risk flag names across all agents. Categories:
 ```json
 {
   "timing_risks": [
-    "earnings_within_dte",      // Earnings inside DTE window (use Earnings Tiers to specify)
+    "earnings_within_dte",      // Option expiration spans earnings date (position open during earnings)
+    "earnings_approaching",     // Earnings 15-30 days away, position allowed with buffer (informational)
+    "earnings_soon",            // Earnings 7-14 days away, position allowed with tight buffer + caution
+    "earnings_imminent",        // Earnings <7 days away — BLOCK, too close
     "catalyst_pending",          // FDA, merger, regulatory decision, litigation ruling
-    "earnings_uncertainty"       // 3-7 days before earnings (maximum uncertainty)
+    "earnings_uncertainty"       // Legacy: general earnings timing concern
   ],
   "technical_risks": [
     "breakout_momentum",         // Price accelerating upward with volume
@@ -657,7 +686,7 @@ WAIT for fundamentals:
 ```
 SUMMARY: SNAP | WAIT | IV 65% (Rank 80) but weak fundamentals | Waiting for: business turnaround
 
-WAIT for earnings:
+WAIT for earnings (imminent — <7 days, cannot expire before):
 ```json
 {
   "timestamp": "2024-01-15T14:30:00Z",
@@ -675,13 +704,13 @@ WAIT for earnings:
   "premium_pct": null,
   "underlying_price": 245.0,
   "support_level": null,
-  "reason": "Earnings in 4 days, uncertainty window, wait for post-earnings setup",
-  "waiting_for": "earnings results, IV crush opportunity post-announcement",
+  "reason": "Earnings on 2024-01-19 (4 days away) — too close to find expiration with safe buffer. Wait for post-earnings IV crush setup (ideal: sell 1-3 days after).",
+  "waiting_for": "earnings results, IV crush opportunity post-announcement (optimal CSP entry)",
   "confidence": "medium",
-  "risk_flags": ["earnings_soon"]
+  "risk_flags": ["earnings_imminent"]
 }
 ```
-SUMMARY: TSLA | WAIT | IV 55% (Rank 72) but earnings in 4 days | Waiting for: post-earnings IV crush
+SUMMARY: TSLA | WAIT | IV 55% (Rank 72) but earnings in 4 days — imminent | Waiting for: post-earnings IV crush
 
 WAIT for support clarity:
 ```json
@@ -736,7 +765,7 @@ A **CLEAR SELL ALERT** should be flagged (for the sell alert log) when ALL of th
 
 5. **Clean Calendar**:
    - Post-earnings (1-5 days after) capturing IV crush, OR
-   - Earnings >21 days away with strike >10% OTM
+   - Earnings >30 days away, OR earnings 15-30 days away with expiration ≥7 days before earnings (per Earnings Decision Matrix)
    - No pending negative catalysts
 
 6. **Market Context Supportive**:
