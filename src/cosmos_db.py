@@ -421,8 +421,10 @@ class CosmosDBService:
             "is_alert": False,
             **activity_data,
         }
-        # Ensure the computed id is not overridden by activity_data
+        # Ensure computed id and canonical timestamp are not overridden
+        # by activity_data (the **spread can silently overwrite earlier keys).
         doc["id"] = doc_id
+        doc["timestamp"] = ts
 
         if ttl_seconds is not None:
             doc["ttl"] = ttl_seconds
@@ -447,7 +449,10 @@ class CosmosDBService:
             "activity_id": activity_id,
             **alert_data,
         }
+        # Ensure computed id and canonical timestamp are not overridden
+        # by alert_data (the **spread can silently overwrite earlier keys).
         doc["id"] = doc_id
+        doc["timestamp"] = ts
 
         return self.container.create_item(doc)
 
