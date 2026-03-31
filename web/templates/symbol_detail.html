@@ -40,7 +40,18 @@
 <div class="card">
     <div class="card-header">
         <h2>Positions</h2>
-        <span class="card-badge">{{ symbol_doc.positions | length }} total</span>
+        <div style="display:flex; align-items:center; gap:0.5rem;">
+            <span class="card-badge">{{ symbol_doc.positions | length }} total</span>
+            {% set active_positions = symbol_doc.positions | selectattr('status', 'equalto', 'active') | list %}
+            {% if active_positions %}
+            {% set has_calls = active_positions | selectattr('type', 'equalto', 'call') | list | length > 0 %}
+            {% set has_puts = active_positions | selectattr('type', 'equalto', 'put') | list | length > 0 %}
+            <button id="run-positions-analysis" class="btn-trigger"
+                    data-has-calls="{{ has_calls | lower }}"
+                    data-has-puts="{{ has_puts | lower }}"
+                    title="Run analysis for open positions">▶ Run Analysis</button>
+            {% endif %}
+        </div>
     </div>
 
     {% if symbol_doc.positions %}
@@ -634,6 +645,56 @@
             }
         });
     });
+
+    // ── Run Analysis for open positions ──
+    var runPosBtn = document.getElementById('run-positions-analysis');
+    if (runPosBtn) {
+        runPosBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var agents = [];
+            if (runPosBtn.dataset.hasCalls === 'true') agents.push('open_call_monitor');
+            if (runPosBtn.dataset.hasPuts === 'true') agents.push('open_put_monitor');
+            if (!agents.length) return;
+
+            var originalText = runPosBtn.textContent;
+            runPosBtn.disabled = true;
+            runPosBtn.textContent = '⏳ Running…';
+            runPosBtn.classList.add('running');
+
+            var success = 0;
+            var failed = 0;
+
+            agents.reduce(function(promise, agentType, index) {
+                return promise.then(function() {
+                    if (agents.length > 1) {
+                        runPosBtn.textContent = '⏳ Running… (' + (index + 1) + '/' + agents.length + ')';
+                    }
+                    return fetch('/api/trigger/' + agentType, { method: 'POST' })
+                        .then(function(resp) {
+                            if (resp.ok) { success++; } else { failed++; }
+                        })
+                        .catch(function() { failed++; });
+                });
+            }, Promise.resolve())
+            .then(function() {
+                runPosBtn.textContent = '✓ Triggered';
+                runPosBtn.classList.remove('running');
+                runPosBtn.classList.add('done');
+            })
+            .catch(function() {
+                runPosBtn.textContent = '✗ Error';
+                runPosBtn.classList.remove('running');
+                runPosBtn.classList.add('error');
+            })
+            .finally(function() {
+                setTimeout(function() {
+                    runPosBtn.textContent = originalText;
+                    runPosBtn.disabled = false;
+                    runPosBtn.classList.remove('running', 'done', 'error');
+                }, 3000);
+            });
+        });
+    }
 
 })();
 </script>
