@@ -7,7 +7,22 @@
 - **MCP:** iflow-mcp_ferdousbhai_investor-agent 1.6.3
 - **Description:** Two periodic trading agents for covered call and cash-secured put sell signals. Local runtime, configurable polling, stock symbols from files, decision logs, sell signal alerts.
 
+## Tasks
+
+### JSON Format Hints (2026-03-31T09:30Z)
+**Status:** ✅ Completed  
+**Commit:** 3756071  
+**Files:** 4 instruction files  
+- Added parenthetical JSON format notes to agent instructions for improved LLM clarity
+- Modified: `src/tv_covered_call_instructions.py`, `src/tv_open_call_instructions.py`, `src/tv_open_put_instructions.py`, `src/tv_cash_secured_put_instructions.py`
+
 ## Learnings
+
+### JSON Format Hints in Agent Instructions (2026-07-17)
+- Added one-line `*(JSON format …)*` notes to the Data Review sections of all 4 agent instruction files (`tv_covered_call_instructions.py`, `tv_cash_secured_put_instructions.py`, `tv_open_call_instructions.py`, `tv_open_put_instructions.py`).
+- **Pattern**: Overview, Technicals, Forecast, and Dividends sections now note they arrive as structured JSON with self-descriptive keys. Options Chain left as-is (still raw text/intercepted API responses).
+- **Covered call & CSP files** have 5 data sections (including DIVIDENDS); **open call & open put files** have 4 sections (no DIVIDENDS).
+- Consistency: same style `*(JSON format — key_hint, key_hint)*` used across all files.
 
 ### TradingView Dividends Test Script (2026-07-14)
 - Created `test/test_dividends_fetcher.py` — standalone script to fetch TradingView dividends page and extract dividend-specific data for any stock symbol.
