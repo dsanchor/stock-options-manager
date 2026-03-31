@@ -114,15 +114,19 @@ Parse these sections to extract the data you need for analysis. If any section s
 | Days to Earnings | Expiration vs Earnings | Gate Result | Risk Flag | Confidence Impact | Rationale |
 |---|---|---|---|---|---|
 | **>30 days** | Expiration before earnings | **OPEN NORMALLY** | None | No impact | Earnings far out. Capture elevated pre-earnings IV. |
-| **>30 days** | Expiration after earnings | **BLOCKED → WAIT** | `earnings_within_dte` | N/A — WAIT | Position would span earnings. Wait for closer-dated expiration or post-earnings entry. |
+| **>30 days** | Expiration ≥14 days AFTER earnings | **ALLOWED WITH CAUTION** | `post_earnings_exp` | Downgrade one level | Far enough post-earnings for IV crush to settle. Only if technicals strongly support. |
+| **>30 days** | Expiration 0-13 days AFTER earnings | **BLOCKED → WAIT** | `earnings_within_dte` | N/A — WAIT | Position spans earnings without enough post-earnings buffer. |
 | **15-30 days** | Expiration ≥5 days BEFORE earnings | **OPEN NORMALLY** | None | No impact | Comfortable buffer. Pre-earnings IV premium is a seller's advantage. |
 | **15-30 days** | Expiration 3-4 days BEFORE earnings | **ALLOWED** | `earnings_approaching` | No impact | Acceptable buffer. Earnings date announcements rarely shift by >2 days. |
-| **15-30 days** | Expiration 0-2 days before OR AFTER earnings | **BLOCKED → WAIT** | `earnings_within_dte` | N/A — WAIT | Too tight or spans earnings. 3-day minimum buffer protects against date shifts. |
+| **15-30 days** | Expiration 0-2 days BEFORE earnings | **BLOCKED → WAIT** | `earnings_within_dte` | N/A — WAIT | Insufficient buffer. Earnings date could shift by 1-2 days. |
+| **15-30 days** | Expiration AFTER earnings (any) | **BLOCKED → WAIT** | `earnings_within_dte` | N/A — WAIT | Position would span earnings. Select an earlier expiration. |
 | **7-14 days** | Expiration ≥5 days BEFORE earnings | **ALLOWED** | `earnings_approaching` | No impact | Pre-earnings IV boost captured. Safe expiration. |
 | **7-14 days** | Expiration 3-4 days BEFORE earnings | **ALLOWED WITH CAUTION** | `earnings_soon` | No impact | Tight but viable. TastyTrade approach: if technicals are strong, this is acceptable. |
-| **7-14 days** | Expiration 0-2 days before OR AFTER earnings | **BLOCKED → WAIT** | `earnings_within_dte` | N/A — WAIT | Insufficient buffer or spans earnings. |
+| **7-14 days** | Expiration 0-2 days BEFORE earnings | **BLOCKED → WAIT** | `earnings_within_dte` | N/A — WAIT | Insufficient buffer. Earnings date could shift. |
+| **7-14 days** | Expiration AFTER earnings (any) | **BLOCKED → WAIT** | `earnings_within_dte` | N/A — WAIT | Position would span earnings. Select an earlier expiration. |
 | **<7 days** | Expiration ≥3 days BEFORE earnings | **ALLOWED WITH CAUTION** | `earnings_imminent` | No impact | Earnings very close but option expires safely before. Pre-earnings IV at peak — excellent premium. |
-| **<7 days** | Expiration 0-2 days before OR AFTER earnings | **BLOCKED → WAIT** | `earnings_imminent`, `earnings_within_dte` | N/A — WAIT | Too close to earnings date. Risk of date shift or spans earnings. |
+| **<7 days** | Expiration 0-2 days BEFORE earnings | **BLOCKED → WAIT** | `earnings_imminent`, `earnings_within_dte` | N/A — WAIT | Too close to earnings date. Risk of date shift. |
+| **<7 days** | Expiration AFTER earnings (any) | **BLOCKED → WAIT** | `earnings_imminent`, `earnings_within_dte` | N/A — WAIT | Position would span imminent earnings. |
 | **0-2 days (just passed)** | Any | **IDEAL — OPEN** | None | No impact | Post-earnings IV crush still elevated, uncertainty resolved. Best CSP entry point. |
 | **Unknown** | N/A | **CONSERVATIVE DTE** | `unknown_earnings` | Downgrade to "medium" | Use expiration <21 DTE to minimize gap risk. |
 
@@ -157,11 +161,12 @@ If the gate result is **ALLOWED** or **ALLOWED WITH CAUTION**:
 - `days_to_earnings`: Integer, or `null` if unknown
 - `expiration_date`: The candidate or recommended expiration date
 - `expiration_to_earnings_gap`: Positive = before earnings (safe), negative = after (risk). Null if unknown.
-- `earnings_gate_result`: One of: `"OPEN_NORMALLY"`, `"ALLOWED"`, `"ALLOWED_WITH_CAUTION"`, `"BLOCKED"`, `"IDEAL"`, `"CONSERVATIVE_DTE"`
+- `earnings_gate_result`: One of: `"OPEN_NORMALLY"`, `"ALLOWED"`, `"ALLOWED_WITH_CAUTION"`, `"ALLOWED_POST_EARNINGS"`, `"BLOCKED"`, `"IDEAL"`, `"CONSERVATIVE_DTE"`
 - `earnings_risk_flag`: The applicable flag from the matrix, or `null` if none
 
 ### KEY PRINCIPLE
 **The risk is NOT that earnings are nearby — the risk is that your position is OPEN during earnings.** If your option expires BEFORE earnings (with ≥3 day buffer), the earnings event poses NO risk to that position. Use this to your advantage: pre-earnings IV boost gives better premiums. The 3-day minimum buffer protects against earnings date announcements shifting by 1-2 days. For CSPs specifically, post-earnings is IDEAL (IV crush + resolved uncertainty).
+For post-earnings expirations: even if the math says you're "after" earnings, the position SPANS the earnings event. The only acceptable post-earnings expiration is ≥14 days after (IV crush fully settled) when earnings are >30 days away — and even then, prefer waiting for a post-earnings entry instead.
 
 ### DTE Selection Priority (when earnings are 15-30 days away)
 - PREFER expirations that fall BEFORE earnings (capture pre-earnings IV premium without earnings risk)
@@ -169,6 +174,9 @@ If the gate result is **ALLOWED** or **ALLOWED WITH CAUTION**:
 - Expirations 3-4 days before earnings are acceptable when technicals support the trade
 - For CSPs: post-earnings (0-2 days after) remains the IDEAL entry — but pre-earnings with safe expiration is the next best thing
 - This naturally selects shorter DTEs when earnings are approaching — theta decay is fastest in the final 30 days
+- If no suitable pre-earnings expiration exists, DO NOT default to a post-earnings date within 14 days of earnings
+- Post-earnings expirations (≥14 days after) are a LAST RESORT only when >30 days to earnings and technicals are strong
+- The priority order is: (1) pre-earnings with ≥5 day buffer, (2) pre-earnings with 3-4 day buffer, (3) WAIT for post-earnings entry, (4) post-earnings ≥14 days after (only if >30 days out and compelling technicals)
 
 ---
 
