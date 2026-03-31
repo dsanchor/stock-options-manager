@@ -42,7 +42,12 @@
         div.className = 'chat-msg ' + role;
         const bubble = document.createElement('div');
         bubble.className = 'chat-bubble';
-        bubble.textContent = content;
+        if (role === 'assistant' && typeof marked !== 'undefined') {
+            bubble.classList.add('markdown-body');
+            bubble.innerHTML = marked.parse(content);
+        } else {
+            bubble.textContent = content;
+        }
         div.appendChild(bubble);
         messagesEl.appendChild(div);
         messagesEl.scrollTop = messagesEl.scrollHeight;
