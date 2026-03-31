@@ -52,6 +52,8 @@
                     <th>Type</th>
                     <th>Strike</th>
                     <th>Expiration</th>
+                    <th>Risk</th>
+                    <th>Moneyness</th>
                     <th>Status</th>
                     <th>Opened</th>
                     <th>Notes</th>
@@ -65,6 +67,16 @@
                     <td><span class="badge badge-{{ 'sell' if pos.type == 'call' else 'info' }}">{{ pos.type | upper }}</span></td>
                     <td class="mono">${{ pos.strike }}</td>
                     <td class="mono">{{ pos.expiration }}</td>
+                    <td>
+                        {% if pos._assignment_risk %}
+                        <span class="badge badge-risk-{{ pos._assignment_risk | lower }}">{{ pos._assignment_risk }}</span>
+                        {% else %}—{% endif %}
+                    </td>
+                    <td>
+                        {% if pos._moneyness %}
+                        <span class="badge badge-moneyness-{{ pos._moneyness | lower | replace(' ', '-') }}">{{ pos._moneyness }}</span>
+                        {% else %}—{% endif %}
+                    </td>
                     <td><span class="badge badge-{{ 'wait' if pos.status == 'active' else 'info' }}">{{ pos.status }}</span></td>
                     <td class="mono">{{ pos.opened_at[:10] if pos.opened_at else "—" }}</td>
                     <td>{{ pos.notes or "—" }}</td>
@@ -77,7 +89,7 @@
                     </td>
                 </tr>
                 <tr class="pos-detail-row" data-pos-idx="{{ loop.index0 }}" style="display:none;">
-                    <td colspan="8" style="padding:0; border-top:none;">
+                    <td colspan="10" style="padding:0; border-top:none;">
                         <div style="padding:1rem 1.5rem; background:var(--bg-card, #1a1a2e); border-top:1px dashed var(--border-color, #2a2a4a);">
                             <div class="roll-form" data-roll-form-idx="{{ loop.index0 }}" style="display:none; margin-bottom:1rem; padding:1rem; background:rgba(255,255,255,0.04); border-radius:8px; border:1px solid var(--border-color, #2a2a4a);">
                                 <h4 style="margin:0 0 0.75rem; color:var(--text-primary, #e0e0f0);">🔄 Roll Position</h4>

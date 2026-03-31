@@ -897,6 +897,19 @@ async def symbol_detail_page(request: Request, symbol: str):
     activities.sort(key=lambda d: d.get("timestamp", ""), reverse=True)
     activities = activities[:50]
 
+    # Enrich open positions with latest monitor data (assignment_risk, moneyness)
+    _monitor_agents = {"open_call_monitor", "open_put_monitor"}
+    latest_monitor: Dict[str, Dict] = {}  # position_id -> latest activity
+    for act in activities:
+        pid = act.get("position_id")
+        if pid and act.get("agent_type") in _monitor_agents and pid not in latest_monitor:
+            latest_monitor[pid] = act
+    for pos in doc.get("positions", []):
+        mon = latest_monitor.get(pos.get("position_id"))
+        if mon:
+            pos["_assignment_risk"] = mon.get("assignment_risk")
+            pos["_moneyness"] = mon.get("moneyness")
+
     # Gather recent alerts
     alerts: List[Dict] = []
     for agent_type, meta in AGENT_TYPES.items():
