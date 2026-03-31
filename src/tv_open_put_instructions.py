@@ -122,10 +122,39 @@ Use:
 **Focus instead on**: Earnings dates, analyst downgrades, and other catalyst risk that could drive price below strike.
 
 ### 6. Earnings & Catalyst Risk
-- Extract next earnings date from forecast data
-- If earnings fall BEFORE expiration: significant gap risk — stock could drop sharply on miss
-- Recent earnings miss or lowered guidance: bearish pressure → higher put assignment risk
-- Analyst downgrades, sector weakness, macro deterioration increase risk
+
+**KEY PRINCIPLE**: The risk is NOT "earnings are nearby" — the risk is "my position is OPEN during earnings." If your option expires BEFORE earnings, the earnings event poses NO risk to that position. If your option expires AFTER earnings, your position spans the earnings gap — that IS the risk. For puts specifically, an earnings miss can cause a sharp drop, pushing the stock below your strike.
+
+**Step 1: Calculate earnings timing relative to your position:**
+- `days_to_earnings` = calendar days from today to next earnings date
+- `expiration_to_earnings_gap` = calendar days from option expiration to earnings date (positive = expires BEFORE earnings, negative = expires AFTER earnings)
+- Extract next earnings date from OVERVIEW data (`"Next Earnings Date"`) or forecast data
+
+**Step 2: Apply the Monitor Earnings Decision Matrix:**
+
+| Days to Earnings | Expiration vs Earnings | Monitor Action | Risk Flag(s) | Confidence Impact | Rationale |
+|---|---|---|---|---|---|
+| **>30 days** | Expiration BEFORE earnings | **HOLD** — no concern | None | No impact | Position expires well before earnings event. No action needed. |
+| **>30 days** | Expiration AFTER earnings | **FLAG** — awareness only | `earnings_within_dte` | No impact | Position spans earnings but 30+ days to manage. Revisit as earnings approach. |
+| **15-30 days** | Expiration ≥7 days BEFORE earnings | **HOLD** — safe buffer | None | No impact | Position closes well before earnings uncertainty window. |
+| **15-30 days** | Expiration AFTER earnings | **ROLL recommended** | `earnings_approaching`, `earnings_within_dte` | Downgrade one level | Position spans earnings. Time to roll to pre-earnings expiration or well past earnings. |
+| **7-14 days** | Expiration ≥5 days BEFORE earnings | **HOLD with caution** | `earnings_soon` | Downgrade one level | Tight but safe — position expires before earnings. Monitor closely. |
+| **7-14 days** | Expiration <5 days before OR after earnings | **ROLL urgently** | `earnings_soon`, `earnings_within_dte` | Downgrade one level | Insufficient buffer or position spans earnings. Roll NOW to safer expiration. |
+| **<7 days** | Expiration BEFORE earnings | **HOLD** — expires before event | `earnings_imminent` | No impact | Position expires before imminent earnings. No gap risk for this position. |
+| **<7 days** | Expiration AFTER earnings | **CLOSE or ROLL immediately** | `earnings_imminent`, `earnings_within_dte` | Downgrade to "low" | CRITICAL: position will be open during imminent earnings. An earnings miss could gap the stock below your strike. Act now. |
+| **0-2 days (just passed)** | Any | **HOLD** — earnings resolved | None | No impact | Uncertainty resolved. IV crush is favorable for short put positions. |
+| **Earnings unknown** | N/A | **CONSERVATIVE approach** | `unknown_earnings` | Downgrade to "medium" | Cannot assess earnings risk. Flag for user review. If DTE >21, consider rolling to shorter DTE. |
+
+**Step 3: Determine action based on matrix result:**
+- **HOLD**: No earnings-driven action needed. Continue evaluating other factors (moneyness, delta, momentum, etc.)
+- **FLAG**: Add risk flag but no immediate action. Re-evaluate at next monitoring cycle.
+- **ROLL recommended**: Recommend rolling to an expiration BEFORE earnings (with ≥7 day buffer) or well AFTER earnings (≥7 days post). Factor this into overall WAIT/ROLL decision.
+- **ROLL urgently / CLOSE**: Earnings proximity makes this the PRIMARY factor. Override other WAIT signals — if earnings risk is urgent and position spans earnings, recommend ROLL or CLOSE regardless of favorable Greeks.
+
+**Additional put-specific earnings considerations:**
+- Recent earnings miss or lowered guidance: bearish pressure → higher put assignment risk even if position doesn't span next earnings
+- Analyst downgrades clustering around earnings season increase downside gap risk
+- Upcoming catalysts (FDA decisions, litigation rulings, regulatory actions) increase gap risk similar to earnings — apply `catalyst_pending` flag
 
 ### 7. Technical Momentum (inverted from calls)
 - **Strong Sell signals (oscillators + MAs)**: Price likely to continue lower → higher put assignment risk
@@ -152,7 +181,7 @@ Use:
 ### WAIT Alert (hold position, no action needed):
 - Position is OTM with comfortable margin (price at least 3% above strike)
 - DTE is appropriate (not trapped with no extrinsic value)
-- No earnings before expiration (or earnings already passed)
+- No earnings risk per Earnings Decision Matrix (section 6): position expires before earnings with safe buffer, earnings already passed, or no upcoming earnings
 - Technical signals are neutral or bullish (favorable for short puts)
 - |Delta| < 0.35
 - You would still want to own the stock at the strike price (fundamental quality intact)
@@ -161,7 +190,7 @@ Use:
 
 1. **Approaching ITM**: Price within 2% of strike with bearish momentum
 2. **Already ITM**: Price below strike — assignment risk is real
-3. **Earnings Risk**: Earnings date falls before expiration with uncertain outcome
+3. **Earnings Risk**: Position expiration is AFTER earnings date — urgency depends on days to earnings (see Earnings Decision Matrix, section 6)
 4. **Fundamental Deterioration**: Analyst downgrades, earnings miss, sector weakness
 5. **Technical Breakdown**: Price breaking support, heading toward strike with volume
 6. **Low Extrinsic Value**: <$0.10 extrinsic with DTE > 7 and ITM — assignment imminent
@@ -225,6 +254,24 @@ You will receive previous monitor activities. Use them to:
 
 Output a **JSON activity block** inside a fenced code block, followed by a **SUMMARY** line.
 
+### Unified Risk Flag Taxonomy
+
+Use consistent risk flag names. Key flags for open put monitors:
+- `approaching_itm`, `high_delta`, `low_extrinsic` (position)
+- `earnings_before_expiry`, `earnings_approaching`, `earnings_soon`, `earnings_imminent`, `earnings_within_dte`, `unknown_earnings` (earnings — see Earnings Decision Matrix in section 6)
+- `catalyst_pending` (calendar)
+- `breakdown_momentum`, `support_break` (technical)
+- `fundamental_deterioration`, `analyst_downgrade` (fundamental)
+- `profit_optimization` (optimization rolls)
+
+**Earnings flag definitions:**
+- `earnings_before_expiry`: Position expiration is AFTER earnings date (legacy flag, equivalent to `earnings_within_dte`)
+- `earnings_within_dte`: Position expiration is after earnings — the core earnings risk for monitors
+- `earnings_approaching`: Earnings 15-30 days away AND position spans earnings — time to plan a roll
+- `earnings_soon`: Earnings 7-14 days away — elevated urgency if position spans earnings
+- `earnings_imminent`: Earnings <7 days away — critical urgency if position spans earnings
+- `unknown_earnings`: No earnings date available — apply conservative approach
+
 **JSON Schema (open_put_monitor):**
 ```json
 {
@@ -260,7 +307,7 @@ SUMMARY: TICKER | WAIT/ROLL_X open put | Strike $X exp YYYY-MM-DD | Price $X | D
 - `delta`: Report the put delta as-is (negative value)
 - `assignment_risk`: "low" (|delta| <0.25, deep OTM), "medium" (|delta| 0.25-0.45), "high" (|delta| 0.45-0.60 or ATM), "critical" (|delta| >0.60 or deep ITM)
 - `confidence`: "high" (clear situation), "medium" (reasonable assessment), "low" (insufficient data)
-- `risk_flags`: array of strings, e.g. `["approaching_itm", "earnings_before_expiry", "fundamental_deterioration", "high_delta", "low_extrinsic", "breakdown_momentum", "analyst_downgrades"]`, or `[]` if none
+- `risk_flags`: array of strings from Unified Risk Flag Taxonomy (see above), e.g. `["approaching_itm", "earnings_soon", "earnings_within_dte", "fundamental_deterioration", "high_delta"]`, or `[]` if none
 
 **Examples:**
 
@@ -307,9 +354,9 @@ ROLL activity:
   "new_strike": 195,
   "new_expiration": "2026-05-22",
   "estimated_roll_cost": -0.30,
-  "reason": "Stock broke below $200 strike on sector weakness. |Delta| 0.58, earnings in 3 weeks could push lower. Roll down to $195 (below S2 support) and out to May.",
+  "reason": "Stock broke below $200 strike on sector weakness. |Delta| 0.58, earnings in 3 weeks and expiration is AFTER earnings (earnings_within_dte). Per Earnings Decision Matrix: earnings 15-30 days away with expiration after earnings → ROLL recommended. Roll down to $195 (below S2 support) and out to May to clear the earnings date.",
   "confidence": "high",
-  "risk_flags": ["approaching_itm", "earnings_before_expiry", "high_delta"]
+  "risk_flags": ["approaching_itm", "earnings_approaching", "earnings_within_dte", "high_delta"]
 }
 ```
 SUMMARY: AAPL | ROLL_DOWN_AND_OUT open put | Strike $200→$195 exp 2026-04-24→2026-05-22 | Price $197.50 | Delta -0.58 | Risk: high

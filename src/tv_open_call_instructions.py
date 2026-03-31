@@ -125,9 +125,38 @@ Use:**:
 - **Strategy**: ROLL_UP_AND_OUT to get past ex-div date, OR accept assignment
 
 ### 6. Earnings & Catalyst Risk
-- Extract next earnings date from forecast data
-- If earnings fall BEFORE expiration: significant gap risk — consider rolling out past earnings
-- Upcoming catalysts (product launches, FDA, conferences) increase gap risk
+
+**KEY PRINCIPLE**: The risk is NOT "earnings are nearby" — the risk is "my position is OPEN during earnings." If your option expires BEFORE earnings, the earnings event poses NO risk to that position. If your option expires AFTER earnings, your position spans the earnings gap — that IS the risk.
+
+**Step 1: Calculate earnings timing relative to your position:**
+- `days_to_earnings` = calendar days from today to next earnings date
+- `expiration_to_earnings_gap` = calendar days from option expiration to earnings date (positive = expires BEFORE earnings, negative = expires AFTER earnings)
+- Extract next earnings date from OVERVIEW data (`"Next Earnings Date"`) or forecast data
+
+**Step 2: Apply the Monitor Earnings Decision Matrix:**
+
+| Days to Earnings | Expiration vs Earnings | Monitor Action | Risk Flag(s) | Confidence Impact | Rationale |
+|---|---|---|---|---|---|
+| **>30 days** | Expiration BEFORE earnings | **HOLD** — no concern | None | No impact | Position expires well before earnings event. No action needed. |
+| **>30 days** | Expiration AFTER earnings | **FLAG** — awareness only | `earnings_within_dte` | No impact | Position spans earnings but 30+ days to manage. Revisit as earnings approach. |
+| **15-30 days** | Expiration ≥7 days BEFORE earnings | **HOLD** — safe buffer | None | No impact | Position closes well before earnings uncertainty window. |
+| **15-30 days** | Expiration AFTER earnings | **ROLL recommended** | `earnings_approaching`, `earnings_within_dte` | Downgrade one level | Position spans earnings. Time to roll to pre-earnings expiration or well past earnings. |
+| **7-14 days** | Expiration ≥5 days BEFORE earnings | **HOLD with caution** | `earnings_soon` | Downgrade one level | Tight but safe — position expires before earnings. Monitor closely. |
+| **7-14 days** | Expiration <5 days before OR after earnings | **ROLL urgently** | `earnings_soon`, `earnings_within_dte` | Downgrade one level | Insufficient buffer or position spans earnings. Roll NOW to safer expiration. |
+| **<7 days** | Expiration BEFORE earnings | **HOLD** — expires before event | `earnings_imminent` | No impact | Position expires before imminent earnings. No gap risk for this position. |
+| **<7 days** | Expiration AFTER earnings | **CLOSE or ROLL immediately** | `earnings_imminent`, `earnings_within_dte` | Downgrade to "low" | CRITICAL: position will be open during imminent earnings. High gap/assignment risk. Act now. |
+| **0-2 days (just passed)** | Any | **HOLD** — earnings resolved | None | No impact | Uncertainty resolved. IV crush is favorable for short call positions. |
+| **Earnings unknown** | N/A | **CONSERVATIVE approach** | `unknown_earnings` | Downgrade to "medium" | Cannot assess earnings risk. Flag for user review. If DTE >21, consider rolling to shorter DTE. |
+
+**Step 3: Determine action based on matrix result:**
+- **HOLD**: No earnings-driven action needed. Continue evaluating other factors (moneyness, delta, momentum, etc.)
+- **FLAG**: Add risk flag but no immediate action. Re-evaluate at next monitoring cycle.
+- **ROLL recommended**: Recommend rolling to an expiration BEFORE earnings (with ≥7 day buffer) or well AFTER earnings (≥7 days post). Factor this into overall WAIT/ROLL decision.
+- **ROLL urgently / CLOSE**: Earnings proximity makes this the PRIMARY factor. Override other WAIT signals — if earnings risk is urgent and position spans earnings, recommend ROLL or CLOSE regardless of favorable Greeks.
+
+**Catalyst Risk:**
+- Upcoming catalysts (product launches, FDA decisions, conferences) increase gap risk similar to earnings
+- If a major catalyst falls before expiration: treat like earnings 7-14 days away, apply `catalyst_pending` flag
 
 ### 7. Technical Momentum
 - **Strong Buy signals (oscillators + MAs)**: Price likely to continue higher → higher assignment risk
@@ -148,7 +177,8 @@ Use:**:
 ### WAIT Alert (hold position, no action needed):
 - Position is OTM with comfortable margin (price at least 3% below strike)
 - DTE is appropriate (not trapped with no extrinsic value)
-- No earnings or ex-dividend before expiration
+- No earnings risk per Earnings Decision Matrix (section 6): position expires before earnings with safe buffer, or no upcoming earnings
+- No ex-dividend before expiration (for calls)
 - Technical signals are neutral or bearish (favorable for short calls)
 - Delta < 0.35
 
@@ -156,7 +186,7 @@ Use:**:
 
 1. **Approaching ITM**: Price within 2% of strike with bullish momentum
 2. **Already ITM**: Price above strike — assignment risk is real
-3. **Earnings Risk**: Earnings date falls before expiration
+3. **Earnings Risk**: Position expiration is AFTER earnings date — urgency depends on days to earnings (see Earnings Decision Matrix, section 6)
 4. **Ex-Dividend Risk**: Ex-div date before expiration with ITM call
 5. **Technical Breakout**: Price breaking resistance toward strike with volume
 6. **Low Extrinsic Value**: <$0.10 extrinsic with DTE > 7 and ITM — assignment imminent
@@ -221,12 +251,21 @@ Output a **JSON activity block** inside a fenced code block, followed by a **SUM
 
 ### Unified Risk Flag Taxonomy
 
-Use consistent risk flag names. Complete taxonomy in **Cash-Secured Put instructions**. Key flags for open call monitors:
+Use consistent risk flag names. Key flags for open call monitors:
 - `approaching_itm`, `high_delta`, `low_extrinsic` (position)
-- `earnings_before_expiry`, `ex_dividend_risk`, `catalyst_pending` (calendar)
+- `earnings_before_expiry`, `earnings_approaching`, `earnings_soon`, `earnings_imminent`, `earnings_within_dte`, `unknown_earnings` (earnings — see Earnings Decision Matrix in section 6)
+- `ex_dividend_risk`, `catalyst_pending` (calendar)
 - `breakout_momentum`, `resistance_level` (technical)
 - `fundamental_deterioration`, `analyst_downgrade` (fundamental)
 - `profit_optimization` (optimization rolls)
+
+**Earnings flag definitions:**
+- `earnings_before_expiry`: Position expiration is AFTER earnings date (legacy flag, equivalent to `earnings_within_dte`)
+- `earnings_within_dte`: Position expiration is after earnings — the core earnings risk for monitors
+- `earnings_approaching`: Earnings 15-30 days away AND position spans earnings — time to plan a roll
+- `earnings_soon`: Earnings 7-14 days away — elevated urgency if position spans earnings
+- `earnings_imminent`: Earnings <7 days away — critical urgency if position spans earnings
+- `unknown_earnings`: No earnings date available — apply conservative DTE approach
 
 **JSON Schema (open_call_monitor):**
 ```json
@@ -311,9 +350,9 @@ ROLL activity:
   "new_strike": 75,
   "new_expiration": "2026-05-22",
   "estimated_roll_cost": -0.45,
-  "reason": "Stock broke through $72 strike with strong bullish momentum. Delta 0.62, earnings in 2 weeks. Roll up to $75 and out to May to collect credit and avoid assignment.",
+  "reason": "Stock broke through $72 strike with strong bullish momentum. Delta 0.62, earnings in 2 weeks and expiration is AFTER earnings (earnings_within_dte). Per Earnings Decision Matrix: earnings 7-14 days away with expiration after earnings → ROLL urgently. Roll up to $75 and out to May to collect credit, avoid assignment, and clear the earnings date.",
   "confidence": "high",
-  "risk_flags": ["approaching_itm", "earnings_before_expiry", "high_delta"]
+  "risk_flags": ["approaching_itm", "earnings_soon", "earnings_within_dte", "high_delta"]
 }
 ```
 SUMMARY: MO | ROLL_UP_AND_OUT open call | Strike $72→$75 exp 2026-04-24→2026-05-22 | Price $73.80 | Delta 0.62 | Risk: critical
