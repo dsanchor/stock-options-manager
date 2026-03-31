@@ -336,6 +336,7 @@ async def api_add_position(request: Request, symbol: str):
         strike = body.get("strike")
         expiration = body.get("expiration", "").strip()
         notes = body.get("notes", "").strip()
+        source_activity_id = body.get("source_activity_id", "").strip() if body.get("source_activity_id") else ""
 
         if position_type not in ("call", "put"):
             return JSONResponse({"error": "type must be 'call' or 'put'"},
@@ -349,8 +350,25 @@ async def api_add_position(request: Request, symbol: str):
             return JSONResponse({"error": "strike must be a number"},
                                 status_code=400)
 
+        source = None
+        if source_activity_id:
+            activity = cosmos.get_activity_by_id(source_activity_id)
+            if activity is not None:
+                source = {
+                    "activity_id": activity["id"],
+                    "agent_type": activity.get("agent_type"),
+                    "activity": activity.get("activity"),
+                    "confidence": activity.get("confidence"),
+                    "reason": activity.get("reason"),
+                    "underlying_price": activity.get("underlying_price"),
+                    "premium": activity.get("premium"),
+                    "iv": activity.get("iv"),
+                    "risk_flags": activity.get("risk_flags", []),
+                    "timestamp": activity.get("timestamp"),
+                }
+
         doc = cosmos.add_position(symbol.upper(), position_type, strike,
-                                  expiration, notes)
+                                  expiration, notes, source=source)
         return JSONResponse(_clean_doc(doc), status_code=201)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)

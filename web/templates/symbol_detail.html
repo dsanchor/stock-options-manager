@@ -433,7 +433,7 @@
 (function() {
     var SYMBOL = '{{ symbol_doc.symbol }}';
 
-    // Alert pre-fill data (embedded by backend)
+    // Alert attach data (embedded by backend)
     var WATCHLIST = {
         covered_call: {{ symbol_doc.watchlist.covered_call | tojson }},
         cash_secured_put: {{ symbol_doc.watchlist.cash_secured_put | tojson }}
@@ -444,7 +444,7 @@
     };
     var AGENT_TYPE_MAP = { call: 'covered_call', put: 'cash_secured_put' };
 
-    function updateAlertPrefillCheckbox() {
+    function updateAlertAttachCheckbox() {
         var posType = document.getElementById('posType').value;
         var agentType = AGENT_TYPE_MAP[posType];
         var row = document.getElementById('alertPrefillRow');
@@ -453,10 +453,10 @@
         var alert = agentType ? LATEST_SELL_ALERTS[agentType] : null;
         var watching = agentType ? WATCHLIST[agentType] : false;
 
-        if (watching && alert && alert.strike && alert.expiration) {
+        if (watching && alert && alert.activity_id) {
             var dateStr = (alert.timestamp || '').substring(0, 10);
             var agentLabel = agentType === 'covered_call' ? 'Covered Call' : 'Cash-Secured Put';
-            label.textContent = 'Pre-fill from latest alert (' + agentLabel + ', ' + dateStr + ')';
+            label.textContent = 'Attach latest alert data (' + agentLabel + ', ' + dateStr + ')';
             row.style.display = 'flex';
         } else {
             row.style.display = 'none';
@@ -464,34 +464,11 @@
         }
     }
 
-    function applyAlertPrefill() {
-        var posType = document.getElementById('posType').value;
-        var agentType = AGENT_TYPE_MAP[posType];
-        var chk = document.getElementById('chkAlertPrefill');
-        var alert = agentType ? LATEST_SELL_ALERTS[agentType] : null;
-
-        if (chk.checked && alert) {
-            document.getElementById('posStrike').value = alert.strike || '';
-            document.getElementById('posExpiration').value = alert.expiration || '';
-            var notes = [];
-            if (alert.premium) notes.push('Premium: $' + alert.premium);
-            if (alert.iv) notes.push('IV: ' + alert.iv + '%');
-            if (alert.confidence) notes.push('Confidence: ' + alert.confidence);
-            if (alert.reason) notes.push(alert.reason);
-            document.getElementById('posNotes').value = notes.join(' | ');
-        } else {
-            document.getElementById('posStrike').value = '';
-            document.getElementById('posExpiration').value = '';
-            document.getElementById('posNotes').value = '';
-        }
-    }
-
     document.getElementById('posType').addEventListener('change', function() {
         document.getElementById('chkAlertPrefill').checked = false;
-        updateAlertPrefillCheckbox();
+        updateAlertAttachCheckbox();
     });
-    document.getElementById('chkAlertPrefill').addEventListener('change', applyAlertPrefill);
-    updateAlertPrefillCheckbox();
+    updateAlertAttachCheckbox();
 
     // Add position
     document.getElementById('btnAddPosition').addEventListener('click', async function() {
@@ -511,10 +488,19 @@
         }
 
         try {
+            var payload = { type: type, strike: parseFloat(strike), expiration: expiration, notes: notes };
+            var chk = document.getElementById('chkAlertPrefill');
+            if (chk.checked) {
+                var agentType = AGENT_TYPE_MAP[type];
+                var alert = agentType ? LATEST_SELL_ALERTS[agentType] : null;
+                if (alert && alert.activity_id) {
+                    payload.source_activity_id = alert.activity_id;
+                }
+            }
             var res = await fetch('/api/symbols/' + SYMBOL + '/positions', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ type: type, strike: parseFloat(strike), expiration: expiration, notes: notes })
+                body: JSON.stringify(payload)
             });
             var data = await res.json();
             if (!res.ok) {

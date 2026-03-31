@@ -81,3 +81,27 @@ The positions card on the symbol detail page has a "▶ Run Analysis" green `btn
 - **Pattern reused from:** `web/static/app.js` (btn-trigger click handler, sequential agent triggering)
 - **CSS:** `btn-trigger` green style (defined in `web/static/style.css`)
 - **Commit:** 1f686f1
+
+### Alert Pre-fill Checkbox in Add Position Form (2026-07)
+**Status:** ✅ Completed → Reworked (see below)
+**Commit:** c9ce586
+**Files:** `web/app.py` (symbol_detail_page route), `web/templates/symbol_detail.html` (form + script block)
+- Original: pre-filled strike/expiration/notes from alert data — user didn't want that behavior
+
+### Alert Attach (Transparent Source Metadata) Fix (2026-07)
+**Status:** ✅ Completed
+**Files:** `web/app.py` (api_add_position route), `web/templates/symbol_detail.html` (JS block)
+- Replaced form pre-fill with transparent source-attach: checkbox now sends `source_activity_id` in POST body
+- Backend looks up activity via `cosmos.get_activity_by_id()`, builds `source` dict (same pattern as from-activity route), passes to `cosmos.add_position()`
+- No form field manipulation — user fills in strike/expiration/notes manually; alert data rides along as metadata
+- No watchlist disable or cascade-delete (that's the from-activity route's behavior only)
+- Checkbox visibility: watchlist enabled + alert has `activity_id` (not strike/expiration)
+- Label: "Attach latest alert data (agent_label, date)" instead of "Pre-fill from..."
+
+## Learnings
+
+### Source Attach vs Pre-fill Pattern (2026-07)
+Two distinct UX patterns for alert→position flow:
+1. **From-activity route** (`/positions/from-activity/{id}`): Full automation — creates position, disables watchlist, cascade-deletes activities/alerts. Used when user clicks "create position" on an alert card.
+2. **Manual add with attach** (`/positions` + `source_activity_id`): User fills all fields manually; alert source metadata transparently attached. No side effects on watchlist or alerts. Checkbox is just a toggle.
+The `source` dict construction is identical in both paths — factored from the activity document via `cosmos.get_activity_by_id()`.
