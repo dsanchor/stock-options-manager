@@ -9,6 +9,22 @@
 
 ## Learnings
 
+### TradingView Dividends Test Script (2026-07-14)
+- Created `test/test_dividends_fetcher.py` — standalone script to fetch TradingView dividends page and extract dividend-specific data for any stock symbol.
+- **Key finding:** Unlike the overview page, the TradingView dividends page (`/financials-dividends/`) does NOT embed dividend fundamental data in JSON blobs. The page's `<script>` JSON only contains basic symbol metadata (22 fields: `pro_symbol`, `exchange`, `description`, logos, etc.) — no `dividends_yield`, `dps_*`, or `payout_ratio` fields.
+- **Workaround:** The page metadata does include `pro_symbol` (e.g., `NASDAQ:AAPL`), which can be used to query the TradingView scanner API (`https://scanner.tradingview.com/america/scan`) for dividend data. The scanner API accepts a POST with `symbols.tickers` and `columns` arrays and returns all requested fields.
+- **Scanner API validated fields:** `dps_common_stock_prim_issue_fy`, `dps_common_stock_prim_issue_fq`, `dividends_yield`, `dividend_payout_ratio_ttm`, `dividend_payout_ratio_fy`, `dps_common_stock_prim_issue_yoy_growth_fy`, `continuous_dividend_payout`, `continuous_dividend_growth`, `ex_dividend_date_recent`, `dividends_per_share_fq`.
+- **Invalid scanner fields:** `last_annual_dividend`, `last_split_date`, `last_split_ratio` — these return "Unknown field" errors.
+- Script uses 3-strategy fallback: HTML H1 extraction → embedded JSON → scanner API. Tested with AAPL (low yield, 14yr payout streak) and NYSE-VZ (5.6% yield, 42yr payout streak).
+
+### TradingView Fundamentals Test Script (2026-07-14)
+- Created `test/test_fetcher.py` — standalone script to fetch TradingView overview page and extract "Fundamentals and stats" data for any stock symbol.
+- **Key finding:** TradingView renders the "Fundamentals and stats" H1 section entirely via JavaScript (client-side React). The static HTML returned by `requests.get()` contains only one H1 (the company name) — the fundamentals section is NOT in the server-rendered HTML.
+- **Workaround:** Fundamentals data IS embedded in a JSON blob inside a `<script>` tag. The blob key is a short hash (e.g., `LkBmH5`) that likely changes with each TradingView deployment. The script identifies the correct blob by looking for `market_cap_basic` + `price_earnings_ttm` keys in `blob.data.symbol`.
+- Available fields include: `market_cap_basic`, `price_earnings_ttm`, `earnings_per_share_basic_ttm`, `dividends_yield`, `beta_1_year`, `net_income`, `total_revenue_fy`, `sector`, `industry`, `number_of_employees`, `recommendation_mark`, `all_time_high/low`, `earnings_release_next_date_fq`, and more.
+- `requests` is already in `requirements.txt`; `beautifulsoup4` is NOT — it's a test-only dependency.
+- TradingView returns 404 for invalid symbols, which `raise_for_status()` handles cleanly.
+
 ### CosmosDB Settings Container (2026-03-30)
 - Added new `settings` container to CosmosDB with partition key `/setting_key` for persistent runtime configuration.
 - Implemented deep-merge logic in `CosmosDBService.update_setting()` — partial updates preserve nested values (e.g., updating `telegram.bot_token` keeps `telegram.channel_id` intact).
@@ -1208,3 +1224,91 @@ The dividends fetcher WAS correctly implemented at the data layer (tv_data_fetch
 - Grep search patterns: look for both exact function names (fetch_*) and contextual patterns (overview.*technicals)
 - HTML templates with JavaScript often have TWO places to update: JS arrays and corresponding labels
 - CosmosDB telemetry aggregation was designed well — it handles ANY resource dynamically without code changes
+
+### TradingView Technicals Test Script (2026-07-14)
+- Created `test/test_technicals_fetcher.py` — standalone script to fetch TradingView technicals page and extract "Indicators' summary" data (buy/sell/neutral counts, oscillators, moving averages, overall recommendation).
+- **Key finding:** The technicals page (`/technicals/`) renders an H1 heading "Indicators' summary" in static HTML, but the parent `<div>` contains ONLY the heading text — all indicator data is loaded via JavaScript. The heading is a false positive for HTML extraction.
+- **Key finding:** The embedded JSON blob on the technicals page does NOT contain `Recommend.All`, `RSI`, or other technical indicator fields — only basic symbol metadata (same as dividends page).
+- **Workaround:** Uses the TradingView scanner API (`https://scanner.tradingview.com/america/scan`) with `pro_symbol` extracted from the page's JSON metadata (same pattern as dividends script).
+- **Scanner API validated technical fields:** `Recommend.All`, `Recommend.Other`, `Recommend.MA`, `RSI`, `RSI[1]`, `Stoch.K`, `Stoch.K[1]`, `Stoch.D`, `Stoch.D[1]`, `CCI20`, `CCI20[1]`, `ADX`, `ADX+DI`, `ADX-DI`, `ADX+DI[1]`, `ADX-DI[1]`, `AO`, `AO[1]`, `AO[2]`, `Mom`, `Mom[1]`, `MACD.macd`, `MACD.signal`, `W.R`, `BBPower`, `UO`, `EMA10/20/30/50/100/200`, `SMA10/20/30/50/100/200`, `Ichimoku.BLine`, `VWMA`, `HullMA9`, `close`.
+- **Invalid scanner fields for technicals:** `Recommend.All.Buy`, `Recommend.All.Sell`, `Recommend.All.Neutral` (and same for `.Other.*`, `.MA.*`) — these return "Unknown field" errors. Buy/sell/neutral counts must be computed from individual indicator signals.
+- **Signal computation:** Implemented TradingView's signal logic for each oscillator (RSI, Stoch, CCI, ADX, AO, Mom, MACD, Williams %R, BBPower, UO) and for MAs (price vs MA value). Buy/sell/neutral counts are aggregated from these per-indicator signals.
+- Script uses 3-strategy fallback: HTML heading extraction (with content-length check) → embedded JSON → scanner API. Tested with AAPL (Strong Sell) and NYSE-VZ (Buy).
+
+### TradingView Forecast Test Script (2025-07-15)
+- Created `test/test_forecast_fetcher.py` — standalone script to fetch TradingView forecast page and extract "Price Target" and "Analyst Rating" data.
+- **Key finding:** The forecast page (`/forecast/`) renders an H1 "Price target" in static HTML, but the parent div only contains the heading + placeholder text (e.g. "65.27" and analyst count sentence) — NOT structured data tables. Actual data loads via JS.
+- **Key finding:** The embedded JSON blob on the forecast page does NOT contain `price_target_average`, `recommendation_buy`, or other forecast fields — only basic symbol metadata.
+- **Workaround:** Uses the TradingView scanner API with `pro_symbol` extracted from page JSON metadata (same pattern as dividends and technicals scripts).
+- **Valid scanner API forecast fields:** `price_target_average`, `price_target_high`, `price_target_low`, `price_target_median`, `recommendation_mark` (1-5 scale), `recommendation_buy`, `recommendation_hold`, `recommendation_sell`, `recommendation_total`, `Recommend.All` (-1 to +1 scale).
+- **Invalid scanner fields for forecast:** `target_price_average/high/low/median` (wrong prefix), `number_of_analysts*`, `analysts_*`, `rating_*`, `recommendation_overweight/underweight/strong_buy/strong_sell` — all return "Unknown field" errors.
+- **Note on recommendation_mark vs Recommend.All:** `recommendation_mark` uses 1-5 scale (1=Strong Buy, 5=Strong Sell) from analyst consensus. `Recommend.All` uses -1 to +1 scale from technical indicators. Both are valid but measure different things.
+- **HTML extraction guard:** Made HTML extraction require ≥3 dollar-formatted values and >200 chars to avoid false positives from placeholder headings that TV renders server-side without actual data.
+- Script uses 3-strategy fallback: HTML heading extraction (with strict content check) → embedded JSON → scanner API. Tested with NYSE-MO (Buy, $65.27 target) and AAPL (Strong Buy, $297.97 target).
+
+### TradingView Options Chain Test Script (2025-07-15)
+- Created `test/test_options_fetcher.py` — standalone script to fetch TradingView options chain page and extract "Call and put options data" (strike prices, call/put bid/ask/last/volume/OI, IV, Greeks).
+- **Key finding:** The options chain page (`/options-chain/`) renders NO options data in static HTML and does NOT embed options data in the JSON blob inside `<script>` tags. The embedded JSON only contains basic symbol metadata (same as other pages).
+- **Key finding:** TradingView's options chain data is loaded exclusively via **authenticated scanner2 API endpoints** that require browser context (cookies/session):
+  - `scanner.tradingview.com/global/scan2?label-product=symbols-options`
+  - `scanner.tradingview.com/options/scan2?label-product=symbols-options`
+- **Key finding:** Unlike other TV data (dividends, technicals, forecast) which can be fetched via the unauthenticated `scanner.tradingview.com/america/scan` endpoint, the options scanner APIs return errors or empty results when called without browser authentication. This is why the production fetcher uses Playwright to intercept API responses during page load.
+- **Attempted scanner endpoints:** Tried `/options/scan`, `/global/scan`, `/america/scan` with multiple payload formats (`underlying-symbol`, `root-symbol` filters) and options-specific columns (`option-type`, `strike`, `bid`, `ask`, `last`, `volume`, `open-interest`, `implied-volatility`, `delta`, `gamma`, `theta`, `vega`, etc.) — all returned empty or error responses.
+- **Script behavior:** Follows the 3-strategy fallback pattern (HTML extraction → embedded JSON → scanner API), successfully extracts symbol metadata and current price from page JSON, and provides an informative fallback message explaining why options chain data requires the Playwright-based production fetcher.
+- **Output format:** When scanner API data is available, displays options chain as a side-by-side calls/puts table grouped by expiration date, with near-ATM strike filtering (±15 strikes) and Greeks summary. Tested with NYSE-MO ($67.02) and AAPL ($246.63).
+
+### Test Fetcher Scripts — JSON Output Migration (2026-07-15)
+- Converted all 4 test fetcher scripts from formatted text output to structured JSON output:
+  - `test/test_fetcher.py` (overview), `test/test_dividends_fetcher.py`, `test/test_technicals_fetcher.py`, `test/test_forecast_fetcher.py`
+- **JSON structure pattern** (consistent across all 4 scripts):
+  - Top-level keys: `title` (e.g. "STOCK OVERVIEW"), `symbol`, `name`, `ticker`, `exchange`, `source` (which extraction strategy succeeded)
+  - Data fields use nested objects with `label`, `value` (raw), and `formatted` (display string) keys
+  - On error: `{"error": "...", "symbol": "..."}` instead of text
+- **Script-specific structures:**
+  - **Overview:** `fundamentals` dict keyed by field name (e.g. `market_cap_basic`, `price_earnings_ttm`)
+  - **Dividends:** `dividends` dict keyed by field name, plus `pro_symbol` when scanner API used
+  - **Technicals:** `summary`, `oscillators`, `moving_averages` nested objects, each with `recommendation` (value + label), signal counts (`buy`/`sell`/`neutral`), and `indicators` dict with per-indicator `value`/`formatted`/`signal`
+  - **Forecast:** `price_target` object with per-field values + `upside_pct`/`upside_direction`; `analyst_rating` object with `overall_rating` (value + label), per-field counts, `distribution` (percentages), and `technical_recommendation`
+- Fetching logic, strategies (HTML → embedded JSON → scanner API), and error handling preserved unchanged — only output format changed.
+- All scripts validated with AAPL producing valid JSON via `python -m json.tool`.
+
+### BS4 + Scanner API Refactor of tv_data_fetcher.py (2026-07-14)
+- **Major refactor:** Switched 4 of 5 TradingView fetchers from Playwright to requests + BeautifulSoup + scanner API.
+- **What changed:** `fetch_overview()`, `fetch_technicals()`, `fetch_forecast()`, `fetch_dividends()` no longer use Playwright/headless Chromium. They now use the same multi-strategy approach prototyped in the test scripts: HTML extraction → embedded JSON parsing → TradingView scanner API fallback.
+- **What stayed:** `fetch_options_chain()` still uses Playwright because it requires browser-level network interception to capture scanner API responses.
+- **Lazy Playwright:** Browser is now initialized lazily via `_ensure_browser()` — Playwright + Chromium only start when options chain is actually fetched, saving resources when only the 4 BS4 fetchers run.
+- **Return format change:** The 4 refactored methods now return JSON strings (`json.dumps`) with structured data (fundamentals, oscillators, price targets, etc.) instead of raw page innerText. Callers are unaffected because `fetch_all()` contract is unchanged (returns `dict[str, str]`).
+- **Error handling:** On failure, methods return a JSON string with an `"error"` key instead of `[ERROR: ...]` prefix text. The `_with_retry` wrapper still detects `[ERROR:` prefix for retries, and JSON error objects don't match that prefix, so errors are returned immediately without unnecessary retries.
+- **Dependencies:** Added `beautifulsoup4>=4.12.0` to requirements.txt (requests was already present).
+- **Architecture:** All helper functions (HTML extraction, JSON extraction, scanner API fetch, signal computation, value formatting) are module-level functions, not class methods. The class only contains the 5 async fetch methods + retry logic + browser lifecycle.
+- Commit: baccbc9.
+
+### README Update for Hybrid Fetching Architecture (2026-07-14)
+- Updated 11 sections of README.md to reflect the BS4 + scanner API refactor.
+- Key pattern: README now documents the hybrid approach — `requests` + `BeautifulSoup` + scanner API for overview/technicals/forecast/dividends, Playwright only for options chain.
+- Maintained the core architectural message: LLM never touches browser/HTTP; data is pre-fetched deterministically.
+- Added `beautifulsoup4` and `requests` to the documented dependencies list.
+- Clarified that `playwright install chromium` is only needed for options chain.
+- Commit: 8962759.
+
+### Config Precedence Fix: CosmosDB > config.yaml (2026-03-31)
+- **Issue:** `merge_defaults()` was called but Config object wasn't updated with the merged result. Scheduler used stale config.yaml values instead of runtime-modified CosmosDB settings.
+- **Fix:** Added code in `OptionsAgentScheduler.setup()` to update `self.config.config` dict after merge: iterate through merged_settings and copy all non-infrastructure keys (excluding 'azure', 'cosmosdb').
+- **Effect:** CosmosDB settings now take precedence at runtime; user changes via web UI (e.g., cron schedule) persist across scheduler restarts.
+- **Related decision:** `.squad/decisions/decisions.md` — "CosmosDB Settings Must Override Config File at Runtime"
+
+### Per-Symbol Telegram Notification Toggles (2026-03-31)
+- **Feature:** Added `telegram_notifications_enabled: bool` field to symbol config in CosmosDB (default True).
+- **Check location:** Implemented in `TelegramNotifier.send_alert()` for centralized logic — all notification types respect the toggle without modifying agent runners.
+- **Safe defaults:** Missing field = enabled (backward compatible), symbol not found = enabled (fail open), CosmosDB unavailable = enabled (graceful degradation).
+- **Migration:** Run `scripts/migrate_add_telegram_notifications.py` to backfill existing symbols.
+- **Files:** Updated `src/cosmos_db.py`, `src/telegram_notifier.py`, `web/app.py`, and migration script.
+- **Team notes:** Pattern matches existing call/put watchlist toggles. Linus implemented frontend toggles in parallel.
+- **Related decision:** `.squad/decisions/decisions.md` — "Per-Symbol Telegram Notification Toggles"
+
+### Playwright Locator-Based Fetch (fetch_overview) (2026-03-31)
+- **Refactor:** Rewrote `fetch_overview()` to use Playwright's locator API targeting "Fundamentals and stats" H1 section specifically, rather than grabbing entire `#tv-content` innerText.
+- **Pattern:** `page.locator('h1:has-text("Fundamentals and stats")').locator('..')` extracts parent container with surgical precision.
+- **Fallback:** If locator fails, gracefully degrades to old `_fetch_page_text()` approach.
+- **Result:** Cleaner overview data, better signal-to-noise ratio for LLM analysis.
+- **Related decision:** `.squad/decisions/decisions.md` — "Use Playwright Locators for Targeted Data Extraction"

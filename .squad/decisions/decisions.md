@@ -481,3 +481,238 @@ All log timestamps set in Python BEFORE agent execution using `TIMESTAMP_FORMAT 
 
 Enrich alerts at render time in `web/app.py` by matching each alert to the closest activity (same symbol key, ±2 hour window). Helper `_enrich_alert_from_activities()` copies only missing fields. Keeps alert JSONL compact.
 
+
+---
+
+## User Directives
+
+### Only Commit Changes, Never Push
+**Date:** 2026-03-30T11:27:20Z  
+**By:** dsanchor (via Copilot CLI)  
+**Status:** Active  
+
+User directive: Only commit changes automatically, never push to remote. User will handle `git push` manually.
+
+**Rationale:** User workflow preference to maintain control over when changes go to remote.
+
+---
+
+## Web UI & Frontend Decisions
+
+### Dashboard Timezone Display Pattern
+**Date:** 2024-03-30  
+**Author:** Linus (Quant Dev / Frontend)  
+**Status:** Implemented  
+
+Implement dual-timezone display on dashboard for scheduler "Last run" and "Next run" times to reduce user confusion across timezones.
+
+**Design:**
+1. **Primary:** Show times in scheduler's configured timezone (backend provides ISO timestamp + timezone name)
+2. **Secondary:** If user's browser timezone differs, show their local time below in smaller, muted text
+3. **Tooltip:** Hover shows both times clearly labeled
+
+**Implementation Pattern:**
+- Backend passes: `{field}_iso` (ISO 8601 string) and `scheduler_timezone` (IANA timezone name)
+- Frontend: Client-side JavaScript uses `toLocaleString()` with timezone parameter
+- Format: "MMM DD, YYYY, HH:MM:SS AM/PM TZN" (e.g., "Mar 30, 2024, 02:00:00 PM EDT")
+- Dual display markup: `formatted + '<br><small style="color: #888;">(localFormatted)</small>'`
+
+**Rationale:**
+- **Clarity:** No ambiguity about which timezone is displayed
+- **Convenience:** Users see times in their local context when relevant
+- **Clean UI:** Single timezone display when user TZ = scheduler TZ (no clutter)
+- **Standards-based:** Uses native Intl API, no external timezone libraries needed client-side
+- **Maintainable:** Backend owns timezone logic, frontend just formats for display
+
+**Team Impact:**
+- **Pattern:** Can be reused for any timestamp display in web UI
+- **Backend contract:** Always send `{field}_iso` (ISO string) + timezone name
+- **Frontend contract:** Always format client-side using Intl API
+
+**Files Modified:** `web/templates/dashboard.html`
+
+**Related:** Backend timezone support added by Rusty (pytz integration in web/app.py); scheduler timezone configuration in config.yaml and Settings page
+
+---
+
+## Data Fetching & Backend Architecture
+
+### Refactor TradingView Fetchers from Playwright to BeautifulSoup + Scanner API
+**Date:** 2026-07-14  
+**Author:** Rusty (Backend Dev)  
+**Status:** Implemented  
+**Impact:** Performance, reliability, resource usage  
+
+All 5 TradingView data fetchers in `src/tv_data_fetcher.py` used Playwright (headless Chromium) to load full pages and extract innerText. This was heavyweight — every fetch launched browser tabs, waited for networkidle, and pulled raw unstructured text.
+
+Test scripts (`test/test_fetcher.py`, `test/test_dividends_fetcher.py`, `test/test_technicals_fetcher.py`, `test/test_forecast_fetcher.py`) proved that 4 of 5 resources could be fetched via plain HTTP requests + BeautifulSoup, with a scanner API fallback.
+
+**Decision:** Switch overview, technicals, forecast, and dividends to **requests + BeautifulSoup + TradingView scanner API**. Keep Playwright **only** for options chain (requires browser-level API interception).
+
+**Key Changes:**
+1. **4 fetchers refactored** — multi-strategy: HTML extraction → embedded JSON → scanner API
+2. **Options chain unchanged** — still Playwright with response interception
+3. **Lazy browser init** — Playwright only starts when options chain is needed
+4. **Structured JSON output** — fetchers return `json.dumps()` with typed fields instead of raw page text
+5. **Added `beautifulsoup4>=4.12.0`** to requirements.txt
+
+**Trade-offs:**
+- **Pro:** ~10x faster fetches (no browser startup), lower memory, structured data for LLM analysis
+- **Pro:** Playwright failure modes (timeouts, consent banners, JS rendering) eliminated for 4/5 resources
+- **Pro:** Lazy browser means Playwright isn't loaded at all when options chain isn't requested
+- **Con:** Depends on TradingView's HTML structure / scanner API stability (same as test scripts)
+- **Con:** Return format changed from plain text to JSON string — callers that parsed raw text may need adjustment (current callers just pass strings through, so no impact)
+
+**Implications:**
+- All callers (`agent_runner.py`, `web/app.py`, agent wrappers) are unchanged — they call `fetch_all()` which returns `dict[str, str]`
+- LLM agents now receive structured JSON instead of raw page dumps — potentially better analysis quality
+- If TradingView changes their scanner API or page structure, the 3-strategy fallback provides resilience
+
+---
+
+### CosmosDB Settings Must Override Config File at Runtime
+**Date:** 2025-01-15  
+**Author:** Rusty (Backend Dev)  
+**Status:** Implemented  
+
+The application uses a two-tier configuration system:
+1. **config.yaml** — File-based defaults
+2. **CosmosDB settings** — Runtime-editable settings via web UI
+
+The `merge_defaults()` function merges config.yaml values into CosmosDB, but only adds missing keys (never overwrites existing CosmosDB values).
+
+**Problem:** After merge_defaults() was called in `src/main.py`, the Config object was NOT updated with the merged result. This caused the scheduler to use stale values from config.yaml instead of the authoritative CosmosDB values.
+
+**Symptom:** User sets cron to "30 9-16/4 * * 1-5" via web UI → CosmosDB correctly stores it → but scheduler runs with "00 9-16/4 * * 1-5" from config.yaml.
+
+**Decision:** After calling `merge_defaults()`, immediately update the Config object with the merged settings:
+
+```python
+merged_settings = self.cosmos.merge_defaults(settings_defaults)
+
+# Update Config object with merged settings from CosmosDB (CosmosDB takes precedence)
+if merged_settings:
+    for key, value in merged_settings.items():
+        if key not in ('azure', 'cosmosdb'):
+            self.config.config[key] = value
+```
+
+**Rationale:**
+1. **CosmosDB is the source of truth** for runtime-editable settings
+2. **config.yaml is for defaults only** (first-run seed + new keys added in code updates)
+3. **Web UI changes must persist** across scheduler restarts
+4. **merge_defaults() returns the merged result** — we must use it
+
+**Impact:**
+- Scheduler now correctly uses settings modified via web UI
+- Settings precedence is clear: CosmosDB > config.yaml
+- No breaking changes — only fixes broken behavior
+
+**Files Modified:** `src/main.py` — OptionsAgentScheduler.setup()
+
+**Testing:** Set cron to "30 9-16/4 * * 1-5" via web UI, restart scheduler, verify it prints and uses the :30 minutes.
+
+---
+
+### Use Playwright Locators for Targeted Data Extraction
+**Date:** 2025-01-XX  
+**Author:** Rusty (Backend Dev)  
+**Status:** Implemented  
+
+The original `fetch_overview` method grabbed the entire `#tv-content` innerText, which returned excessive noise. We needed a more surgical approach to extract only the "Fundamentals and stats" section.
+
+**Decision:** Rewrote `fetch_overview` to use Playwright's locator API:
+1. Locate the H1 element containing "Fundamentals and stats"
+2. Traverse to its parent container using `.locator('..')`
+3. Extract only that container's inner text
+
+**Implementation Details:**
+- Uses `page.locator('h1:has-text("Fundamentals and stats")').locator('..')`
+- Includes fallback to old `_fetch_page_text()` approach if locator fails
+- Maintains retry wrapper compatibility
+- Proper page lifecycle management with finally block
+
+**Rationale:**
+- Reduces noise in overview data by targeting specific DOM section
+- More resilient than hardcoded CSS selectors (semantic text-based targeting)
+- Graceful degradation ensures system doesn't break if page structure changes
+- Pattern can be applied to other fetch methods if similar issues arise
+
+**Impact:**
+- Overview data should be cleaner and more focused on fundamental metrics
+- Slightly more complex code, but better failure handling with fallback
+- No breaking changes to return format or API contract
+
+**Future Considerations:**
+- Monitor success rate of locator approach vs. fallback usage
+- Consider applying same pattern to `fetch_technicals`, `fetch_forecast`, etc. if they have similar noise issues
+- If TradingView changes page structure, fallback ensures continuity
+
+---
+
+## Feature Implementations
+
+### Per-Symbol Telegram Notification Toggles
+**Date:** 2025-01-15  
+**Author:** Rusty (Backend Dev)  
+**Type:** Feature Implementation  
+**Status:** Implemented  
+
+Implemented per-symbol toggle for Telegram notifications to give users fine-grained control over which symbols trigger alerts.
+
+**Context:** User requested ability to disable Telegram notifications for specific symbols while keeping notifications enabled for others. This is particularly useful when:
+- User has many symbols but only wants alerts for a subset
+- Testing new symbols without spam
+- Temporarily muting notifications for volatile symbols
+
+**Implementation Approach:**
+
+**1. Storage Pattern:**
+- Added `telegram_notifications_enabled: bool` field to symbol config documents in CosmosDB
+- Default value: `True` (preserves existing behavior)
+- Follows same pattern as `covered_call`/`cash_secured_put` watchlist toggles
+
+**2. Notification Check Location:**
+- Check implemented in `TelegramNotifier.send_alert()` method (not agent runners)
+- **Rationale:** Centralizing the check ensures ALL notification types (sell alerts, roll alerts, future types) respect the setting without modifying multiple agent codepaths
+
+**3. Safe Defaults:**
+- Missing field = enabled (backward compatible)
+- Symbol not found = enabled (fail open, not closed)
+- CosmosDB unavailable = enabled (graceful degradation)
+
+**4. UI Placement:**
+- Toggle appears next to Call/Put watchlist toggles
+- Labeled "Telegram Notifications" for clarity
+- Present on both symbols list page and symbol detail page
+
+**Migration:**
+Existing symbols need the field added. Run:
+```bash
+python scripts/migrate_add_telegram_notifications.py
+```
+This adds `telegram_notifications_enabled: True` to all existing symbols.
+
+**Files Modified:**
+- `src/cosmos_db.py` — Symbol schema
+- `src/telegram_notifier.py` — Notification check logic
+- `web/app.py` — API endpoint handler
+- `web/templates/symbol_detail.html` — Detail page toggle
+- `web/templates/symbols.html` — List page toggle
+- `scripts/migrate_add_telegram_notifications.py` — Migration script
+
+**Alternative Approaches Considered:**
+1. **Global blacklist in settings:** Rejected — less discoverable, harder to manage per-symbol
+2. **Agent-level check:** Rejected — would require modifying all agent runners, not future-proof
+3. **Separate notification config document:** Rejected — adds complexity, symbol config is the natural place
+
+**Future Considerations:**
+- Could extend to notification types (e.g., "disable sell alerts but keep roll alerts")
+- Could add notification frequency limits per symbol
+- Could integrate with "quiet hours" feature if added
+
+**Team Impact:**
+- **Danny:** Frontend toggle follows existing patterns
+- **Linus:** No impact on agent strategy logic
+- **All:** Existing symbols remain opt-in (notifications enabled) after migration
+

@@ -601,3 +601,13 @@ Added per-symbol notification toggle UI to enable/disable Telegram notifications
 - Frontend sends boolean value to backend via existing symbol update endpoint
 - No schema migration needed (backend handles missing field gracefully)
 
+
+### Dashboard Timezone Display Pattern (2026-03-31)
+- **UI Pattern:** Dual-timezone display for scheduler times ("Last run", "Next run").
+- **Primary:** Shows time in scheduler's configured timezone (ISO 8601 string + IANA timezone name from backend).
+- **Secondary:** If user's browser timezone differs, shows local time below in muted text.
+- **Tooltip:** Hover reveals both times clearly labeled.
+- **Format:** "MMM DD, YYYY, HH:MM:SS AM/PM TZN" (e.g., "Mar 30, 2024, 02:00:00 PM EDT").
+- **Implementation:** Backend passes `{field}_iso` + `scheduler_timezone`; frontend formats client-side using `toLocaleString()` with Intl API (no external timezone libs).
+- **Reusability:** Pattern can be applied to any timestamp display in web UI.
+- **Related decision:** `.squad/decisions/decisions.md` — "Dashboard Timezone Display Pattern"
