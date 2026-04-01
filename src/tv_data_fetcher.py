@@ -12,6 +12,7 @@ text for the options chain.  All return types are ``str`` so callers
 import asyncio
 import json
 import logging
+import random
 import re
 import time
 from datetime import datetime, timezone
@@ -24,37 +25,82 @@ from playwright.async_api import async_playwright
 logger = logging.getLogger(__name__)
 
 # ======================================================================
+# Anti-bot detection: User-Agent rotation and realistic headers
+# ======================================================================
+
+_USER_AGENTS = [
+    # Chrome on Windows 11
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    # Chrome on macOS
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    # Edge on Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
+    # Firefox on Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+    # Safari on macOS
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
+]
+
+def _get_random_headers() -> dict:
+    """Generate realistic browser headers with randomized User-Agent."""
+    ua = random.choice(_USER_AGENTS)
+    headers = {
+        "User-Agent": ua,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br, zstd",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Cache-Control": "max-age=0",
+    }
+    
+    # Add Chrome-specific headers for Chrome UAs
+    if "Chrome" in ua and "Edg" not in ua:
+        # Extract Chrome version from UA
+        chrome_version = "131"
+        if "Chrome/" in ua:
+            chrome_version = ua.split("Chrome/")[1].split(".")[0]
+        headers["sec-ch-ua"] = f'"Chromium";v="{chrome_version}", "Google Chrome";v="{chrome_version}", "Not(A:Brand";v="99"'
+        headers["sec-ch-ua-mobile"] = "?0"
+        headers["sec-ch-ua-platform"] = '"Windows"' if "Windows" in ua else '"macOS"'
+    
+    return headers
+
+# ======================================================================
 # Shared constants / helpers for the BeautifulSoup + scanner API approach
 # ======================================================================
 
-_HTTP_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/131.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Connection": "keep-alive",
-}
+# Deprecated: use _get_random_headers() instead
+_HTTP_HEADERS = _get_random_headers()
 
 _SCANNER_API_URL = "https://scanner.tradingview.com/america/scan"
 
 
-def _scanner_api_fetch(pro_symbol: str, columns: list[str]) -> dict | None:
+def _scanner_api_fetch(pro_symbol: str, columns: list[str], session: _requests.Session = None) -> dict | None:
     """POST to TradingView scanner API and return a {column: value} dict."""
     payload = {
         "symbols": {"tickers": [pro_symbol], "query": {"types": []}},
         "columns": columns,
     }
-    resp = _requests.post(
+    headers = _get_random_headers()
+    headers["Content-Type"] = "application/json"
+    headers["Origin"] = "https://www.tradingview.com"
+    headers["Referer"] = "https://www.tradingview.com/"
+    
+    # Add small random delay before API call (0.5-2 seconds)
+    time.sleep(random.uniform(0.5, 2.0))
+    
+    requester = session if session else _requests
+    resp = requester.post(
         _SCANNER_API_URL,
         json=payload,
-        headers={
-            "User-Agent": _HTTP_HEADERS["User-Agent"],
-            "Content-Type": "application/json",
-        },
+        headers=headers,
         timeout=15,
     )
     if resp.status_code != 200:
@@ -682,12 +728,30 @@ def _forecast_try_json(soup: BeautifulSoup) -> dict | None:
 # ======================================================================
 
 class TradingViewFetcher:
-    """Hybrid fetcher: BS4 + scanner API for 4 resources, Playwright for options."""
+    """Hybrid fetcher: BS4 + scanner API for 4 resources, Playwright for options.
+    
+    Implements anti-bot detection measures:
+    - Session management with persistent cookies
+    - User-Agent rotation
+    - Request timing randomization
+    - Realistic browser headers
+    """
 
-    def __init__(self):
+    def __init__(self, request_delay_range: tuple = (1.0, 3.0)):
+        """Initialize fetcher with anti-bot measures.
+        
+        Args:
+            request_delay_range: (min, max) seconds to wait between requests (default: 1-3s)
+        """
         self._playwright = None
         self._browser = None
         self.has_403 = False
+        self._session = _requests.Session()  # Persistent session for cookies
+        self._request_delay_range = request_delay_range
+        self._last_request_time = 0
+        
+        # Set initial headers for session
+        self._session.headers.update(_get_random_headers())
 
     async def __aenter__(self):
         # Playwright is started lazily in _ensure_browser() only when needed
@@ -698,6 +762,24 @@ class TradingViewFetcher:
             await self._browser.close()
         if self._playwright:
             await self._playwright.stop()
+        # Close requests session
+        self._session.close()
+
+    def _apply_rate_limiting(self):
+        """Add random delay between requests to avoid bot detection."""
+        elapsed = time.time() - self._last_request_time
+        min_delay, max_delay = self._request_delay_range
+        
+        if elapsed < min_delay:
+            wait_time = random.uniform(min_delay - elapsed, max_delay)
+            logger.debug("Rate limiting: sleeping %.2f seconds", wait_time)
+            time.sleep(wait_time)
+        else:
+            # Add small jitter even if enough time has passed
+            jitter = random.uniform(0.2, 0.8)
+            time.sleep(jitter)
+        
+        self._last_request_time = time.time()
 
     async def _ensure_browser(self):
         """Start Playwright + Chromium on first use (options chain only)."""
@@ -705,7 +787,13 @@ class TradingViewFetcher:
             self._playwright = await async_playwright().start()
             self._browser = await self._playwright.chromium.launch(
                 headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox"],
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-blink-features=AutomationControlled",  # Hide automation
+                    "--disable-dev-shm-usage",
+                    "--disable-web-security",
+                ],
             )
 
     # Retry delays in seconds for transient fetch failures
@@ -763,7 +851,14 @@ class TradingViewFetcher:
         """Fetch overview via requests + BeautifulSoup. Returns JSON string."""
         url = f"https://www.tradingview.com/symbols/{full_symbol}/"
         try:
-            resp = _requests.get(url, headers=_HTTP_HEADERS, timeout=15)
+            # Apply rate limiting before request
+            self._apply_rate_limiting()
+            
+            # Refresh headers with new random User-Agent for variety
+            headers = _get_random_headers()
+            headers["Referer"] = "https://www.tradingview.com/"
+            
+            resp = self._session.get(url, headers=headers, timeout=15)
             self._check_403(resp, full_symbol)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "html.parser")
@@ -804,7 +899,13 @@ class TradingViewFetcher:
         """Fetch technicals via requests + BeautifulSoup + scanner API. Returns JSON string."""
         url = f"https://www.tradingview.com/symbols/{full_symbol}/technicals/"
         try:
-            resp = _requests.get(url, headers=_HTTP_HEADERS, timeout=15)
+            # Apply rate limiting before request
+            self._apply_rate_limiting()
+            
+            headers = _get_random_headers()
+            headers["Referer"] = f"https://www.tradingview.com/symbols/{full_symbol}/"
+            
+            resp = self._session.get(url, headers=headers, timeout=15)
             self._check_403(resp, full_symbol)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "html.parser")
@@ -819,7 +920,7 @@ class TradingViewFetcher:
                 else:
                     pro_symbol = _extract_pro_symbol(soup)
                     if pro_symbol:
-                        sym = _scanner_api_fetch(pro_symbol, _TECHNICALS_SCANNER_COLS)
+                        sym = _scanner_api_fetch(pro_symbol, _TECHNICALS_SCANNER_COLS, self._session)
                         if sym:
                             data = _build_technicals_dict(sym)
                             data["source"] = "scanner_api"
@@ -859,7 +960,13 @@ class TradingViewFetcher:
         """Fetch forecast via requests + BeautifulSoup + scanner API. Returns JSON string."""
         url = f"https://www.tradingview.com/symbols/{full_symbol}/forecast/"
         try:
-            resp = _requests.get(url, headers=_HTTP_HEADERS, timeout=15)
+            # Apply rate limiting before request
+            self._apply_rate_limiting()
+            
+            headers = _get_random_headers()
+            headers["Referer"] = f"https://www.tradingview.com/symbols/{full_symbol}/technicals/"
+            
+            resp = self._session.get(url, headers=headers, timeout=15)
             self._check_403(resp, full_symbol)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "html.parser")
@@ -868,7 +975,7 @@ class TradingViewFetcher:
             data = None
             pro_symbol = _extract_pro_symbol(soup)
             if pro_symbol:
-                sym = _scanner_api_fetch(pro_symbol, _FORECAST_SCANNER_COLS)
+                sym = _scanner_api_fetch(pro_symbol, _FORECAST_SCANNER_COLS, self._session)
                 if sym:
                     data = _build_forecast_dict(sym)
                     data["source"] = "scanner_api"
@@ -914,7 +1021,13 @@ class TradingViewFetcher:
         """Fetch dividends via requests + BeautifulSoup + scanner API. Returns JSON string."""
         url = f"https://www.tradingview.com/symbols/{full_symbol}/financials-dividends/"
         try:
-            resp = _requests.get(url, headers=_HTTP_HEADERS, timeout=15)
+            # Apply rate limiting before request
+            self._apply_rate_limiting()
+            
+            headers = _get_random_headers()
+            headers["Referer"] = f"https://www.tradingview.com/symbols/{full_symbol}/forecast/"
+            
+            resp = self._session.get(url, headers=headers, timeout=15)
             self._check_403(resp, full_symbol)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "html.parser")
@@ -923,7 +1036,7 @@ class TradingViewFetcher:
             data = None
             pro_symbol = _extract_pro_symbol(soup)
             if pro_symbol:
-                sym = _scanner_api_fetch(pro_symbol, _DIVIDEND_SCANNER_COLS)
+                sym = _scanner_api_fetch(pro_symbol, _DIVIDEND_SCANNER_COLS, self._session)
                 if sym:
                     data = _build_dividend_dict(sym)
                     data["source"] = "scanner_api"
@@ -980,7 +1093,36 @@ class TradingViewFetcher:
         """
         await self._ensure_browser()
         url = f"https://www.tradingview.com/symbols/{full_symbol}/options-chain/"
-        page = await self._browser.new_page()
+        
+        # Create new context with stealth settings for each page to avoid detection
+        context = await self._browser.new_context(
+            viewport={'width': 1920, 'height': 1080},
+            user_agent=random.choice(_USER_AGENTS),
+            locale='en-US',
+            timezone_id='America/New_York',
+            # Add realistic permissions
+            permissions=['geolocation'],
+        )
+        
+        # Override navigator.webdriver to hide automation
+        await context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+            // Add more realistic chrome object
+            window.chrome = {
+                runtime: {},
+            };
+            // Override permissions query to look more real
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (parameters) => (
+                parameters.name === 'notifications' ?
+                    Promise.resolve({ state: Notification.permission }) :
+                    originalQuery(parameters)
+            );
+        """)
+        
+        page = await context.new_page()
 
         captured_responses: list[dict] = []
 
@@ -1005,6 +1147,9 @@ class TradingViewFetcher:
         page.on("response", _on_response)
 
         try:
+            # Add random delay before navigating (simulate human behavior)
+            await asyncio.sleep(random.uniform(1.0, 2.5))
+            
             await page.goto(url, wait_until="networkidle", timeout=45000)
 
             # Dismiss cookie / consent / login banners that may block rendering
@@ -1020,11 +1165,14 @@ class TradingViewFetcher:
                     btn = page.locator(selector).first
                     if await btn.is_visible(timeout=1000):
                         await btn.click()
+                        # Add small delay after clicking (human-like)
+                        await page.wait_for_timeout(random.randint(300, 800))
                 except Exception:
                     pass
 
             # Extra wait for any async data loads after initial networkidle
-            await page.wait_for_timeout(3000)
+            # Add randomization to make timing less predictable
+            await page.wait_for_timeout(random.randint(2500, 4000))
 
             # -------------------------------------------------------
             # Build result from captured API responses
@@ -1077,6 +1225,7 @@ class TradingViewFetcher:
             return f"[ERROR: {e}]"
         finally:
             await page.close()
+            await context.close()
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -1154,3 +1303,21 @@ class TradingViewFetcher:
             "dividends": dividends,
             "options_chain": options_chain,
         }
+
+
+def create_fetcher(config=None):
+    """Factory function to create TradingViewFetcher with config-based delays.
+    
+    Args:
+        config: Optional Config object. If None, uses default delays.
+        
+    Returns:
+        TradingViewFetcher instance with configured request delays.
+    """
+    if config is None:
+        return TradingViewFetcher()
+    
+    delay_min = config.tradingview_request_delay_min
+    delay_max = config.tradingview_request_delay_max
+    
+    return TradingViewFetcher(request_delay_range=(delay_min, delay_max))

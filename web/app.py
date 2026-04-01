@@ -1045,9 +1045,11 @@ async def api_fetch_preview(request: Request, symbol: str):
 
     full_symbol = doc["exchange"] + "-" + doc["symbol"]
 
-    from src.tv_data_fetcher import TradingViewFetcher
+    from src.tv_data_fetcher import create_fetcher
+    from src.config import Config
     try:
-        async with TradingViewFetcher() as fetcher:
+        config = Config()
+        async with create_fetcher(config) as fetcher:
             data = await fetcher.fetch_all(full_symbol)
             stats = fetcher.last_fetch_stats
     except Exception as e:
@@ -1523,9 +1525,11 @@ async def fetch_symbol_data(request: Request):
         # Import and use TradingViewFetcher
         import sys
         sys.path.insert(0, str(PROJECT_ROOT / "src"))
-        from tv_data_fetcher import TradingViewFetcher
+        from tv_data_fetcher import create_fetcher
+        from config import Config
         
-        async with TradingViewFetcher() as fetcher:
+        config = Config()
+        async with create_fetcher(config) as fetcher:
             data = await fetcher.fetch_all(full_symbol)
             
             if fetcher.has_403:
@@ -1794,10 +1798,12 @@ async def _build_symbol_context(symbol: str, cosmos) -> dict:
             context_parts.append("(Error loading activities from CosmosDB)")
 
     try:
-        from src.tv_data_fetcher import TradingViewFetcher
+        from src.tv_data_fetcher import create_fetcher
+        from src.config import Config
 
+        config = Config()
         full_symbol = f"{exchange}-{symbol}"
-        async with TradingViewFetcher() as fetcher:
+        async with create_fetcher(config) as fetcher:
             tv_data = await fetcher.fetch_all(full_symbol)
 
         tv_sections = []

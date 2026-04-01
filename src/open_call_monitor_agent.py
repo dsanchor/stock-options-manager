@@ -28,9 +28,9 @@ async def run_open_call_monitor(config, runner: AgentRunner,
     total = sum(len(s["_active_positions"]) for s in call_symbols)
     print(f"Monitoring {total} open call position(s)")
 
-    from .tv_data_fetcher import TradingViewFetcher
+    from .tv_data_fetcher import create_fetcher
 
-    async with TradingViewFetcher() as fetcher:
+    async with create_fetcher(config) as fetcher:
         for sym_doc in call_symbols:
             for pos in sym_doc["_active_positions"]:
                 await runner.run_position_monitor(

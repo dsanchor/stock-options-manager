@@ -27,9 +27,9 @@ async def run_covered_call_analysis(config, runner: AgentRunner,
     symbol_names = [s["symbol"] for s in cc_symbols]
     print(f"Analyzing {len(cc_symbols)} symbols: {', '.join(symbol_names)}")
 
-    from .tv_data_fetcher import TradingViewFetcher
+    from .tv_data_fetcher import create_fetcher
 
-    async with TradingViewFetcher() as fetcher:
+    async with create_fetcher(config) as fetcher:
         for sym_doc in cc_symbols:
             await runner.run_symbol_agent(
                 name="CoveredCallAgent",

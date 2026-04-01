@@ -29,3 +29,9 @@ summary_agent:
   enabled: true
   cron: "0 8 * * *"  # 8 AM daily (America/New_York timezone)
   activity_count: 3  # Latest N activities per symbol
+
+# Anti-bot detection settings for TradingView data fetching
+tradingview:
+  request_delay_min: 1.0   # Minimum seconds between requests (default: 1.0)
+  request_delay_max: 3.0   # Maximum seconds between requests (default: 3.0)
+  # Note: Actual delay is randomized within this range to simulate human behavior

@@ -139,3 +139,15 @@ class Config:
     @property
     def telegram_chat_id(self) -> str:
         return self.config.get('telegram', {}).get('chat_id', '')
+
+    # ── TradingView ────────────────────────────────────────────────────
+
+    @property
+    def tradingview_request_delay_min(self) -> float:
+        """Minimum seconds between TradingView requests (default: 1.0)."""
+        return float(self.config.get('tradingview', {}).get('request_delay_min', 1.0))
+
+    @property
+    def tradingview_request_delay_max(self) -> float:
+        """Maximum seconds between TradingView requests (default: 3.0)."""
+        return float(self.config.get('tradingview', {}).get('request_delay_max', 3.0))
