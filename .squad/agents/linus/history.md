@@ -795,3 +795,50 @@ Created `TRADINGVIEW_ANTI_BOT.md` with full technical details, configuration gui
   - Ralph & Basher: No action needed; backward compatible changes
 - **Consequences:** Fetch times increase 5-15s per symbol; eliminates/drastically reduces 403 errors; makes traffic indistinguishable from human behavior; configurable for different environments
 - **Decision record:** `.squad/decisions/decisions.md`
+
+### Unified Alert Write Path (2026-04-01)
+- **Context:** Danny's CosmosDB migration to unified schema (one doc_type, is_alert boolean)
+- **Changes to agent_runner.py:**
+  - Removed `_build_alert_data()` and `_build_roll_alert_data()` methods — alerts are no longer separate documents
+  - Added `_extract_alert_enrichment()` — extracts alert-specific fields (confidence, risk_flags) to merge into activity payload
+  - Removed obsolete `_ALERT_FIELDS` and `_ROLL_ALERT_FIELDS` — field control now happens at cosmos_db.py level
+  - Updated both alert write paths (covered_call/cash_secured_put + position monitors):
+    - When `is_alert=true`, merge alert enrichment fields directly into `activity_payload` before writing
+    - Single `write_activity()` call replaces dual write (activity + alert)
+    - Telegram notification still works: build display data inline from json_data (no DB dependency)
+- **Pattern:** Activity IS the alert. `is_alert=true` + enrichment fields (confidence, risk_flags) all in one document.
+- **ID format:** No change in agent_runner (still uses cosmos.write_activity); ID prefix removal happens in cosmos_db.py
+- **Testing blockers:** Requires Danny's cosmos_db.py changes to be merged first (mark_as_alert method, ID format)
+- **Team dependencies:**
+  - Danny: cosmos_db.py write_activity ID format, remove write_alert, add mark_as_alert (if needed)
+  - Rusty: web/app.py query updates (doc_type='alert' → is_alert=true filter)
+- **Files modified:** src/agent_runner.py
+- **Decision record:** `.squad/decisions/inbox/linus-signal-refactor.md`
+
+## Orchestration Session (2026-04-01T21:39:57Z)
+
+**Session:** CosmosDB Unified Schema — Decision Consolidation and Team Orchestration
+
+**Status:** Refactoring complete and documented. Awaiting cosmos_db.py PR merge before testing.
+
+**Team Coordination Update:**
+- Danny: Migration design complete with all edge cases, rollback plan, and validation checklist
+- Rusty: cosmos_db.py changes complete with backwards compatibility layer
+- Basher: Migration script ready (dry-run, backup, restore, validation phases)
+- Linus (this work): Refactoring complete, ready to merge after Rusty
+
+**Deployment Sequence:**
+1. Rusty: Merge cosmos_db.py PR (new ID format, write_activity change, mark_as_alert method, query updates)
+2. Basher: Execute migration script (--dry-run → review → production run)
+3. Linus: Merge agent_runner.py changes (single-write alert path using new cosmos_db methods)
+4. Rusty: Merge web/app.py updates (alert query filters)
+
+**Testing Plan (Post-PR Merge):**
+- [Pending] Run covered_call agent on test symbol → verify new ID format
+- [Pending] Verify `is_alert=true` and enrichment fields (confidence, risk_flags) in activity doc
+- [Pending] Verify Telegram notifications still fire correctly
+- [Pending] Verify web UI alert queries work with `is_alert=true` filter
+
+**Session Log:** `.squad/log/2026-04-01T21-39-cosmosdb-unified-schema.md`  
+**Orchestration Log:** `.squad/orchestration-log/2026-04-01T21-39-linus.md`
+

@@ -33,6 +33,429 @@ Migrated both covered call and cash-secured put agent instructions from the old 
 - **Removed:** CNN Fear & Greed Index, Google Trends, Dedicated institutional holders endpoint, Dedicated insider trades endpoint
 - **Alternatives:** Fear & Greed → News sentiment analysis; Trends → News volume; Institutional holders → Fundamentals; Insider trades → News parsing
 - **Rationale:** Maintain decision quality with available data; apply conservative criteria when key signals missing
+---
+
+### 5. CosmosDB Unified Container Migration (Design)
+**Date:** 2026-04-01  
+**Author:** Danny (Lead)  
+**Status:** Proposed  
+**Impact:** Data model, ID schema, cosmos_db.py, agent_runner.py, web/app.py, context.py, provisioning
+
+#### Problem Statement
+
+Current state: Activities and alerts live in the same `symbols` container, differentiated by `doc_type = "activity"` vs `doc_type = "alert"`. IDs carry legacy prefixes:
+- Activity IDs: `dec_{symbol}_{agent_type}[_{position_id}]_{ts_compact}` (prefix from "decision")
+- Alert IDs: `sig_{symbol}_{agent_type}_{ts_compact}` (prefix from "signal")
+
+Goals:
+1. Drop `dec_` and `sig_` prefixes — legacy naming artifacts
+2. Replace `doc_type` discriminator with `is_alert` boolean
+3. Merge into a true unified model — one document type, alerts are activities where `is_alert=true`
+
+#### New Unified Schema
+
+**ID Format:** `{symbol}_{agent_type}[_{position_id}]_{ts_compact}` (prefix-free, deterministic, collision-safe)
+
+Examples:
+- `AAPL_covered_call_20260328T14_3000`
+- `VZ_open_call_monitor_pos_VZ_call_53.0_20260501_20260331T16_0137`
+- `AAPL_cash_secured_put_20260401T09_3000`
+
+**Document Model:** Every agent output is a single document. The `is_alert` boolean replaces the `doc_type` discriminator. The `doc_type` field stays as `"activity"` for all records.
+
+**What Changes:**
+| Before | After | Reason |
+|--------|-------|--------|
+| Two `doc_type` values: `"activity"`, `"alert"` | Single `doc_type`: `"activity"` | Alerts are activities with `is_alert=true` |
+| Separate alert documents with `activity_id` reference | No separate alert docs | Alert data merged into activity itself |
+| `dec_` prefix on activity IDs | No prefix | Legacy naming removed |
+| `sig_` prefix on alert IDs | No separate alert IDs | Alerts are not separate documents |
+| `write_alert()` creates a second document | `write_activity()` sets `is_alert=true` inline | One write, not two |
+
+**Query Impact:**
+| Query | Before | After |
+|-------|--------|-------|
+| Get activities for symbol | `WHERE doc_type='activity'` | `WHERE doc_type='activity'` (unchanged) |
+| Get alerts for symbol | `WHERE doc_type='alert'` | `WHERE doc_type='activity' AND is_alert=true` |
+| Get all alerts (dashboard) | `WHERE doc_type='alert'` | `WHERE doc_type='activity' AND is_alert=true` |
+
+#### Migration Strategy
+
+**Approach:** Offline batch migration (low traffic, no SLA, < 5 min window)
+
+**Data Transformation Rules:**
+1. Activity documents: strip `dec_` prefix
+2. Alert documents: merge into parent activity (set `is_alert=true`), delete original alert doc
+3. Orphaned alerts: convert to standalone activity, strip `sig_` prefix, set `is_alert=true`
+
+**Pre-Migration Validation:**
+- Count activities and alerts per symbol
+- Verify every alert has valid `activity_id`
+- Log orphaned alerts
+
+**Post-Migration Validation:**
+- Count activities matches expected
+- Count `is_alert=true` activities matches expected
+- No `doc_type='alert'` documents remain
+- No IDs start with `dec_` or `sig_`
+- Spot-check 3 random alerts for correctness
+
+#### Code Changes Required
+
+**`src/cosmos_db.py`:**
+- `write_activity()`: Strip `dec_` prefix from ID
+- `write_alert()` → `mark_as_alert()`: Update existing activity in-place instead of creating new doc
+- Query methods: Update `doc_type='alert'` filters to `is_alert=true`
+
+**`src/agent_runner.py`:**
+- Remove `_build_alert_data()` and `_build_roll_alert_data()`
+- Change `write_alert()` calls → `mark_as_alert()`
+- Alert fields included in activity payload before write
+
+**`web/app.py`:**
+- Update alert endpoints: `doc_type='alert'` → `is_alert=true`
+- Remove `activity_id` display/linkage
+
+**`scripts/provision_cosmosdb.sh`:**
+- Add composite index: `(doc_type ASC, is_alert ASC, timestamp DESC)`
+
+#### Rollback Plan
+
+**Pre-Migration Backup:**
+```bash
+python scripts/migrate_unified_schema.py --export-backup backup_20260401.json
+```
+
+**Rollback Procedure:**
+1. Stop app
+2. Delete new documents from symbols container
+3. Restore: `python scripts/migrate_unified_schema.py --restore backup_20260401.json`
+4. Revert code changes
+5. Restart app
+
+Keep backup for 7 days post-migration.
+
+#### Execution Plan
+
+1. Write migration script (--dry-run, --export-backup, --restore)
+2. Code changes to cosmos_db.py, agent_runner.py, web/app.py
+3. Update provisioning script indexing policy
+4. Test locally with dry-run against production data
+5. Export backup
+6. Stop app → run migration → validate → restart
+7. Smoke test (trigger one agent run, verify new ID format)
+8. Delete backup after 7 days
+
+**Estimated effort:** 2-3 hours implementation + testing.
+
+#### Risk Assessment
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|-----------|
+| Orphaned alerts (no parent activity) | Low | Low | Script handles gracefully — converts to standalone activity |
+| ID collision during migration | Very Low | Medium | Timestamp-based IDs are inherently unique per agent/symbol |
+| Query regression (dashboard/API) | Medium | High | Update all queries in cosmos_db.py; test each endpoint |
+| Backup file corruption | Low | High | Verify backup integrity before starting destructive phase |
+| CosmosDB rate limiting during batch ops | Low | Low | Script uses sequential writes with retry; 50-100 docs total |
+
+#### Decision
+
+**Recommendation:** Proceed with this migration. The unified model simplifies the codebase (one write path instead of two), eliminates stale references, and cleans up legacy naming. Risk is low given small data volume and straightforward transformation rules.
+
+**Requires:** User approval to schedule downtime window (2-5 min) and execute.
+
+---
+
+### 6. Unified Schema Implementation (Code)
+**Date:** 2026-04-01  
+**Author:** Rusty (Backend)  
+**Status:** Implementation Complete, Awaiting Migration  
+**Related:** CosmosDB Unified Container Migration (Design)
+
+#### Summary
+
+Implemented the unified schema changes in `src/cosmos_db.py` per Danny's migration design. Alerts are now activities with `is_alert=true` rather than separate documents. New ID format drops legacy prefixes.
+
+#### Implementation Decisions
+
+**1. Query Filter Pattern**
+
+**Decision:** Use `(c.is_alert = false OR NOT IS_DEFINED(c.is_alert))` for non-alert activity queries.
+
+**Rationale:**
+- Handles legacy documents that don't have `is_alert` field
+- After migration completes, all docs will have the field explicitly
+- More robust than `c.is_alert = false` alone during transition
+
+**Applied to:**
+- `get_recent_activities()`
+- `get_all_activities()`
+- `get_recent_activities_by_symbol()`
+
+**2. Backwards Compatibility Strategy**
+
+**Decision:** Keep deprecated `write_alert()` method with clear deprecation notice and TODO comments.
+
+**Rationale:**
+- Migration script runs separately from code deployment
+- During transition window, old alert documents may still exist
+- Cascade delete methods need to clean up old alert docs
+- Clear deprecation notices guide future cleanup
+
+**Cleanup checklist (post-migration):**
+- Remove `write_alert()` method entirely
+- Remove cascade delete logic for `doc_type='alert'` documents
+- Remove TODO comments
+
+**3. New Method: `mark_as_alert()`**
+
+**Signature:**
+```python
+def mark_as_alert(self, symbol: str, activity_id: str, alert_data: dict) -> dict
+```
+
+**Design:**
+- Reads existing activity document
+- Sets `is_alert = true`
+- Merges alert-enrichment fields (currently just `confidence`)
+- Returns updated document
+
+**Why not inline in `write_activity()`?**
+- Alert determination happens after activity write (in agent_runner.py)
+- Keeps write_activity() focused on single responsibility
+- Allows agents to decide post-hoc whether activity qualifies as alert
+
+**4. Web Layer Changes**
+
+**Decision:** No changes needed in `web/app.py`.
+
+**Rationale:**
+- Web layer already uses cosmos_db.py abstraction methods
+- No direct SQL queries in web endpoints
+- All filtering logic contained in data access layer
+- Query method updates automatically propagate to web layer
+
+#### Testing Notes
+
+**Pre-migration:**
+- Both old and new query patterns work
+- New writes use prefix-free IDs
+- Old `write_alert()` still functional
+
+**Post-migration:**
+- Remove backwards compatibility code
+- All queries use `is_alert` discriminator
+- No `doc_type='alert'` documents remain
+
+#### Related Work
+
+**Blocked on:**
+- Danny's migration script execution
+
+**Enables:**
+- Simpler codebase (one write path instead of two)
+- No more stale `activity_id` references
+- Cleaner ID format without legacy naming
+
+---
+
+### 7. Agent Signal Refactor for Unified Schema
+**Date:** 2026-04-01  
+**Author:** Linus (Quant Dev)  
+**Status:** Implemented  
+**Depends on:** Danny's CosmosDB unified schema migration
+
+#### Problem
+
+Current agent_runner.py writes alerts in two steps:
+1. `write_activity()` — core activity document
+2. `write_alert()` — separate alert document with `activity_id` reference
+
+Danny's migration eliminates separate alert documents. Alerts become activities with `is_alert=true` and enrichment fields (confidence, risk_flags) merged directly into the activity payload.
+
+**Required change:** Agent runner must write ONE document per agent run, with alert-specific fields included when `is_alert=true`.
+
+#### Solution
+
+**Key Changes:**
+
+1. **Removed methods:**
+   - `_build_alert_data()` — no longer needed; alert data IS activity data
+   - `_build_roll_alert_data()` — same reason
+   - `_ALERT_FIELDS` and `_ROLL_ALERT_FIELDS` — field control moved to cosmos layer
+
+2. **Added method:**
+   - `_extract_alert_enrichment(json_data)` — extracts alert-only fields (confidence, risk_flags) from agent JSON response
+
+3. **Updated write paths (2 locations):**
+   
+   **Path 1: Covered call / cash-secured put agents (line ~340)**
+   ```python
+   # Before:
+   cosmos.write_activity(...)
+   if is_alert:
+       cosmos.write_alert(...)
+   
+   # After:
+   if is_alert:
+       activity_payload.update(self._extract_alert_enrichment(json_data))
+   cosmos.write_activity(...)  # Single write with alert fields included
+   ```
+   
+   **Path 2: Position monitor agents (line ~580)**
+   Same pattern — merge alert enrichment into activity payload before writing.
+
+4. **Telegram notification:**
+   - Still builds display data inline from `json_data` (no DB query needed)
+   - No dependency on separate alert documents
+
+#### Design Rationale
+
+**Why merge alert fields into activity payload?**
+
+Danny's unified schema stores alerts as `doc_type="activity"` with `is_alert=true`. There are no separate alert documents. Therefore:
+- Agent runner must include alert-enrichment fields (confidence, risk_flags) in the activity payload when the activity IS an alert
+- This happens BEFORE the write_activity call, not after
+
+**Why keep Telegram data construction?**
+
+Telegram notification happens immediately after the agent run. Building the display data from the agent's JSON response avoids:
+- An extra DB read to fetch the just-written activity
+- Dependency on DB write completion timing
+- Coupling to the DB schema (Telegram only needs display fields)
+
+**Why remove _ALERT_FIELDS and _ROLL_ALERT_FIELDS?**
+
+These were used to filter which fields go into the alert document. With no separate alert doc:
+- The activity payload already contains all relevant fields from the agent's JSON response
+- Field filtering for storage happens in cosmos_db.py (write_activity), not in agent_runner
+- Removing these lists simplifies agent_runner and centralizes schema knowledge
+
+#### Testing Strategy
+
+**Blockers:** Requires Danny's cosmos_db.py changes:
+- `write_activity()` ID format change (remove `dec_` prefix)
+- `write_alert()` method removed or deprecated
+- `mark_as_alert()` method added (if separate marking is needed post-write)
+
+**Test plan after cosmos_db.py is updated:**
+1. Run covered_call agent on test symbol → verify activity written with `is_alert=true` and confidence/risk_flags included
+2. Run open_call_monitor agent → same verification for roll alerts
+3. Check Telegram notification still fires correctly
+4. Query alerts in web UI → verify `is_alert=true` filter works
+
+#### Team Coordination
+
+**Dependencies:**
+- **Danny:** Must complete cosmos_db.py changes first (ID format, write_activity schema, remove write_alert)
+- **Rusty:** Must update web/app.py alert queries (`doc_type='alert'` → `is_alert=true`)
+
+**Deployment order:**
+1. Danny: Run migration script, update cosmos_db.py
+2. Linus: agent_runner.py (this change) — merges after Danny's PR
+3. Rusty: web/app.py query updates — can merge alongside Linus or after
+
+**Rollback:** If migration fails, revert to previous code + restore DB backup (Danny's rollback plan).
+
+---
+
+### 8. Migration Script Testing Strategy
+**Date:** 2026-04-01  
+**Author:** Basher (Tester)  
+**Status:** Implemented  
+**Related:** CosmosDB Unified Container Migration (Design)
+
+#### Decision
+
+The migration script `scripts/migrate_cosmos_events.py` implements defensive testing practices:
+
+**1. Dry-Run First Philosophy**
+- `--dry-run` flag executes phases 1-2 (export + transform) without any database writes
+- Outputs transformation summary showing exactly what would change
+- User can review orphaned alerts, ID collisions, and merge counts before committing
+- **Recommendation:** ALWAYS run dry-run first, review output, then run actual migration
+
+**2. Backup-Before-Change**
+- Phase 1 creates timestamped backup JSON in `backups/` directory before any mutations
+- Backup includes both activities and alerts with integrity validation (count checks)
+- Backup file path logged at end of migration for rollback reference
+- **Recommendation:** Keep backups for 7 days after migration
+
+**3. Restore Capability**
+- `--restore BACKUP_FILE` flag provides rollback mechanism
+- Requires explicit 'YES' confirmation to prevent accidental data loss
+- Deletes current data and restores from backup atomically
+- Validates backup file exists before starting delete operations
+
+**4. Progressive Validation**
+- Backup integrity check: count verification after write
+- Post-migration validation (Phase 4):
+  - Activity count matches expected
+  - Alert count matches merged + orphaned
+  - No doc_type='alert' documents remain
+  - No dec_/sig_ prefixed IDs remain
+  - Spot-check 3 random merged records for correctness
+- Clear error messages with rollback instructions on failure
+
+**5. Edge Case Handling**
+- **Orphaned alerts** (activity_id missing): Convert to standalone activity, strip sig_ prefix, log warning
+- **Duplicate timestamps**: Append _2, _3 sequence numbers, log collision
+- **Already migrated docs**: Skip if ID exists (idempotent), log warning
+- **Missing fields**: Handle gracefully (e.g., missing symbol → log warning, skip delete)
+
+**6. Observability**
+- Structured logging with clear phase markers
+- Progress indicators for batch operations (every 10 docs)
+- Summary reports at transformation and completion
+- Error messages include document IDs and partition keys for debugging
+
+#### Testing Checklist (Pre-Production)
+
+Before running migration on production data:
+
+1. ✓ Run `--dry-run` against production database
+2. ✓ Review transformation summary for unexpected orphaned alerts
+3. ✓ Check for ID collisions (should be zero unless duplicate timestamps exist)
+4. ✓ Verify backup file integrity (count matches query results)
+5. ✓ Test `--restore` on backup file in non-production environment
+6. ✓ Confirm all validation checks pass in Phase 4
+7. ✓ Schedule downtime window (2-5 min)
+8. ✓ Stop app → run migration → validate → restart app
+9. ✓ Smoke test (trigger one agent run, verify new ID format)
+
+#### Risk Mitigation
+
+| Risk | Mitigation |
+|------|------------|
+| Backup corruption | Integrity check validates count match after write |
+| Migration fails mid-phase | Clear error messages with rollback command in logs |
+| Orphaned alerts | Convert to standalone activities with warning logs |
+| ID collisions | Append sequence number, log collision |
+| CosmosDB rate limits | Sequential writes with retry (50-100 docs total, low volume) |
+| Wrong environment | Script reads COSMOS_ENDPOINT from env, no hardcoded URLs |
+
+#### Lessons Learned
+
+**Defensive Coding Patterns Applied:**
+1. **Validate inputs early:** Check env vars before any operations
+2. **Fail fast:** Raise MigrationError with clear message on any validation failure
+3. **Dry-run everything:** No-op mode for all destructive operations
+4. **Log everything:** Info-level logs for all major operations, debug for details
+5. **Confirm destructive actions:** Require 'YES' input for restore (deletes current data)
+
+**Why No Test Suite:**
+- Migration is a one-time operation (not production code)
+- Dry-run serves as live validation against actual data
+- Test suite would require CosmosDB emulator setup (overkill for one-off script)
+- Manual testing checklist more appropriate for operational scripts
+
+**Script Design Trade-offs:**
+- **Sequential writes over batch:** Simpler error handling, clear progress logging, volume is low (50-100 docs)
+- **In-memory transformation:** Entire dataset fits in memory, simpler than streaming
+- **No undo for Phase 3:** Backup + restore is safer than complex undo logic
+
+---
+
 
 **5. Earnings Calendar Strategy**
 - **Challenge:** No dedicated earnings calendar endpoint in Massive.com

@@ -144,3 +144,58 @@
   - Monitor successful fetch rates to ensure no performance degradation
 - **Configuration reference:** `config.yaml` → `tradingview.request_delay_min/max` settings
 - **Documentation:** See TRADINGVIEW_ANTI_BOT.md for full technical details and troubleshooting
+
+### 2026-04-01: CosmosDB Unified Container Migration (PROPOSED)
+
+**Architecture Decision:** Merge activity and alert documents into a single unified model.
+
+**Key Changes:**
+- **ID schema:** Drop `dec_` and `sig_` prefixes. New format: `{symbol}_{agent_type}[_{position_id}]_{ts_compact}`
+- **Data model:** Eliminate separate alert documents. Alerts become activities with `is_alert=true`. The `write_alert()` method becomes `mark_as_alert()` (in-place update).
+- **Query impact:** All `doc_type='alert'` queries change to `doc_type='activity' AND is_alert=true`
+- **Migration:** Offline batch (~2-5min downtime). Merge alert docs into parent activities, strip ID prefixes, delete old alert docs.
+- **Rollback:** JSON backup export before migration, 7-day retention.
+
+**User Preferences (dsanchor):**
+- Explicitly requested removal of `dec_`/`sig_` prefixes — these were from previous "decision/signal" naming
+- Wants migration plan for existing CosmosDB data, not just forward-looking schema change
+- Confirmed unified container approach (single doc type with boolean discriminator)
+
+**Files Impacted:**
+- `src/cosmos_db.py` — ID generation (line 429, 462), `write_alert()` → `mark_as_alert()`, query filters
+- `src/agent_runner.py` — alert creation flow
+- `web/app.py` — alert query endpoints, detail views
+- `scripts/provision_cosmosdb.sh` — indexing policy update
+- New: `scripts/migrate_unified_schema.py`
+
+**Decision doc:** `.squad/decisions/inbox/danny-cosmosdb-migration.md`
+**Status:** Proposed — awaiting user approval to implement
+
+## Orchestration Session (2026-04-01T21:39:57Z)
+
+**Session:** CosmosDB Unified Schema — Decision Consolidation and Team Orchestration
+
+**Status:** All decisions merged from inbox into decisions.md. Orchestration logs created for all four team members (Danny, Rusty, Linus, Basher).
+
+**Session Log:** `.squad/log/2026-04-01T21-39-cosmosdb-unified-schema.md`
+
+**Team Coordination:**
+- ✓ Danny: Design document complete, migration strategy finalized
+- ✓ Rusty: cosmos_db.py implementation complete, awaiting migration script execution
+- ✓ Linus: agent_runner.py refactor complete, awaiting Rusty's cosmos_db.py PR merge
+- ✓ Basher: Migration script complete with dry-run, backup, restore, and validation phases
+
+**Orchestration Logs:**
+- `.squad/orchestration-log/2026-04-01T21-39-danny.md` — Design and strategy
+- `.squad/orchestration-log/2026-04-01T21-39-rusty.md` — Implementation status and backwards compatibility
+- `.squad/orchestration-log/2026-04-01T21-39-linus.md` — Refactoring and signal write path simplification
+- `.squad/orchestration-log/2026-04-01T21-39-basher.md` — Migration script with defensive testing practices
+
+**Next Steps:**
+1. User approval to schedule migration downtime (2-5 min)
+2. Dry-run migration script against production data
+3. Review transformation summary for orphaned alerts, collisions
+4. Execute: Stop app → run migration → validate → restart app
+5. Smoke test: Trigger one agent run, verify new ID format
+6. Delete backup after 7 days
+

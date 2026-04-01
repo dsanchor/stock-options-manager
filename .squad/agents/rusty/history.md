@@ -77,6 +77,16 @@ Integrated live TradingView symbol info widget into symbol detail page. Replaced
 
 ## Learnings
 
+### Unified Schema Query Pattern (2026-04-01)
+Activities and alerts live in the same container with the same `doc_type='activity'`. Use `is_alert` boolean discriminator:
+- **Alerts:** `WHERE c.doc_type = 'activity' AND c.is_alert = true`
+- **Activities (excluding alerts):** `WHERE c.doc_type = 'activity' AND (c.is_alert = false OR NOT IS_DEFINED(c.is_alert))`
+- **All activities (including alerts):** `WHERE c.doc_type = 'activity'`
+
+The `NOT IS_DEFINED(c.is_alert)` clause handles legacy documents that don't have the field. After migration, all documents will have `is_alert` explicitly set.
+
+**ID Format:** `{symbol}_{agent_type}[_{position_id}]_{ts_compact}` — no prefixes. Old format had `dec_` for activities and `sig_` for alerts.
+
 ### Dict-Spread Protection Pattern (EXPANDED)
 When using `**spread` in Python dict literals, reassert ALL routing/identity fields after the spread — not just `id` and `timestamp`. Any field used in CosmosDB queries (e.g., `doc_type`, `symbol`, `agent_type`) MUST be protected, because LLM-generated dicts can contain arbitrary keys that silently overwrite them. The `doc_type` field is especially critical since it's used in every `WHERE` clause for document classification.
 
@@ -447,3 +457,65 @@ Improved Quick Analysis chat to provide human-friendly conversational analysis i
 **Session Log:** 2026-04-01T21:17:17Z-position-management-fixes.md  
 
 All position management fixes delivered and documented. No open items.
+
+### Unified Schema Implementation (2026-04-01)
+**Status:** ✅ Completed  
+**Requested by:** dsanchor  
+**Context:** Danny's CosmosDB migration design (.squad/decisions/inbox/danny-cosmosdb-migration.md)  
+**Files:**
+- `src/cosmos_db.py` — Updated write/query methods for unified schema
+- `web/app.py` — No changes needed (uses cosmos_db.py methods)
+
+**Summary:**
+Implemented unified schema changes based on Danny's migration design. Alerts are now activities with `is_alert=true` rather than separate documents. New ID format drops legacy `dec_` and `sig_` prefixes.
+
+**Key Changes:**
+1. **ID Format:** `{symbol}_{agent_type}[_{position_id}]_{ts_compact}` (removed `dec_` prefix)
+2. **Alert Model:** Added `mark_as_alert()` method to set `is_alert=true` on existing activity
+3. **Query Updates:** All alert queries now filter by `c.is_alert = true` instead of `doc_type='alert'`
+4. **Activity Queries:** Now exclude alerts with `(c.is_alert = false OR NOT IS_DEFINED(c.is_alert))`
+5. **Backwards Compatibility:** Kept deprecated `write_alert()` with TODO comment for post-migration cleanup
+
+**Implementation Details:**
+- `write_activity()`: Changed ID from `dec_{symbol}...` to `{symbol}...`
+- `mark_as_alert()`: New method replaces separate alert document creation
+- `get_recent_alerts()`: Query updated to `WHERE c.doc_type='activity' AND c.is_alert=true`
+- `get_all_alerts()`: Same discriminator update
+- `count_alerts_by_symbol()`: Same discriminator update
+- `get_recent_activities()`: Now filters out alerts
+- `get_all_activities()`: Now filters out alerts
+- `get_recent_activities_by_symbol()`: Now filters out alerts
+- Cascade delete methods: Added TODO comments for cleanup after migration
+
+**Migration Notes:**
+- Old `write_alert()` method kept temporarily with deprecation notice
+- Cascade delete logic for old alert documents kept with TODO comments
+- All new writes use prefix-free IDs
+- All queries use `is_alert` discriminator for unified schema
+
+## Orchestration Session (2026-04-01T21:39:57Z)
+
+**Session:** CosmosDB Unified Schema — Decision Consolidation and Team Orchestration
+
+**Status:** Implementation complete and documented. Awaiting migration script execution and code review.
+
+**Related Agents:**
+- Danny: Migration design and strategy finalized
+- Linus: agent_runner.py refactored for single-write alert path
+- Basher: Migration script ready for dry-run and execution
+
+**Cross-Team Updates:**
+- Danny's migration script will transform existing CosmosDB data (offline batch, 2-5 min window)
+- Linus's refactored agent_runner will work seamlessly with new unified model
+- Basher's script includes dry-run, backup, restore, and progressive validation
+
+**Post-Migration Cleanup (Checklist):**
+After migration completes:
+1. Remove deprecated `write_alert()` method
+2. Remove cascade delete logic for old `doc_type='alert'` documents
+3. Remove TODO comments referencing backwards compatibility
+4. Update any remaining queries that reference legacy ID prefixes
+
+**Session Log:** `.squad/log/2026-04-01T21-39-cosmosdb-unified-schema.md`  
+**Orchestration Log:** `.squad/orchestration-log/2026-04-01T21-39-rusty.md`
+
