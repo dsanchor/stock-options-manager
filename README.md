@@ -746,6 +746,8 @@ az containerapp logs show \
   --follow
 ```
 
+> **Security Tip:** Secure your Container App by configuring authentication with Entra ID or other identity providers. This ensures only authorized users can access your application. For setup instructions, see [Azure Container Apps authentication with Entra ID](https://learn.microsoft.com/en-us/azure/container-apps/authentication-entra).
+
 ### 5. Update Deployment
 
 After pushing new code (triggers the GitHub Actions workflow to build a new image):
