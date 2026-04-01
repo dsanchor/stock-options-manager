@@ -252,3 +252,41 @@ Fixed the "Fetch & Analyze" button in Quick Analysis mode to properly enable/dis
 - Established reusable pattern for form validation with disabled buttons
 - Documented as decision #10 for team reference
 - Scribe logged orchestration and session records
+
+## Quick Analysis Put/Call Dropdown (2026-04-01)
+**Status:** ✅ Complete
+
+Added option type dropdown (Call/Put) to Quick Analysis chat that triggers automatic first analysis using the same centralized instructions as monitoring agents.
+
+**Key Architecture:**
+1. **Centralized Instructions Reuse** — Quick Analysis first message now imports and uses `TV_OPEN_CALL_INSTRUCTIONS` or `TV_OPEN_PUT_INSTRUCTIONS` from the same files that `open_call_monitor` and `open_put_monitor` agents use. Single source of truth.
+
+2. **Automatic First Analysis** — When user fetches a symbol, the frontend automatically sends a `first_analysis: true` request to the chat endpoint. Backend loads the appropriate instruction template based on `option_type` and sends it to the LLM with the fetched TradingView data. The response is displayed as the first message, then normal chat continues.
+
+3. **Three-Input Form** — Quick Analysis form now requires: Symbol + Market + Option Type (dropdown). Button only enables when all three are filled.
+
+**Files Changed:**
+- `web/templates/chat.html` — Added dropdown, automatic first analysis trigger, `awaitingFirstAnalysis` state flag
+- `web/app.py` — Updated `/api/chat/fetch-symbol` to accept `option_type`, updated `/api/chat` to handle `first_analysis` flag and import centralized instructions
+
+**Data Flow:**
+1. User selects symbol, market, and option type (call/put)
+2. Frontend fetches TradingView data with option_type included
+3. Frontend automatically sends first analysis request with `first_analysis: true`
+4. Backend loads `TV_OPEN_CALL_INSTRUCTIONS` or `TV_OPEN_PUT_INSTRUCTIONS` based on option_type
+5. Backend builds system prompt: `{instructions}\n\n{tradingview_data}`
+6. LLM analyzes using monitor agent instructions
+7. Response displayed as first message
+8. User can continue asking follow-up questions (normal chat mode)
+
+**Pattern Notes:**
+- Instructions are imported at runtime (not duplicated) to maintain single source of truth
+- The `first_analysis` flag changes only the system prompt — all other chat behavior is identical
+- Frontend handles the automatic analysis trigger transparently (user just sees "Analyzing...")
+- After first analysis, chat behaves like a standard Q&A agent with the data in context
+
+**Key Files:**
+- `src/tv_open_call_instructions.py` — Centralized call analysis instructions
+- `src/tv_open_put_instructions.py` — Centralized put analysis instructions
+- Used by: `open_call_monitor_agent.py`, `open_put_monitor_agent.py`, and now Quick Analysis chat
+

@@ -1101,3 +1101,66 @@ fieldEl.addEventListener('keydown', (e) => {
 #### Related Decisions
 - Chat UI Design System Alignment (2026-03-31) — established form field patterns
 - Standard `.btn` disabled styles in `web/static/style.css`
+
+---
+
+### 11. Quick Analysis Chat — Centralized Instruction Reuse for Put/Call Analysis
+**Date:** 2026-04-01  
+**Decider:** Rusty (Agent Dev)  
+**Status:** ✅ Implemented  
+**Impact:** Chat feature enhancement, Agent instruction reuse
+
+#### Context
+Quick Analysis chat feature extension. Previously, Quick Analysis just fetched data and started a blank chat. User wanted the first message to be the same quality analysis that monitoring agents provide—not a generic greeting.
+
+#### Decision
+Quick Analysis chat now provides automatic first analysis using the same centralized monitoring agent instructions (`TV_OPEN_CALL_INSTRUCTIONS` / `TV_OPEN_PUT_INSTRUCTIONS`) based on user-selected option type (Call/Put).
+
+#### Implementation Details
+
+**Frontend Changes** (`web/templates/chat.html`)
+- Three-input form: Symbol + Market + Option Type (required dropdown)
+- Automatic analysis trigger on successful fetch
+- State flag `awaitingFirstAnalysis` to track flow
+- UI shows "Analyzing for Call/Put options..." while waiting
+
+**Backend Changes** (`web/app.py`)
+- `/api/chat/fetch-symbol`: Accept and return `option_type` parameter
+- `/api/chat`: Handle `first_analysis` flag
+  - When `true`: Import appropriate instruction file and use as system prompt
+  - When `false`: Use standard chat system prompt
+- Instructions imported at runtime: `from tv_open_{call|put}_instructions import TV_OPEN_{CALL|PUT}_INSTRUCTIONS`
+
+**Centralized Instruction Files** (Unchanged)
+- `src/tv_open_call_instructions.py` — Used by `open_call_monitor` agent and Quick Analysis (call)
+- `src/tv_open_put_instructions.py` — Used by `open_put_monitor` agent and Quick Analysis (put)
+
+#### Benefits
+1. **Consistency** — Quick Analysis users get the exact same quality analysis as monitoring agents provide
+2. **DRY** — Single source of truth for analysis instructions (no duplication)
+3. **Maintainability** — Updates to monitoring agent instructions automatically apply to Quick Analysis
+4. **User Experience** — First message is immediately valuable (actionable analysis, not "How can I help you?")
+
+#### Trade-offs
+- Slightly longer wait for first message (full LLM analysis vs instant greeting)
+- Users must select option type upfront (can't analyze both call and put in same session)
+
+#### Alternatives Considered
+1. **Separate instructions for chat** — Rejected: would create divergence and maintenance burden
+2. **No automatic analysis** — Rejected: user explicitly requested this to match agent behavior
+3. **Analyze both call and put automatically** — Rejected: would be slow and confusing to display
+
+#### Pattern for Future Work
+When building chat/analysis features that should behave like existing agents:
+1. Identify the agent's instruction file
+2. Import and reuse at runtime (don't duplicate)
+3. Use a flag (like `first_analysis`) to switch system prompts
+4. Keep the chat flow simple: automatic first message → normal Q&A
+
+#### Files Changed
+- `web/templates/chat.html` — Added dropdown, automatic first analysis trigger
+- `web/app.py` — Updated endpoints to accept `option_type`, handle `first_analysis` flag, import centralized instructions
+
+#### Related Decisions
+- Chat UI Design System Alignment (2026-03-31) — established form design patterns
+- Quick Analysis Button Enable Pattern (2026-03-31) — form validation pattern reused for three-input form
