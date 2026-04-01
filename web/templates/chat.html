@@ -37,7 +37,7 @@
         </button>
     </div>
     <div style="padding: 1rem 1.25rem;">
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1rem;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem; margin-bottom: 1rem;">
             <div>
                 <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.3rem;">Symbol</label>
                 <input type="text" id="symbolInput" placeholder="e.g., AAPL" class="input-field" style="width: 100%; padding: 0.6rem 0.8rem; font-size: 0.9rem; text-transform: uppercase;">
@@ -45,6 +45,14 @@
             <div>
                 <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.3rem;">Market</label>
                 <input type="text" id="marketInput" placeholder="e.g., NASDAQ" class="input-field" style="width: 100%; padding: 0.6rem 0.8rem; font-size: 0.9rem; text-transform: uppercase;">
+            </div>
+            <div>
+                <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.3rem;">Option Type</label>
+                <select id="optionTypeInput" class="input-field" style="width: 100%; padding: 0.6rem 0.8rem; font-size: 0.9rem;">
+                    <option value="">Select...</option>
+                    <option value="call">Call</option>
+                    <option value="put">Put</option>
+                </select>
             </div>
         </div>
         <button id="fetchBtn" onclick="fetchAndAnalyze()" class="btn btn-primary" disabled>
@@ -92,6 +100,7 @@
     const chatInterfaceEl = document.getElementById('chatInterface');
     const symbolInputEl = document.getElementById('symbolInput');
     const marketInputEl = document.getElementById('marketInput');
+    const optionTypeInputEl = document.getElementById('optionTypeInput');
     const fetchBtnEl = document.getElementById('fetchBtn');
     const fetchErrorEl = document.getElementById('fetchError');
     const fetchProgressEl = document.getElementById('fetchProgress');
@@ -102,12 +111,14 @@
     let currentMode = null;
     let symbolData = null;
     let history = [];
+    let awaitingFirstAnalysis = false;
 
     // Check if fetch button should be enabled
     function checkFetchButtonState() {
         const symbol = symbolInputEl.value.trim();
         const market = marketInputEl.value.trim();
-        fetchBtnEl.disabled = !(symbol && market);
+        const optionType = optionTypeInputEl.value.trim();
+        fetchBtnEl.disabled = !(symbol && market && optionType);
     }
 
     // Mode selection
@@ -139,6 +150,8 @@
         inputEl.value = '';
         symbolInputEl.value = '';
         marketInputEl.value = '';
+        optionTypeInputEl.value = '';
+        awaitingFirstAnalysis = false;
     };
 
     // Start portfolio chat
@@ -160,6 +173,7 @@
     window.fetchAndAnalyze = async function() {
         const symbol = symbolInputEl.value.trim().toUpperCase();
         const market = marketInputEl.value.trim().toUpperCase();
+        const optionType = optionTypeInputEl.value.trim().toLowerCase();
         
         if (!symbol) {
             fetchErrorEl.textContent = '⚠️ Please enter a symbol';
@@ -173,6 +187,12 @@
             return;
         }
         
+        if (!optionType) {
+            fetchErrorEl.textContent = '⚠️ Please select an option type';
+            fetchErrorEl.style.display = 'block';
+            return;
+        }
+        
         fetchErrorEl.style.display = 'none';
         fetchProgressEl.style.display = 'block';
         fetchBtnEl.disabled = true;
@@ -181,7 +201,7 @@
             const res = await fetch('/api/chat/fetch-symbol', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({symbol, market}),
+                body: JSON.stringify({symbol, market, option_type: optionType}),
             });
             
             const data = await res.json();
@@ -211,15 +231,57 @@
         quickAnalysisFormEl.style.display = 'none';
         chatInterfaceEl.style.display = 'flex';
         chatModeLabelEl.textContent = '🔍 Quick Analysis';
-        chatSymbolLabelEl.textContent = `${data.market}:${data.symbol}`;
+        const optionTypeLabel = data.option_type === 'call' ? 'Call' : 'Put';
+        chatSymbolLabelEl.textContent = `${data.market}:${data.symbol} · ${optionTypeLabel}`;
         
-        // Add initial message
+        // Add initial loading message
         addMessage('assistant', 
             `I've loaded TradingView data for **${data.market}:${data.symbol}**. ` +
-            "Ask me about the stock's price, technicals, earnings, dividends, or options."
+            `Analyzing for ${optionTypeLabel} options...`
         );
         
-        inputEl.focus();
+        // Trigger automatic first analysis
+        awaitingFirstAnalysis = true;
+        triggerFirstAnalysis();
+    }
+    
+    // Trigger automatic first analysis using centralized instructions
+    async function triggerFirstAnalysis() {
+        sendBtn.disabled = true;
+        sendBtn.textContent = '...';
+        errorEl.style.display = 'none';
+        
+        try {
+            const payload = {
+                messages: [],
+                mode: currentMode,
+                symbol_data: symbolData,
+                first_analysis: true
+            };
+            
+            const res = await fetch('/api/chat', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+
+            if (data.error) {
+                errorEl.textContent = '⚠️ ' + data.error;
+                errorEl.style.display = 'block';
+            } else {
+                addMessage('assistant', data.reply);
+                history.push({role: 'assistant', content: data.reply});
+                awaitingFirstAnalysis = false;
+            }
+        } catch (e) {
+            errorEl.textContent = '⚠️ Network error: ' + e.message;
+            errorEl.style.display = 'block';
+        } finally {
+            sendBtn.disabled = false;
+            sendBtn.textContent = 'Send';
+            inputEl.focus();
+        }
     }
 
     // Add message to chat
@@ -296,6 +358,7 @@
     // Enable/disable fetch button based on inputs
     symbolInputEl.addEventListener('input', checkFetchButtonState);
     marketInputEl.addEventListener('input', checkFetchButtonState);
+    optionTypeInputEl.addEventListener('change', checkFetchButtonState);
     
     // Enter key on symbol input
     symbolInputEl.addEventListener('keydown', function(e) {
@@ -307,6 +370,14 @@
     
     // Enter key on market input
     marketInputEl.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            optionTypeInputEl.focus();
+        }
+    });
+    
+    // Enter key on option type input
+    optionTypeInputEl.addEventListener('keydown', function(e) {
         if (e.key === 'Enter') {
             e.preventDefault();
             if (!fetchBtnEl.disabled) {

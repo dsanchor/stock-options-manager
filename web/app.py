@@ -1502,10 +1502,17 @@ async def fetch_symbol_data(request: Request):
     body = await request.json()
     symbol = body.get("symbol", "").strip().upper()
     market = body.get("market", "").strip().upper()
+    option_type = body.get("option_type", "").strip().lower()
     
     if not symbol or not market:
         return JSONResponse(
             {"error": "Symbol and market are required"},
+            status_code=400
+        )
+    
+    if option_type not in ("call", "put"):
+        return JSONResponse(
+            {"error": "Option type must be 'call' or 'put'"},
             status_code=400
         )
     
@@ -1530,6 +1537,7 @@ async def fetch_symbol_data(request: Request):
             return JSONResponse({
                 "symbol": symbol,
                 "market": market,
+                "option_type": option_type,
                 "full_symbol": full_symbol,
                 "data": data
             })
@@ -1548,8 +1556,9 @@ async def chat_api(request: Request):
     messages = body.get("messages", [])
     mode = body.get("mode", "portfolio")
     symbol_data = body.get("symbol_data")
+    first_analysis = body.get("first_analysis", False)
     
-    if not messages:
+    if not messages and not first_analysis:
         return JSONResponse({"error": "No messages provided"},
                             status_code=400)
 
@@ -1618,40 +1627,55 @@ async def chat_api(request: Request):
         
         symbol = symbol_data.get("symbol", "?")
         market = symbol_data.get("market", "?")
+        option_type = symbol_data.get("option_type", "call")
         data = symbol_data.get("data", {})
         
         # Build context from fetched data
         context_parts.append(f"Symbol: {market}:{symbol}\n")
         
         if "overview" in data and data["overview"]:
-            context_parts.append("=== Market Overview ===")
-            context_parts.append(data["overview"][:2000])
+            context_parts.append("=== OVERVIEW PAGE ===")
+            context_parts.append(data["overview"])
         
         if "technicals" in data and data["technicals"]:
-            context_parts.append("\n=== Technical Analysis ===")
-            context_parts.append(data["technicals"][:2000])
+            context_parts.append("\n=== TECHNICALS PAGE ===")
+            context_parts.append(data["technicals"])
         
         if "forecast" in data and data["forecast"]:
-            context_parts.append("\n=== Earnings & Forecast ===")
-            context_parts.append(data["forecast"][:2000])
+            context_parts.append("\n=== FORECAST PAGE ===")
+            context_parts.append(data["forecast"])
         
         if "dividends" in data and data["dividends"]:
-            context_parts.append("\n=== Dividends ===")
-            context_parts.append(data["dividends"][:1000])
+            context_parts.append("\n=== DIVIDENDS ===")
+            context_parts.append(data["dividends"])
         
         if "options_chain" in data and data["options_chain"]:
-            context_parts.append("\n=== Options Chain (Sample) ===")
-            context_parts.append(data["options_chain"][:3000])
+            context_parts.append("\n=== OPTIONS CHAIN ===")
+            context_parts.append(data["options_chain"])
         
-        context_text = "\n".join(context_parts)
+        context_text = "\n\n".join(context_parts)
         
-        system_prompt = (
-            f"You are a stock options analyst. You are analyzing {market}:{symbol}. "
-            "The user has not tracked this symbol yet - this is a quick analysis. "
-            "Use the TradingView data provided below to answer questions about "
-            "the stock's price, technicals, earnings, dividends, and options.\n\n"
-            f"TradingView Data:\n{context_text}"
-        )
+        # For first analysis, use the same instructions as the monitoring agents
+        if first_analysis:
+            import sys
+            sys.path.insert(0, str(PROJECT_ROOT / "src"))
+            
+            if option_type == "call":
+                from tv_open_call_instructions import TV_OPEN_CALL_INSTRUCTIONS
+                instructions = TV_OPEN_CALL_INSTRUCTIONS
+            else:  # put
+                from tv_open_put_instructions import TV_OPEN_PUT_INSTRUCTIONS
+                instructions = TV_OPEN_PUT_INSTRUCTIONS
+            
+            system_prompt = f"{instructions}\n\n{context_text}"
+        else:
+            # Normal chat mode after first analysis
+            system_prompt = (
+                f"You are a stock options analyst analyzing {option_type} options for {market}:{symbol}. "
+                "Use the TradingView data provided below to answer questions about "
+                "the stock's price, technicals, earnings, dividends, and options.\n\n"
+                f"TradingView Data:\n{context_text}"
+            )
     
     else:
         return JSONResponse(
