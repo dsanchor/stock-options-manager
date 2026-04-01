@@ -794,6 +794,10 @@ def _build_dashboard_tables(cosmos, all_symbols, all_alerts, all_activities):
         for k in grand_totals:
             grand_totals[k] += total_counts[k]
 
+        # Sort position monitors by DTE ascending (soonest expiration first)
+        if is_pm:
+            rows.sort(key=lambda r: (r.get("dte") is None, r.get("dte") or 0))
+
         agent_tables.append({
             "key": agent_key,
             "label": agent_meta["label"],

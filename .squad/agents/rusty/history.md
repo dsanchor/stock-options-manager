@@ -123,6 +123,13 @@ Updated summary agent to organize daily reports into four sections: Current Call
 **Fix:** Changed alert template from `data-href="/activities/{{ alt.activity_id }}"` to `data-href="/activities/{{ alt.id }}"` to match activities and dashboard patterns.
 **Pattern:** Both activities and alerts are documents with an `id` field. Always use `{item}.id` for activity detail links, never invent intermediate field names.
 
+### Dashboard Position DTE Sorting (2026-04-02)
+**User preference:** Open calls and puts on dashboard should be ordered by DTE (days to expiration) in ascending order.
+**Implementation:** Added sort in `_build_dashboard_tables()` after building rows for position monitors. Positions with lower DTE (expiring sooner) appear first.
+**Location:** `web/app.py` line 797-799
+**Sort key:** `lambda r: (r.get("dte") is None, r.get("dte") or 0)` — handles None values by pushing them to the end.
+**Pattern:** Position monitor DTE is already populated from latest activity data. Sort is applied only for position monitor agents (open_call_monitor, open_put_monitor), not watchlist agents.
+
 ---
 
 ## Scribe Orchestration Records (2026-04)

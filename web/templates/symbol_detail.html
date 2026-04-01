@@ -377,7 +377,7 @@
             </thead>
             <tbody>
                 {% for alt in alerts %}
-                <tr class="clickable-row" data-href="/activities/{{ alt.activity_id }}" data-timestamp="{{ alt.timestamp[:19] }}">
+                <tr class="clickable-row" data-href="/activities/{{ alt.id }}" data-timestamp="{{ alt.timestamp[:19] }}">
                     <td class="mono">{{ alt.timestamp[:19] }}</td>
                     <td>{{ alt._agent_label }}</td>
                     <td><span class="badge badge-{{ (alt.activity | default('UNKNOWN', true)) | lower }}">{{ alt.activity | default("—", true) }}</span></td>
