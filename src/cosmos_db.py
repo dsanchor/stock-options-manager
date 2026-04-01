@@ -330,10 +330,10 @@ class CosmosDBService:
         ))
         activity_ids = {d["id"] for d in activities}
 
-        # Cascade: delete all alerts linked to those activities
+        # TODO: Remove after migration - cascade delete of alerts
+        # In unified schema, alerts are activities with is_alert=true,
+        # so this cascade step becomes unnecessary
         if activity_ids:
-            # CosmosDB doesn't support parameterised IN lists directly,
-            # so build a safe literal list from the known document ids.
             id_list = ", ".join(f"'{did}'" for did in activity_ids)
             sig_query = (
                 f"SELECT c.id FROM c "
@@ -375,6 +375,8 @@ class CosmosDBService:
         activity_ids = {d["id"] for d in activities}
 
         sig_count = 0
+        # TODO: Remove after migration - cascade delete of alerts
+        # In unified schema, alerts are activities with is_alert=true
         if activity_ids:
             id_list = ", ".join(f"'{did}'" for did in activity_ids)
             sig_query = (
@@ -426,7 +428,7 @@ class CosmosDBService:
         position_id = activity_data.get("position_id", "")
         id_suffix = f"_{position_id}" if position_id else ""
 
-        doc_id = f"dec_{symbol}_{agent_type}{id_suffix}_{ts_compact}"
+        doc_id = f"{symbol}_{agent_type}{id_suffix}_{ts_compact}"
 
         doc: dict = {
             "id": doc_id,
@@ -452,10 +454,30 @@ class CosmosDBService:
 
         return self.container.create_item(doc)
 
+    def mark_as_alert(self, symbol: str, activity_id: str,
+                      alert_data: dict) -> dict:
+        """Mark an existing activity as an alert with enrichment data.
+        
+        Replaces write_alert() in the unified schema model where alerts
+        are not separate documents but activities with is_alert=true.
+        """
+        act_doc = self.container.read_item(activity_id, partition_key=symbol)
+        act_doc["is_alert"] = True
+        for key in ("confidence",):
+            if key in alert_data:
+                act_doc[key] = alert_data[key]
+        return self.container.replace_item(act_doc, act_doc)
+
+    # TODO: Remove after migration - kept for backwards compatibility
     def write_alert(self, symbol: str, agent_type: str,
                      alert_data: dict, activity_id: str,
                      timestamp: str | None = None) -> dict:
-        """Write a alert document linked to a activity."""
+        """DEPRECATED: Use mark_as_alert() instead.
+        
+        Write a alert document linked to a activity.
+        This method is kept temporarily for backwards compatibility during
+        the migration to unified schema. Will be removed after migration.
+        """
         ts = timestamp or datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         ts_compact = ts.replace("-", "").replace(":", "").replace("T", "_")[:15]
 
@@ -470,9 +492,6 @@ class CosmosDBService:
             "activity_id": activity_id,
             **alert_data,
         }
-        # The **alert_data spread above can silently overwrite earlier keys.
-        # Reassert all routing/identity fields so LLM-generated dicts never
-        # corrupt id, doc_type, symbol, agent_type, timestamp, or activity_id.
         doc["id"] = doc_id
         doc["timestamp"] = ts
         doc["doc_type"] = "alert"
@@ -482,14 +501,13 @@ class CosmosDBService:
 
         alert_doc = self.container.create_item(doc)
 
-        # Mark the linked activity so the detail page shows action buttons
         try:
             act_doc = self.container.read_item(activity_id,
                                                partition_key=symbol)
             act_doc["is_alert"] = True
             self.container.replace_item(act_doc, act_doc)
         except Exception:
-            pass  # Best effort — the alert itself is already created
+            pass
 
         return alert_doc
 
@@ -501,10 +519,12 @@ class CosmosDBService:
         """Get recent activities for a symbol+agent, newest first.
 
         For position monitors, optionally filter by position_id.
+        Returns activities that are NOT alerts (is_alert != true).
         """
         conditions = [
             "c.doc_type = 'activity'",
             "c.agent_type = @agent_type",
+            "(c.is_alert = false OR NOT IS_DEFINED(c.is_alert))",
         ]
         params: list[dict] = [
             {"name": "@agent_type", "value": agent_type},
@@ -530,7 +550,8 @@ class CosmosDBService:
         """Get recent alerts for a symbol+agent, newest first."""
         query = (
             "SELECT TOP @limit * FROM c "
-            "WHERE c.doc_type = 'alert' AND c.agent_type = @agent_type "
+            "WHERE c.doc_type = 'activity' AND c.is_alert = true "
+            "AND c.agent_type = @agent_type "
             "ORDER BY c.timestamp DESC"
         )
         return list(self.container.query_items(
@@ -560,7 +581,7 @@ class CosmosDBService:
                         since: str | None = None,
                         limit: int = 100) -> list[dict]:
         """Get alerts across all symbols (cross-partition query)."""
-        conditions = ["c.doc_type = 'alert'"]
+        conditions = ["c.doc_type = 'activity'", "c.is_alert = true"]
         params: list[dict] = []
         if agent_type:
             conditions.append("c.agent_type = @agent_type")
@@ -584,8 +605,12 @@ class CosmosDBService:
     def get_all_activities(self, agent_type: str | None = None,
                           since: str | None = None,
                           limit: int = 100) -> list[dict]:
-        """Get activities across all symbols (cross-partition query)."""
-        conditions = ["c.doc_type = 'activity'"]
+        """Get activities across all symbols (cross-partition query).
+        
+        Returns activities that are NOT alerts (is_alert != true).
+        """
+        conditions = ["c.doc_type = 'activity'",
+                      "(c.is_alert = false OR NOT IS_DEFINED(c.is_alert))"]
         params: list[dict] = []
         if agent_type:
             conditions.append("c.agent_type = @agent_type")
@@ -609,7 +634,8 @@ class CosmosDBService:
     def count_alerts_by_symbol(self, agent_type: str,
                                 since: str | None = None) -> dict[str, int]:
         """Count alerts per symbol for dashboard aggregation."""
-        conditions = ["c.doc_type = 'alert'", "c.agent_type = @agent_type"]
+        conditions = ["c.doc_type = 'activity'", "c.is_alert = true",
+                      "c.agent_type = @agent_type"]
         params: list[dict] = [{"name": "@agent_type", "value": agent_type}]
         if since:
             conditions.append("c.timestamp >= @since")
@@ -634,8 +660,8 @@ class CosmosDBService:
         
         Returns:
             Dictionary mapping symbol -> list of activity documents (newest first)
+            Excludes alerts (is_alert=true).
         """
-        # First, get all symbols
         symbols_query = "SELECT DISTINCT c.symbol FROM c WHERE c.doc_type = 'symbol_config'"
         symbols = list(self.container.query_items(
             query=symbols_query,
@@ -645,10 +671,10 @@ class CosmosDBService:
         result = {}
         for sym_doc in symbols:
             symbol = sym_doc["symbol"]
-            # Get top N activities for this symbol, ordered by timestamp desc
             query = (
                 "SELECT TOP @limit * FROM c "
                 "WHERE c.doc_type = 'activity' "
+                "AND (c.is_alert = false OR NOT IS_DEFINED(c.is_alert)) "
                 "ORDER BY c.timestamp DESC"
             )
             activities = list(self.container.query_items(

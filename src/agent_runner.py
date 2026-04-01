@@ -157,21 +157,7 @@ class AgentRunner:
         reason = response_text[:100].replace('\n', ' ').strip()
         return f"{ticker} | ACTIVITY: {activity} | Reason: {reason}", None
 
-    # Fields allowed in the alert log (lean, machine-parseable)
-    _ALERT_FIELDS = (
-        "timestamp", "symbol", "exchange", "activity",
-        "strike", "expiration", "underlying_price",
-        "confidence", "risk_flags",
-    )
-
-    # Fields for roll alert log (position monitors)
-    _ROLL_ALERT_FIELDS = (
-        "timestamp", "symbol", "exchange", "action",
-        "current_strike", "current_expiration",
-        "new_strike", "new_expiration",
-        "underlying_price", "confidence", "risk_flags",
-    )
-
+    # Roll activities that trigger alerts (position monitors)
     _ROLL_ACTIVITIES = frozenset({
         "ROLL_UP", "ROLL_DOWN", "ROLL_OUT",
         "ROLL_UP_AND_OUT", "ROLL_DOWN_AND_OUT", "CLOSE",
@@ -188,48 +174,20 @@ class AgentRunner:
         return any(f"ACTIVITY: {rd}" in upper or f'"activity": "{rd}"' in upper.replace(" ", "")
                    for rd in self._ROLL_ACTIVITIES)
 
-    def _build_roll_alert_data(self, symbol: str, json_data: Optional[Dict],
-                                timestamp: str) -> Dict:
-        """Build a roll alert entry with the allowed fields."""
-        exchange, ticker = (symbol.split('-', 1) if '-' in symbol
-                            else ("", symbol))
-        base: Dict = {
-            "timestamp": timestamp,
-            "symbol": ticker,
-            "exchange": exchange,
-            "action": json_data.get("activity", "ROLL") if json_data else "ROLL",
-        }
+    def _extract_alert_enrichment(self, json_data: Optional[Dict]) -> Dict:
+        """Extract alert-specific enrichment fields (confidence, risk_flags).
+        
+        Returns a dict with only alert-enrichment fields present in json_data.
+        Per Danny's unified schema: alerts are activities with is_alert=true
+        and these additional fields merged in.
+        """
+        enrichment = {}
         if json_data is not None:
-            for key in self._ROLL_ALERT_FIELDS:
-                if key in json_data and key not in base:
-                    base[key] = json_data[key]
-        for key in self._ROLL_ALERT_FIELDS:
-            base.setdefault(key, None)
-        # Normalize field names so templates/APIs can use standard names
-        base["activity"] = base["action"]
-        base["strike"] = base.get("new_strike") or base.get("current_strike")
-        base["expiration"] = base.get("new_expiration") or base.get("current_expiration")
-        return base
-
-    def _build_alert_data(self, symbol: str, json_data: Optional[Dict],
-                            timestamp: str) -> Dict:
-        """Build an alert entry with only the allowed fields."""
-        exchange, ticker = (symbol.split('-', 1) if '-' in symbol
-                            else ("", symbol))
-        base: Dict = {
-            "timestamp": timestamp,
-            "symbol": ticker,
-            "exchange": exchange,
-            "activity": "SELL",
-        }
-        if json_data is not None:
-            for key in self._ALERT_FIELDS:
-                if key in json_data and key not in base:
-                    base[key] = json_data[key]
-        # Ensure every allowed field is present (null if missing)
-        for key in self._ALERT_FIELDS:
-            base.setdefault(key, None)
-        return base
+            if "confidence" in json_data:
+                enrichment["confidence"] = json_data["confidence"]
+            if "risk_flags" in json_data:
+                enrichment["risk_flags"] = json_data["risk_flags"]
+        return enrichment
 
     def _is_sell_alert(self, response_text: str, json_data: Optional[Dict] = None) -> bool:
         """Check if response indicates a clear sell alert.
@@ -380,32 +338,41 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
             # Determine if this is an alert
             is_alert = self._is_sell_alert(response_text, json_data)
             activity_payload["is_alert"] = is_alert
+            
+            # If alert, merge alert-enrichment fields into activity payload
+            if is_alert:
+                alert_enrichment = self._extract_alert_enrichment(json_data)
+                activity_payload.update(alert_enrichment)
 
-            # Write activity to CosmosDB
+            # Write activity to CosmosDB (unified write path)
             dec_doc = cosmos.write_activity(
                 symbol=symbol,
                 agent_type=agent_type,
                 activity_data=activity_payload,
                 timestamp=analysis_ts,
             )
-            print(f"Logged activity")
-
-            # Write alert if actionable
+            
             if is_alert:
-                alert_data = self._build_alert_data(full_symbol, json_data, analysis_ts)
-                cosmos.write_alert(
-                    symbol=symbol,
-                    agent_type=agent_type,
-                    alert_data=alert_data,
-                    activity_id=dec_doc["id"],
-                    timestamp=analysis_ts,
-                )
                 print(f"⚠️ SELL ALERT logged for {full_symbol}")
                 if self.telegram_notifier:
+                    # Build display data for Telegram from the activity doc
+                    alert_data = {
+                        "timestamp": analysis_ts,
+                        "symbol": symbol,
+                        "exchange": exchange,
+                        "activity": json_data.get("activity", "SELL") if json_data else "SELL",
+                        "strike": json_data.get("strike") if json_data else None,
+                        "expiration": json_data.get("expiration") if json_data else None,
+                        "underlying_price": json_data.get("underlying_price") if json_data else None,
+                        "confidence": json_data.get("confidence") if json_data else None,
+                        "risk_flags": json_data.get("risk_flags") if json_data else None,
+                    }
                     self.telegram_notifier.send_alert(
                         symbol=symbol, agent_type=agent_type,
                         alert_data=alert_data, is_roll=False,
                     )
+            else:
+                print(f"Logged activity")
 
         except Exception as e:
             logger.error(
@@ -612,30 +579,47 @@ Analyze the position risk and output your activity in the required JSON format. 
             # Determine if this is a roll/close alert
             is_alert = self._is_roll_alert(response_text, json_data)
             activity_payload["is_alert"] = is_alert
+            
+            # If alert, merge alert-enrichment fields into activity payload
+            if is_alert:
+                alert_enrichment = self._extract_alert_enrichment(json_data)
+                activity_payload.update(alert_enrichment)
 
+            # Write activity to CosmosDB (unified write path)
             dec_doc = cosmos.write_activity(
                 symbol=symbol,
                 agent_type=agent_type,
                 activity_data=activity_payload,
                 timestamp=analysis_ts,
             )
-            print(f"Logged activity")
-
+            
             if is_alert:
-                alert_data = self._build_roll_alert_data(full_symbol, json_data, analysis_ts)
-                cosmos.write_alert(
-                    symbol=symbol,
-                    agent_type=agent_type,
-                    alert_data=alert_data,
-                    activity_id=dec_doc["id"],
-                    timestamp=analysis_ts,
-                )
                 print(f"⚠️ ROLL ALERT logged for {full_symbol} ${strike} exp {expiration}")
                 if self.telegram_notifier:
+                    # Build display data for Telegram from the activity doc
+                    alert_data = {
+                        "timestamp": analysis_ts,
+                        "symbol": symbol,
+                        "exchange": exchange,
+                        "action": json_data.get("activity", "ROLL") if json_data else "ROLL",
+                        "current_strike": strike,
+                        "current_expiration": expiration,
+                        "new_strike": json_data.get("new_strike") if json_data else None,
+                        "new_expiration": json_data.get("new_expiration") if json_data else None,
+                        "underlying_price": json_data.get("underlying_price") if json_data else None,
+                        "confidence": json_data.get("confidence") if json_data else None,
+                        "risk_flags": json_data.get("risk_flags") if json_data else None,
+                    }
+                    # Normalize for templates
+                    alert_data["activity"] = alert_data["action"]
+                    alert_data["strike"] = alert_data.get("new_strike") or alert_data.get("current_strike")
+                    alert_data["expiration"] = alert_data.get("new_expiration") or alert_data.get("current_expiration")
                     self.telegram_notifier.send_alert(
                         symbol=symbol, agent_type=agent_type,
                         alert_data=alert_data, is_roll=True,
                     )
+            else:
+                print(f"Logged activity")
 
         except Exception as e:
             logger.error(
