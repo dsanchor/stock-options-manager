@@ -190,6 +190,14 @@ class CosmosDBService:
 
     # ── Position Management ────────────────────────────────────────────
 
+    @staticmethod
+    def _generate_position_id(symbol: str, position_type: str,
+                              strike: float, expiration: str) -> str:
+        """Generate unique position ID with timestamp to prevent collisions."""
+        exp_compact = expiration.replace("-", "")
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        return f"pos_{symbol}_{position_type}_{strike}_{exp_compact}_{timestamp}"
+
     def add_position(self, symbol: str, position_type: str,
                      strike: float, expiration: str,
                      notes: str = "",
@@ -199,12 +207,7 @@ class CosmosDBService:
         if doc is None:
             raise ValueError(f"Symbol {symbol} not found")
 
-        exp_compact = expiration.replace("-", "")
-        position_id = f"pos_{symbol}_{position_type}_{strike}_{exp_compact}"
-
-        existing_ids = {p["position_id"] for p in doc.get("positions", [])}
-        if position_id in existing_ids:
-            raise ValueError(f"Position {position_id} already exists")
+        position_id = self._generate_position_id(symbol, position_type, strike, expiration)
 
         position = {
             "position_id": position_id,
@@ -242,18 +245,8 @@ class CosmosDBService:
         if old_pos.get("status") != "active":
             raise ValueError(f"Position {old_position_id} is not active")
 
-        # Generate new position ID
-        exp_compact = new_expiration.replace("-", "")
-        new_position_id = f"pos_{symbol}_{new_type}_{new_strike}_{exp_compact}"
-
-        # Check for collision with existing positions (active or closed)
-        existing_ids = {p["position_id"] for p in doc.get("positions", [])}
-        if new_position_id in existing_ids and new_position_id != old_position_id:
-            raise ValueError(
-                f"Cannot roll to {new_type} {new_strike} exp {new_expiration}: "
-                f"a position with these parameters already exists. "
-                f"Please delete or modify the existing position first."
-            )
+        # Generate new position ID with timestamp for uniqueness
+        new_position_id = self._generate_position_id(symbol, new_type, new_strike, new_expiration)
 
         # Close old position
         now = datetime.utcnow().isoformat() + "Z"
