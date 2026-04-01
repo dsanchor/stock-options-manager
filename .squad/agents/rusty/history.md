@@ -41,6 +41,23 @@
 - Added parenthetical JSON format notes to agent instructions for improved LLM clarity
 - Modified: `src/tv_covered_call_instructions.py`, `src/tv_open_call_instructions.py`, `src/tv_open_put_instructions.py`, `src/tv_cash_secured_put_instructions.py`
 
+### Quick Analysis Chat Conversationalization (2026-04-01T10:51:20Z)
+**Status:** ✅ Completed  
+**Duration:** ~265s  
+**Files:**
+- `src/tv_open_call_chat_instructions.py` (NEW) — Conversational call analysis
+- `src/tv_open_put_chat_instructions.py` (NEW) — Conversational put analysis
+- `web/app.py` — Updated chat endpoints to use `*_chat_instructions.py`
+- `.squad/decisions.md` — Added decision record: "Chat vs Monitor Instructions Split"
+
+**Summary:**
+Converted Quick Analysis chat from JSON/structured output to natural language responses. Created separate instruction sets for chat UI (conversational) and background monitor agents (structured JSON). Both share same TradingView data source; output format optimized for audience type.
+
+**Key Design:**
+- Monitor agents: `TV_OPEN_{CALL|PUT}_INSTRUCTIONS` → JSON for database
+- Chat interface: `TV_OPEN_{CALL|PUT}_CHAT_INSTRUCTIONS` → Prose for humans
+- Core analysis logic shared; output presentation differs by use case
+
 ## Learnings
 
 ### Dict-Spread Protection Pattern (EXPANDED)

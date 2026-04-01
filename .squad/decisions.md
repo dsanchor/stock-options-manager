@@ -1164,3 +1164,84 @@ When building chat/analysis features that should behave like existing agents:
 #### Related Decisions
 - Chat UI Design System Alignment (2026-03-31) — established form design patterns
 - Quick Analysis Button Enable Pattern (2026-03-31) — form validation pattern reused for three-input form
+
+---
+
+### 12. Chat vs Monitor Instructions Split
+**Date:** 2026-04-01  
+**Decider:** Rusty + User (dsanchor)  
+**Status:** ✅ Accepted  
+**Impact:** Chat feature enhancement, agent instruction architecture
+
+#### Context
+
+Quick Analysis chat mode was displaying JSON/structured output because it was reusing monitor agent instructions (`TV_OPEN_CALL_INSTRUCTIONS` / `TV_OPEN_PUT_INSTRUCTIONS`). These instructions were designed for monitoring agents that need to output structured JSON for database storage.
+
+User feedback: "I don't want the json response. I want a response as a human readable conversation based on the agent response... not a json or a set of fields and key values. Human friendly please"
+
+#### Decision
+
+Create separate instruction sets for different use cases:
+
+1. **Monitor Agents** (background automation):
+   - Continue using `TV_OPEN_CALL_INSTRUCTIONS` / `TV_OPEN_PUT_INSTRUCTIONS`
+   - Request JSON output with specific schema for database persistence
+   - Focus on structured data extraction and decision logging
+
+2. **Chat Interface** (user interaction):
+   - Use new `TV_OPEN_CALL_CHAT_INSTRUCTIONS` / `TV_OPEN_PUT_CHAT_INSTRUCTIONS`
+   - Request conversational, natural language analysis
+   - Focus on human-readable insights and explanations
+   - Avoid JSON, structured output, or field-value pairs
+
+#### Rationale
+
+- **Separation of Concerns:** Database storage needs structured JSON; human users need natural conversation
+- **Single Source of Truth for Data:** Both use the same TradingView data fetcher and data structure
+- **Different Output for Different Audiences:** Machines consume JSON; humans consume prose
+- **Maintainability:** Clear naming (`*_instructions.py` vs `*_chat_instructions.py`) makes intent obvious
+
+#### Implementation
+
+- `src/tv_open_call_chat_instructions.py` — Conversational call analysis (chat UI)
+- `src/tv_open_put_chat_instructions.py` — Conversational put analysis (chat UI)
+- `src/tv_open_call_instructions.py` — Structured call monitoring (background agents)
+- `src/tv_open_put_instructions.py` — Structured put monitoring (background agents)
+- `web/app.py` — Chat endpoint uses `*_chat_instructions.py` for both first analysis and follow-ups
+
+#### Consequences
+
+**Positive:**
+- Chat experience feels natural and conversational
+- Monitor agents continue to produce clean JSON for database queries
+- Clear separation makes future maintenance easier
+- Each instruction set can evolve independently for its use case
+
+**Negative:**
+- Additional instruction files to maintain (4 instead of 2)
+- Need to keep data interpretation logic aligned between chat and monitor versions
+- Could drift if not careful about maintaining consistency of insights across both
+
+**Mitigation:**
+- Both draw from same data source (TradingView fetcher)
+- Core analysis logic (earnings gates, technical assessment) documented in both
+- One is optimized for JSON structure, one for conversational flow
+- Regular review to ensure both stay aligned on trading logic
+
+#### Pattern for Future Work
+
+When building chat/analysis features that need different output formats:
+1. Identify if audience is machine (JSON/structured) or human (prose/conversation)
+2. Create separate instruction files for each audience
+3. Keep core analysis logic consistent (same data sources, same decision criteria)
+4. Document alignment pattern in both files (cross-references, shared examples)
+5. Route to appropriate instruction set at call time (flag like `first_analysis`)
+
+#### Files Changed
+- `src/tv_open_call_chat_instructions.py` (NEW) — Conversational call analysis
+- `src/tv_open_put_chat_instructions.py` (NEW) — Conversational put analysis
+- `web/app.py` — Updated chat endpoints to use `*_chat_instructions.py`
+
+#### Related Decisions
+- Quick Analysis Chat — Centralized Instruction Reuse for Put/Call Analysis (2026-04-01) — established instruction reuse pattern
+- Chat UI Design System Alignment (2026-03-31) — established form and conversation patterns
