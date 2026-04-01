@@ -1037,3 +1037,67 @@ Standard card-based selection with free text inputs matching app design; all fun
 #### Trade-offs
 - **Flexibility vs Validation**: Free text input allows any market name but sacrifices dropdown validation (acceptable for power users)
 - **Simplicity**: CSS reuse reduces code duplication and future maintenance burden
+
+---
+
+### 10. Quick Analysis Button Enable Pattern
+**Date:** 2026-03-31  
+**Author:** Rusty (Agent Dev)  
+**Status:** ✅ Implemented  
+**Impact:** Form UX improvements
+
+#### Context
+The Quick Analysis mode in `chat.html` has a "Fetch & Analyze" button that requires both `symbol` and `market` inputs. The button was initially enabled, causing UX confusion when clicked without filled fields (would show error instead of preventing click).
+
+#### Decision
+Form submission buttons in multi-mode UIs should start disabled and enable dynamically based on required field validation.
+
+#### Implementation
+1. **Default State:** Button starts with `disabled` attribute
+2. **Validation Function:** `checkFetchButtonState()` checks both fields have trimmed values
+3. **Event Listeners:** Attach `input` events (not `keyup`) to catch paste/autofill
+4. **Mode Entry Check:** Call validation function when form first displays
+5. **Enter Key:** Respect button state (don't submit if disabled)
+
+#### Benefits
+- **Immediate Feedback:** Button state reflects form validity in real-time
+- **Prevents Errors:** Users can't submit incomplete forms
+- **Navigation Safe:** Handles back/forward, mode switching, pre-filled values
+- **Accessible:** Visual disabled state is also functional (no click handler run)
+
+#### Pattern for Team
+When adding form-based flows with required fields:
+```javascript
+// 1. Start button disabled
+<button id="submitBtn" disabled>Submit</button>
+
+// 2. Create validation function
+function checkFormValidity() {
+    const isValid = requiredField1.value.trim() && requiredField2.value.trim();
+    submitBtnEl.disabled = !isValid;
+}
+
+// 3. Attach to inputs
+field1El.addEventListener('input', checkFormValidity);
+field2El.addEventListener('input', checkFormValidity);
+
+// 4. Check on display
+function showForm() {
+    formEl.style.display = 'block';
+    checkFormValidity(); // handles pre-filled values
+}
+
+// 5. Respect in Enter handlers
+fieldEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !submitBtnEl.disabled) {
+        submit();
+    }
+});
+```
+
+#### Files Changed
+- `web/templates/chat.html`
+
+#### Related Decisions
+- Chat UI Design System Alignment (2026-03-31) — established form field patterns
+- Standard `.btn` disabled styles in `web/static/style.css`
