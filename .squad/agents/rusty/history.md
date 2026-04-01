@@ -151,3 +151,38 @@ Earlier phases and implementation details archived to `.squad/decisions/decision
 - Earnings gate architecture decisions
 - JSON format hints and instruction improvements
 - Alert checkbox behavior and source attachment
+
+## Learnings
+
+### Telegram-Optimized Summary Agent (2026-04-02)
+**Context:** Summary agent output sent directly to Telegram IM
+**Location:** `src/tv_summary_instructions.py`
+
+**IM-Friendly Output Patterns:**
+- **Emojis for scanning:** 📞📉👀💤📈📊💰⚠️ provide visual hierarchy on mobile
+- **Telegram markdown:** Use `*bold*` for symbols and key metrics (not full markdown syntax)
+- **Short lines:** Target < 60 chars per line, max 2-3 lines per symbol
+- **Strategic spacing:** Blank lines between symbols for readability
+- **Section headers:** Emoji + bold for clear visual breaks
+
+**Format structure:**
+```
+📞 *ACTIVE CALLS*
+
+*SYMBOL* • Strike/Exp • Key Metric
+📊 Market context (< 50 chars)
+→ Next action + timeframe
+
+[blank line between symbols]
+```
+
+**Key guidelines:**
+- Use Greek letter shortcuts (Δ for delta) to save space
+- Arrows for direction (IV↑, IV↓) instead of words
+- Abbreviations: exp, OTM/ITM, CC, CSP
+- Empty sections: 💤 No [category] (not verbose text)
+- Tone: Like a pro trader texting concise updates
+
+**Why this matters:**
+Mobile IM apps have limited screen real estate. Dense paragraphs are hard to scan. Emojis + bold + short lines = instant comprehension while scrolling. User can quickly assess portfolio status without opening full dashboard.
+
