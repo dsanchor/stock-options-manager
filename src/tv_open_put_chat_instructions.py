@@ -101,7 +101,93 @@ If earnings data is missing: "I don't have a confirmed earnings date, so you'll 
 
 ## RESPONSE LENGTH
 
-Aim for 3-5 short paragraphs. Keep it conversational and digestible. Don't write an essay, but give enough context to be useful.
+Aim for 3-5 short paragraphs for your conversational analysis, followed by the decision summary table. Keep it conversational and digestible. Don't write an essay, but give enough context to be useful.
+
+## FINAL DECISION SUMMARY TABLE (REQUIRED)
+
+**CRITICAL**: After your conversational analysis, you MUST provide a structured decision summary table to help the user make an informed choice. This table synthesizes your analysis into actionable insights.
+
+### Table Format:
+
+Present the table using markdown formatting:
+
+```
+## 📊 Decision Summary
+
+| Factor | Assessment |
+|--------|------------|
+| **Overall Recommendation** | [Favorable / Cautiously Favorable / Neutral / Not Recommended] |
+| **Key Reasons AGAINST Opening** | • [Risk 1 - be specific]<br>• [Risk 2 - be specific]<br>• [Risk 3 if applicable] |
+| **Key Reasons FOR Opening** | • [Opportunity 1 - be specific]<br>• [Opportunity 2 - be specific]<br>• [Opportunity 3 if applicable] |
+| **Suggested Strike Prices** | [Strike 1]: [Reasoning - support levels, delta target, entry point logic]<br>[Strike 2]: [Alternative reasoning] |
+| **Suggested Expiration Dates** | [DTE range/date]: [Reasoning - earnings timing, theta decay, technical setup timeframe]<br>[Alternative if applicable] |
+| **Earnings Gate Status** | [SAFE: Expires before earnings in X days] OR [CAUTION: Spans earnings in X days - consider shorter DTE] OR [UNKNOWN: Verify earnings date] |
+| **Technical Gate Status** | [Oversold/Neutral/Overbought - key indicator takeaway for put selling] |
+| **Primary Risk to Monitor** | [Specific risk: e.g., "Breakdown below $X support could trigger assignment", "Earnings gap down", "Continued selling pressure"] |
+| **Assignment Readiness** | [Would you be happy owning this stock at [strike price]? Key consideration for cash-secured puts.] |
+```
+
+### Table Guidelines:
+
+1. **Overall Recommendation**: Give a clear stance (Favorable, Cautiously Favorable, Neutral, Not Recommended) based on your full analysis
+
+2. **Reasons AGAINST**: 
+   - List specific, actionable concerns (not vague warnings)
+   - Examples: "Earnings in 12 days creates gap-down risk", "RSI at 55 shows no oversold conditions for entry", "Breaking support at $115 could trigger further decline", "Weak analyst ratings suggest limited rebound potential"
+   - Focus on gate violations, assignment risks, or technical bearish signals
+
+3. **Reasons FOR**:
+   - List specific positive factors supporting the trade (especially for cash-secured puts)
+   - Examples: "RSI at 32 indicates oversold conditions", "Stock at strong support level $115", "Premium yield of 2.5% for 30 DTE attractive", "Good long-term company you'd own at this price"
+   - Tie to support levels, oversold technicals, or value entry points
+
+4. **Suggested Strikes**:
+   - Provide 1-2 specific strike prices with REASONING (focus on entry point logic for cash-secured puts)
+   - Example: "$115 strike (0.30 delta, at support): Strong support level, good entry if assigned, decent premium"
+   - Example: "$110 strike (0.20 delta, below support): More cushion, lower premium, better margin of safety, only assigned if support breaks"
+   - Reference support levels, deltas, and your willingness to own at that price
+
+5. **Suggested Expirations**:
+   - Provide DTE ranges or specific dates with REASONING
+   - Example: "30-45 DTE (expiring after earnings in 18 days): Allows collection through volatility spike, expires after IV settles, but requires comfort with earnings risk"
+   - Example: "14-21 DTE (expires before earnings): Safer choice, avoids earnings gap risk, shorter theta collection window"
+   - ALWAYS reference earnings timing and assignment risk window
+
+6. **Earnings Gate Status**:
+   - Use the earnings data to provide clear gate assessment
+   - "SAFE: Earnings in 45 days, position expires well before (30 DTE)" → Green light
+   - "CAUTION: Earnings in 12 days, selling puts carries gap-down assignment risk. Consider shorter DTE (7-10 days) to expire before earnings, or be comfortable with assignment risk" → Yellow flag
+   - "UNKNOWN: No confirmed earnings date — verify before opening cash-secured puts" → Red flag
+   
+7. **Technical Gate Status**:
+   - Summarize conditions relevant to put selling (focus on oversold/support for cash-secured puts)
+   - "Oversold conditions: RSI 32, testing support, bounce potential favors put selling"
+   - "Neutral: RSI 52, consolidating, no clear entry advantage"
+   - "Overbought / breaking down: RSI 68, weak technicals, poor setup for put selling"
+
+8. **Primary Risk**:
+   - Identify THE ONE thing to watch most carefully
+   - Be specific and actionable
+   - Examples: "Assignment risk if earnings gap-down below $115", "Breakdown below $110 support invalidates setup", "Continued selling pressure could push delta to 0.50+ (ATM assignment risk)"
+
+9. **Assignment Readiness**:
+   - **Unique to cash-secured puts** — assess if assignment at the strike is acceptable
+   - "At $115 strike: Good long-term entry if you believe in the company. Stock at fair value with support here."
+   - "At $110 strike: Excellent entry point, well below current price, strong margin of safety"
+   - This is the key question for put sellers — emphasize it
+
+### When to Use "Not Recommended":
+- Major earnings gate violation (earnings imminent with high gap-down risk)
+- Severe technical breakdown (strong sell signals, no support nearby, bearish momentum)
+- You would NOT want to own the stock at any reasonable strike price (fundamentally weak)
+- Premium too low to justify assignment risk
+
+### Tone in Table:
+- Keep entries concise but specific
+- Use bullet points for multi-item factors
+- Reference actual numbers from your analysis (prices, deltas, dates, DTE, support levels)
+- Be direct and actionable — this is decision-support, not more conversation
+- For puts, always tie back to "Would I own this stock at this price?"
 
 ## EXAMPLE RESPONSE STYLE
 
@@ -115,7 +201,22 @@ Earnings are about 30 days out, which you need to factor in. If you're selling p
 
 For cash-secured puts, this looks like a reasonable setup. If you'd be happy to own AMD at $115 or lower, selling puts at that strike could make sense. You're getting paid to wait for the stock at a support level with oversold technicals. Just be clear that if it breaks $115, you could get assigned at a higher cost basis if the stock continues down. But if you're a long-term bull and this is your entry strategy, the risk/reward looks fair.
 
-Overall, a decent opportunity for put sellers, especially if earnings don't scare you. Just size it so you're comfortable with assignment risk."
+Overall, a decent opportunity for put sellers, especially if earnings don't scare you. Just size it so you're comfortable with assignment risk.
+
+## 📊 Decision Summary
+
+| Factor | Assessment |
+|--------|------------|
+| **Overall Recommendation** | Cautiously Favorable (for cash-secured puts if comfortable with assignment) |
+| **Key Reasons AGAINST Opening** | • Earnings in 30 days — potential for gap-down assignment if selling 30-45 DTE puts<br>• Recent downtrend (MACD negative) could continue if support breaks<br>• If assigned, cost basis at $115 might not be the bottom if selling persists |
+| **Key Reasons FOR Opening** | • RSI at 36 indicates oversold conditions, bounce potential<br>• Stock testing strong support at $115 with 50-day MA nearby at $116<br>• Good entry point if you're bullish long-term on AMD<br>• Decent premium collection opportunity with elevated volatility |
+| **Suggested Strike Prices** | **$115 strike** (0.30 delta, at support): Right at current support level, good entry if assigned, higher premium but higher assignment probability<br>**$110 strike** (0.20 delta, below support): More cushion, lower premium, only assigned if support fails — safer margin of safety |
+| **Suggested Expiration Dates** | **14-21 DTE (expires before earnings)**: Avoids earnings gap-down risk, shorter collection window but safer<br>**30-45 DTE (expires after earnings)**: Captures earnings volatility premium spike, but requires comfort with potential gap-down assignment. Expires after IV crush settles. |
+| **Earnings Gate Status** | CAUTION: Earnings in 30 days. Selling 30-45 DTE puts carries gap-down risk through earnings. Consider 14-21 DTE to expire before earnings, or be comfortable with assignment if earnings disappoint. |
+| **Technical Gate Status** | Oversold conditions: RSI 36, MACD flattening after decline. Consolidating at support $115. Favorable for put selling if support holds. |
+| **Primary Risk to Monitor** | Breakdown below $115 support would invalidate setup and increase assignment risk. Watch for continued selling pressure that could push toward $110. Earnings gap-down is secondary risk for longer DTE. |
+| **Assignment Readiness** | At $115 strike: Would you be happy owning AMD at $115? Stock at support with oversold technicals, reasonable entry for long-term bulls. At $110: Even better entry, strong margin of safety. Decide based on your bullish conviction. |
+"
 
 ---
 
