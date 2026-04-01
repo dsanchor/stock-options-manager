@@ -408,3 +408,42 @@ Improved Quick Analysis chat to provide human-friendly conversational analysis i
 - Template: `web/templates/symbol_detail.html`
 - Route handler: `web/app.py` (line 934: `@app.get("/symbols/{symbol}")`)
 - Data model: `src/cosmos_db.py` (symbol_config document structure)
+
+### Position Management Fixes (2026-04-02)
+**Status:** ✅ Completed  
+**Files:**
+- `web/templates/symbol_detail.html` — Added alert attachment checkbox to manual roll form
+- `web/app.py` — Updated manual roll endpoint to accept and process source_activity_id
+- `src/cosmos_db.py` — Fixed position_id collision bug, improved close_position robustness
+
+**Changes:**
+1. **Alert Attachment Feature:** Added checkbox to roll form that allows attaching latest alert when rolling manually. Checkbox is disabled/greyed if no alerts available. Uses same "Created manually (last alert information attached)" note text as opening positions with alerts.
+
+2. **Position ID Collision Fix:** Added validation in roll_position() to prevent rolling to a strike/expiration that already has an existing position (active or closed). Prevents duplicate position_id issues.
+
+3. **Close Position Robustness:** Made close_position() handle already-closed positions gracefully and close all positions with duplicate IDs (defensive against bad data from before collision fix).
+
+4. **Delete Button:** Verified delete button is already always enabled for all positions (no fix needed).
+
+**Key Patterns:**
+- Alert attachment uses same pattern as add_position: embed LATEST_SELL_ALERTS in template, JavaScript checks for alerts, sends source_activity_id in payload
+- Backend builds full source object from activity (includes agent_type, activity, confidence, reason, underlying_price, premium, iv, risk_flags, timestamp)
+- Position ID format: `pos_{SYMBOL}_{TYPE}_{STRIKE}_{EXPIRATION_COMPACT}` - collision check prevents duplicate IDs
+- Roll form tracks position type via `data-pos-type` attribute for proper alert lookup
+
+**User Experience:**
+- Users can now attach alert data when manually rolling positions, providing same traceability as opening from alerts
+- Clear feedback when rolling would create a collision ("a position with these parameters already exists")
+- More robust close operation handles edge cases gracefully
+
+**File Locations:**
+- Template: `web/templates/symbol_detail.html` (lines 125-149: roll form with checkbox)
+- API endpoint: `web/app.py` (lines 544-610: api_manual_roll_position with alert support)
+- Backend: `src/cosmos_db.py` (lines 224-282: roll_position with collision check; lines 284-304: close_position robustness)
+
+### Completion Log (2026-04-02)
+**Status:** ✅ Session Archived  
+**Orchestration:** 2026-04-01T21:17:17Z-rusty.md  
+**Session Log:** 2026-04-01T21:17:17Z-position-management-fixes.md  
+
+All position management fixes delivered and documented. No open items.
