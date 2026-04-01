@@ -212,3 +212,36 @@ Refactored the dual-mode chat interface to align with the application's existing
 - Market field accepts any text (e.g., "NASDAQ", "NYSE", or custom exchanges)
 - Visual consistency with dashboard, settings, and symbol detail pages
 
+## Quick Analysis Button Enable Fix (2024-03-31)
+**Status:** ✅ Complete
+
+Fixed the "Fetch & Analyze" button in Quick Analysis mode to properly enable/disable based on input field state across all navigation scenarios.
+
+**Problem:**
+- Button started enabled but had no event listeners to update state as inputs changed
+- Navigation scenarios (mode switch, back button, pre-filled values) didn't properly evaluate button state
+- Enter key behavior was inconsistent (symbol Enter would try to fetch even with empty market)
+
+**Solution:**
+1. Button now starts `disabled` by default
+2. Added `checkFetchButtonState()` function that enables button only when both symbol and market have values
+3. Attached `input` event listeners to both fields for real-time validation
+4. Call state check when Quick Analysis mode is first selected
+5. Improved Enter key UX: symbol→focus market, market→fetch (only if button enabled)
+
+**Navigation Scenarios Covered:**
+- Fresh page load → select Quick Analysis → button disabled until both fields filled ✅
+- Portfolio Chat → switch to Quick Analysis → button state evaluated on mode entry ✅
+- Type in fields → button enables/disables in real-time as values change ✅
+- Clear a field → button immediately disables ✅
+- Browser back/forward → state re-evaluated on mode display ✅
+
+**Files Changed:**
+- `web/templates/chat.html` (lines 53, 109-127, 300-319)
+
+**Pattern Notes:**
+- Standard form validation pattern: disable by default + enable on valid state
+- Use `input` events (not `keyup`) for cross-browser paste/autofill support
+- Always check state on mode entry to handle pre-filled or persisted form values
+- Enter key navigation should respect button disabled state
+
