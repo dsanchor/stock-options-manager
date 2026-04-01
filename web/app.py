@@ -119,6 +119,40 @@ def _clean_doc(doc: dict) -> dict:
     return {k: v for k, v in doc.items() if k not in _COSMOS_SYSTEM_KEYS}
 
 
+def _format_time_dual_tz(dt: datetime, tz_str: str) -> str:
+    """Format datetime showing both configured timezone and UTC.
+    
+    Args:
+        dt: timezone-aware datetime object
+        tz_str: configured timezone string (e.g., 'America/New_York')
+    
+    Returns:
+        Formatted string: "YYYY-MM-DD HH:MM TZ (HH:MM UTC)"
+    """
+    if dt is None:
+        return ""
+    
+    try:
+        # Ensure dt is timezone-aware
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        
+        # Convert to configured timezone
+        tz = pytz.timezone(tz_str)
+        dt_tz = dt.astimezone(tz)
+        
+        # Convert to UTC
+        dt_utc = dt.astimezone(timezone.utc)
+        
+        # Format: "2026-04-01 08:00 PST (16:00 UTC)"
+        tz_abbr = dt_tz.strftime("%Z")
+        formatted = f"{dt_tz.strftime('%Y-%m-%d %H:%M')} {tz_abbr} ({dt_utc.strftime('%H:%M')} UTC)"
+        
+        return formatted
+    except Exception:
+        return dt.strftime("%Y-%m-%d %H:%M:%S") if dt else ""
+
+
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
@@ -773,7 +807,7 @@ async def dashboard(request: Request):
             now_tz = datetime.now(scheduler_tz)
             cron = croniter(cron_expr, now_tz)
             next_run_dt = cron.get_next(datetime)
-            next_run = next_run_dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+            next_run = _format_time_dual_tz(next_run_dt, scheduler_tz_str)
             next_run_iso = next_run_dt.isoformat()
         except Exception:
             next_run = "Invalid cron"
@@ -845,8 +879,7 @@ async def dashboard(request: Request):
                 # Convert to scheduler timezone
                 if last_run_dt.tzinfo is None:
                     last_run_dt = last_run_dt.replace(tzinfo=timezone.utc)
-                last_run_dt = last_run_dt.astimezone(scheduler_tz)
-                last_run = last_run_dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+                last_run = _format_time_dual_tz(last_run_dt, scheduler_tz_str)
                 last_run_iso = last_run_dt.isoformat()
             except Exception:
                 # Fallback to simple string truncation
@@ -1108,6 +1141,57 @@ async def settings_config_page(request: Request):
     if telegram_chat_id.startswith("${"):
         telegram_chat_id = _resolve_env(telegram_chat_id)
     
+    # Calculate scheduler times for Monitoring Agent
+    try:
+        tz = pytz.timezone(timezone)
+    except Exception:
+        tz = pytz.timezone("America/New_York")
+    
+    monitoring_last_run = ""
+    monitoring_next_run = ""
+    
+    # Get last run from most recent activity
+    if cosmos:
+        try:
+            all_activities = cosmos.get_all_activities(limit=1)
+            if all_activities:
+                timestamp_str = all_activities[0].get("timestamp", "")
+                if timestamp_str:
+                    try:
+                        last_run_dt = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+                        if last_run_dt.tzinfo is None:
+                            last_run_dt = last_run_dt.replace(tzinfo=timezone.utc)
+                        monitoring_last_run = _format_time_dual_tz(last_run_dt, timezone)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    
+    # Calculate next run from cron
+    if cron_expr:
+        try:
+            now_tz = datetime.now(tz)
+            cron = croniter(cron_expr, now_tz)
+            next_run_dt = cron.get_next(datetime)
+            monitoring_next_run = _format_time_dual_tz(next_run_dt, timezone)
+        except Exception:
+            monitoring_next_run = "Invalid cron"
+    
+    # Calculate scheduler times for Summarization Agent
+    summary_last_run = ""
+    summary_next_run = ""
+    
+    # For summary agent, we'd need to track summary-specific runs
+    # For now, we'll just calculate next run from cron
+    if summary_cron:
+        try:
+            now_tz = datetime.now(tz)
+            cron = croniter(summary_cron, now_tz)
+            next_run_dt = cron.get_next(datetime)
+            summary_next_run = _format_time_dual_tz(next_run_dt, timezone)
+        except Exception:
+            summary_next_run = "Invalid cron"
+    
     return templates.TemplateResponse("settings_config.html", {
         "request": request,
         "cron_expr": cron_expr,
@@ -1118,6 +1202,10 @@ async def settings_config_page(request: Request):
         "summary_enabled": summary_enabled,
         "summary_cron": summary_cron,
         "summary_activity_count": summary_activity_count,
+        "monitoring_last_run": monitoring_last_run,
+        "monitoring_next_run": monitoring_next_run,
+        "summary_last_run": summary_last_run,
+        "summary_next_run": summary_next_run,
     })
 
 

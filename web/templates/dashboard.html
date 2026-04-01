@@ -45,66 +45,10 @@
 
 <!-- Scheduler info -->
 <div class="scheduler-bar">
-    <span>🕐 Cron: <code>{{ cron_expr }}</code></span>
-    <span>Last run: <strong id="last-run-display">{{ last_run or "Never" }}</strong></span>
-    <span>Next run: <strong id="next-run-display">{{ next_run or "N/A" }}</strong></span>
+    <span>Last run: <strong>{{ last_run or "Never" }}</strong></span>
+    <span>Next run: <strong>{{ next_run or "N/A" }}</strong></span>
     <button id="run-full-analysis" class="btn-trigger btn-trigger-blue" title="Run all agents sequentially">▶▶ Run Full Analysis</button>
 </div>
-<script>
-(function() {
-    const lastRunIso = "{{ last_run_iso }}";
-    const nextRunIso = "{{ next_run_iso }}";
-    const schedulerTz = "{{ scheduler_timezone }}";
-    
-    function formatDateTime(isoStr, displayId) {
-        if (!isoStr) return;
-        
-        try {
-            const dt = new Date(isoStr);
-            if (isNaN(dt.getTime())) return;
-            
-            const displayEl = document.getElementById(displayId);
-            if (!displayEl) return;
-            
-            // Format options for readable date/time with timezone
-            const options = {
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-                timeZoneName: 'short'
-            };
-            
-            // Try to use the scheduler timezone, fallback to browser local if not supported
-            try {
-                const formatted = dt.toLocaleString('en-US', {...options, timeZone: schedulerTz});
-                
-                // Also get browser's local time if different from scheduler TZ
-                const userTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-                if (userTz !== schedulerTz) {
-                    const localFormatted = dt.toLocaleString('en-US', options);
-                    displayEl.innerHTML = formatted + '<br><small style="color: #888;">(' + localFormatted + ')</small>';
-                    displayEl.title = 'Scheduler time: ' + formatted + '\nYour local time: ' + localFormatted;
-                } else {
-                    displayEl.textContent = formatted;
-                }
-            } catch (e) {
-                // Fallback to basic formatting if timezone not supported
-                const formatted = dt.toLocaleString('en-US', options);
-                displayEl.textContent = formatted;
-            }
-        } catch (e) {
-            console.error('Error formatting datetime:', e);
-        }
-    }
-    
-    // Format times on page load
-    formatDateTime(lastRunIso, 'last-run-display');
-    formatDateTime(nextRunIso, 'next-run-display');
-})();
-</script>
 
 <!-- Agent tables -->
 
