@@ -1496,65 +1496,168 @@ async def chat_page(request: Request):
     return templates.TemplateResponse("chat.html", {"request": request})
 
 
+@app.post("/api/chat/fetch-symbol")
+async def fetch_symbol_data(request: Request):
+    """Fetch TradingView data for a symbol without saving to database."""
+    body = await request.json()
+    symbol = body.get("symbol", "").strip().upper()
+    market = body.get("market", "").strip().upper()
+    
+    if not symbol or not market:
+        return JSONResponse(
+            {"error": "Symbol and market are required"},
+            status_code=400
+        )
+    
+    # Format as MARKET-SYMBOL (e.g., NYSE-AAPL)
+    full_symbol = f"{market}-{symbol}"
+    
+    try:
+        # Import and use TradingViewFetcher
+        import sys
+        sys.path.insert(0, str(PROJECT_ROOT / "src"))
+        from tv_data_fetcher import TradingViewFetcher
+        
+        async with TradingViewFetcher() as fetcher:
+            data = await fetcher.fetch_all(full_symbol)
+            
+            if fetcher.has_403:
+                return JSONResponse(
+                    {"error": "TradingView returned 403 (rate limit or block). Please try again later."},
+                    status_code=403
+                )
+            
+            return JSONResponse({
+                "symbol": symbol,
+                "market": market,
+                "full_symbol": full_symbol,
+                "data": data
+            })
+            
+    except Exception as e:
+        logger.error("Error fetching symbol data: %s", e, exc_info=True)
+        return JSONResponse(
+            {"error": f"Failed to fetch data: {str(e)}"},
+            status_code=500
+        )
+
+
 @app.post("/api/chat")
 async def chat_api(request: Request):
     body = await request.json()
     messages = body.get("messages", [])
+    mode = body.get("mode", "portfolio")
+    symbol_data = body.get("symbol_data")
+    
     if not messages:
         return JSONResponse({"error": "No messages provided"},
                             status_code=400)
 
-    cosmos = getattr(request.app.state, "cosmos", None)
     context_parts: List[str] = []
+    
+    # Build context based on mode
+    if mode == "portfolio":
+        # Existing portfolio mode logic
+        cosmos = getattr(request.app.state, "cosmos", None)
+        if cosmos:
+            try:
+                for agent_key, meta in AGENT_TYPES.items():
+                    alerts = cosmos.get_all_alerts(
+                        agent_type=agent_key, limit=20)
+                    activities = cosmos.get_all_activities(
+                        agent_type=agent_key, limit=20)
+                    if not alerts and not activities:
+                        continue
 
-    if cosmos:
-        try:
-            for agent_key, meta in AGENT_TYPES.items():
-                alerts = cosmos.get_all_alerts(
-                    agent_type=agent_key, limit=20)
-                activities = cosmos.get_all_activities(
-                    agent_type=agent_key, limit=20)
-                if not alerts and not activities:
-                    continue
+                    context_parts.append(f"\n--- {meta['label']} ---")
 
-                context_parts.append(f"\n--- {meta['label']} ---")
+                    # Group by symbol
+                    sym_data: Dict[str, Dict[str, list]] = defaultdict(
+                        lambda: {"alerts": [], "activities": []})
+                    for s in alerts:
+                        sym_data[s.get("symbol", "?")]["alerts"].append(s)
+                    for d in activities:
+                        sym_data[d.get("symbol", "?")]["activities"].append(d)
 
-                # Group by symbol
-                sym_data: Dict[str, Dict[str, list]] = defaultdict(
-                    lambda: {"alerts": [], "activities": []})
-                for s in alerts:
-                    sym_data[s.get("symbol", "?")]["alerts"].append(s)
-                for d in activities:
-                    sym_data[d.get("symbol", "?")]["activities"].append(d)
-
-                for sym, data in sym_data.items():
-                    context_parts.append(f"\n## {sym}")
-                    if data["alerts"]:
-                        context_parts.append(
-                            f"Alerts (last {len(data['alerts'])}):")
-                        for s in data["alerts"][:2]:
+                    for sym, data in sym_data.items():
+                        context_parts.append(f"\n## {sym}")
+                        if data["alerts"]:
                             context_parts.append(
-                                json.dumps(_clean_doc(s), indent=2,
-                                           default=str))
-                    if data["activities"]:
-                        context_parts.append(
-                            f"Activities (last {len(data['activities'])}):")
-                        for d in data["activities"][:4]:
+                                f"Alerts (last {len(data['alerts'])}):")
+                            for s in data["alerts"][:2]:
+                                context_parts.append(
+                                    json.dumps(_clean_doc(s), indent=2,
+                                               default=str))
+                        if data["activities"]:
                             context_parts.append(
-                                json.dumps(_clean_doc(d), indent=2,
-                                           default=str))
-        except Exception:
-            context_parts.append("(Error loading context from CosmosDB)")
-
-    context_text = ("\n".join(context_parts) if context_parts
-                    else "No recent activities available.")
-
-    system_prompt = (
-        "You are a stock options manager advisor. You have access to recent "
-        "analysis activities for the user's portfolio. Answer questions about "
-        "positions, risks, and recommended actions based on this data.\n\n"
-        f"Recent analysis data:\n{context_text}"
-    )
+                                f"Activities (last {len(data['activities'])}):")
+                            for d in data["activities"][:4]:
+                                context_parts.append(
+                                    json.dumps(_clean_doc(d), indent=2,
+                                               default=str))
+            except Exception:
+                context_parts.append("(Error loading context from CosmosDB)")
+        
+        context_text = ("\n".join(context_parts) if context_parts
+                        else "No recent activities available.")
+        
+        system_prompt = (
+            "You are a stock options manager advisor. You have access to recent "
+            "analysis activities for the user's portfolio. Answer questions about "
+            "positions, risks, and recommended actions based on this data.\n\n"
+            f"Recent analysis data:\n{context_text}"
+        )
+    
+    elif mode == "quick-analysis":
+        # Quick analysis mode using fetched symbol data
+        if not symbol_data:
+            return JSONResponse(
+                {"error": "Symbol data required for quick analysis mode"},
+                status_code=400
+            )
+        
+        symbol = symbol_data.get("symbol", "?")
+        market = symbol_data.get("market", "?")
+        data = symbol_data.get("data", {})
+        
+        # Build context from fetched data
+        context_parts.append(f"Symbol: {market}:{symbol}\n")
+        
+        if "overview" in data and data["overview"]:
+            context_parts.append("=== Market Overview ===")
+            context_parts.append(data["overview"][:2000])
+        
+        if "technicals" in data and data["technicals"]:
+            context_parts.append("\n=== Technical Analysis ===")
+            context_parts.append(data["technicals"][:2000])
+        
+        if "forecast" in data and data["forecast"]:
+            context_parts.append("\n=== Earnings & Forecast ===")
+            context_parts.append(data["forecast"][:2000])
+        
+        if "dividends" in data and data["dividends"]:
+            context_parts.append("\n=== Dividends ===")
+            context_parts.append(data["dividends"][:1000])
+        
+        if "options_chain" in data and data["options_chain"]:
+            context_parts.append("\n=== Options Chain (Sample) ===")
+            context_parts.append(data["options_chain"][:3000])
+        
+        context_text = "\n".join(context_parts)
+        
+        system_prompt = (
+            f"You are a stock options analyst. You are analyzing {market}:{symbol}. "
+            "The user has not tracked this symbol yet - this is a quick analysis. "
+            "Use the TradingView data provided below to answer questions about "
+            "the stock's price, technicals, earnings, dividends, and options.\n\n"
+            f"TradingView Data:\n{context_text}"
+        )
+    
+    else:
+        return JSONResponse(
+            {"error": f"Invalid mode: {mode}"},
+            status_code=400
+        )
 
     config = _load_config()
     azure_cfg = config.get("azure", {})

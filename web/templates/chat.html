@@ -7,17 +7,75 @@
     <p class="subtitle">Ask questions about your positions and recent analysis.</p>
 </div>
 
-<div class="card chat-card">
-    <div id="chatMessages" class="chat-messages">
-        <div class="chat-msg assistant">
-            <div class="chat-bubble">
-                Hello! I'm your Stock Options Manager advisor. I have access to your recent analysis activities.
-                Ask me about your positions, risks, or recommended actions.
-            </div>
+<!-- Mode Selection Screen -->
+<div id="modeSelector" class="card" style="display: block;">
+    <h2 style="margin-bottom: 1.5rem; text-align: center;">Choose Chat Mode</h2>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; max-width: 800px; margin: 0 auto;">
+        <div class="mode-option" onclick="selectMode('portfolio')">
+            <div class="mode-icon">💼</div>
+            <h3>Portfolio Chat</h3>
+            <p>Chat about your tracked symbols and recent analysis activities</p>
+        </div>
+        <div class="mode-option" onclick="selectMode('quick-analysis')">
+            <div class="mode-icon">🔍</div>
+            <h3>Quick Analysis</h3>
+            <p>Analyze any symbol (not yet tracked) using live TradingView data</p>
         </div>
     </div>
+</div>
+
+<!-- Quick Analysis Form -->
+<div id="quickAnalysisForm" class="card" style="display: none;">
+    <div style="margin-bottom: 1rem;">
+        <button onclick="backToModeSelection()" class="btn" style="background: var(--bg-input);">
+            ← Back to mode selection
+        </button>
+    </div>
+    <h2 style="margin-bottom: 1rem;">Quick Analysis</h2>
+    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">
+        Enter a symbol and market to fetch live TradingView data and start chatting.
+    </p>
+    <div style="display: flex; gap: 1rem; margin-bottom: 1rem; align-items: flex-end;">
+        <div style="flex: 1;">
+            <label style="display: block; margin-bottom: 0.5rem; color: var(--text-muted);">Symbol</label>
+            <input type="text" id="symbolInput" placeholder="AAPL" style="width: 100%; padding: 0.75rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-size: 1rem;">
+        </div>
+        <div style="flex: 1;">
+            <label style="display: block; margin-bottom: 0.5rem; color: var(--text-muted);">Market</label>
+            <select id="marketSelect" style="width: 100%; padding: 0.75rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-size: 1rem;">
+                <option value="NASDAQ">NASDAQ</option>
+                <option value="NYSE">NYSE</option>
+                <option value="AMEX">AMEX</option>
+                <option value="OTC">OTC</option>
+            </select>
+        </div>
+        <button id="fetchBtn" onclick="fetchAndAnalyze()" class="btn btn-primary" style="padding: 0.75rem 2rem;">
+            Fetch & Analyze
+        </button>
+    </div>
+    <div id="fetchError" class="alert alert-error" style="display:none; margin-top: 1rem;"></div>
+    <div id="fetchProgress" style="display: none; margin-top: 1rem; padding: 1rem; background: var(--bg-input); border-radius: var(--radius); color: var(--text-muted);">
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+            <div class="spinner"></div>
+            <span>Fetching TradingView data...</span>
+        </div>
+    </div>
+</div>
+
+<!-- Chat Interface -->
+<div id="chatInterface" class="card chat-card" style="display: none;">
+    <div style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
+        <div>
+            <span id="chatModeLabel" style="font-weight: 600;"></span>
+            <span id="chatSymbolLabel" style="color: var(--text-muted); margin-left: 0.5rem;"></span>
+        </div>
+        <button onclick="backToModeSelection()" class="btn" style="background: var(--bg-input); padding: 0.5rem 1rem;">
+            ← Change Mode
+        </button>
+    </div>
+    <div id="chatMessages" class="chat-messages"></div>
     <div class="chat-input-row">
-        <input type="text" id="chatInput" placeholder="Ask about your positions..." autocomplete="off">
+        <input type="text" id="chatInput" placeholder="Ask a question..." autocomplete="off">
         <button id="chatSend" class="btn btn-primary">Send</button>
     </div>
     <div id="chatError" class="alert alert-error" style="display:none;"></div>
@@ -31,10 +89,127 @@
     const inputEl = document.getElementById('chatInput');
     const sendBtn = document.getElementById('chatSend');
     const errorEl = document.getElementById('chatError');
+    const modeSelectorEl = document.getElementById('modeSelector');
+    const quickAnalysisFormEl = document.getElementById('quickAnalysisForm');
+    const chatInterfaceEl = document.getElementById('chatInterface');
+    const symbolInputEl = document.getElementById('symbolInput');
+    const marketSelectEl = document.getElementById('marketSelect');
+    const fetchBtnEl = document.getElementById('fetchBtn');
+    const fetchErrorEl = document.getElementById('fetchError');
+    const fetchProgressEl = document.getElementById('fetchProgress');
+    const chatModeLabelEl = document.getElementById('chatModeLabel');
+    const chatSymbolLabelEl = document.getElementById('chatSymbolLabel');
 
-    // Client-side conversation history
+    // State
+    let currentMode = null;
+    let symbolData = null;
     let history = [];
 
+    // Mode selection
+    window.selectMode = function(mode) {
+        currentMode = mode;
+        modeSelectorEl.style.display = 'none';
+        
+        if (mode === 'portfolio') {
+            startPortfolioChat();
+        } else if (mode === 'quick-analysis') {
+            quickAnalysisFormEl.style.display = 'block';
+            symbolInputEl.focus();
+        }
+    };
+
+    // Back to mode selection
+    window.backToModeSelection = function() {
+        currentMode = null;
+        symbolData = null;
+        history = [];
+        modeSelectorEl.style.display = 'block';
+        quickAnalysisFormEl.style.display = 'none';
+        chatInterfaceEl.style.display = 'none';
+        fetchErrorEl.style.display = 'none';
+        fetchProgressEl.style.display = 'none';
+        errorEl.style.display = 'none';
+        messagesEl.innerHTML = '';
+        inputEl.value = '';
+        symbolInputEl.value = '';
+    };
+
+    // Start portfolio chat
+    function startPortfolioChat() {
+        chatModeLabelEl.textContent = '💼 Portfolio Chat';
+        chatSymbolLabelEl.textContent = '';
+        chatInterfaceEl.style.display = 'flex';
+        
+        // Add initial message
+        addMessage('assistant', 
+            "Hello! I'm your Stock Options Manager advisor. I have access to your recent analysis activities. " +
+            "Ask me about your positions, risks, or recommended actions."
+        );
+        
+        inputEl.focus();
+    }
+
+    // Fetch and analyze symbol
+    window.fetchAndAnalyze = async function() {
+        const symbol = symbolInputEl.value.trim().toUpperCase();
+        const market = marketSelectEl.value;
+        
+        if (!symbol) {
+            fetchErrorEl.textContent = '⚠️ Please enter a symbol';
+            fetchErrorEl.style.display = 'block';
+            return;
+        }
+        
+        fetchErrorEl.style.display = 'none';
+        fetchProgressEl.style.display = 'block';
+        fetchBtnEl.disabled = true;
+        
+        try {
+            const res = await fetch('/api/chat/fetch-symbol', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({symbol, market}),
+            });
+            
+            const data = await res.json();
+            
+            if (!res.ok || data.error) {
+                fetchErrorEl.textContent = '⚠️ ' + (data.error || 'Failed to fetch data');
+                fetchErrorEl.style.display = 'block';
+                fetchProgressEl.style.display = 'none';
+                fetchBtnEl.disabled = false;
+                return;
+            }
+            
+            // Success - start chat with symbol data
+            symbolData = data;
+            startQuickAnalysisChat(data);
+            
+        } catch (e) {
+            fetchErrorEl.textContent = '⚠️ Network error: ' + e.message;
+            fetchErrorEl.style.display = 'block';
+            fetchProgressEl.style.display = 'none';
+            fetchBtnEl.disabled = false;
+        }
+    };
+
+    // Start quick analysis chat
+    function startQuickAnalysisChat(data) {
+        quickAnalysisFormEl.style.display = 'none';
+        chatInterfaceEl.style.display = 'flex';
+        chatModeLabelEl.textContent = '🔍 Quick Analysis';
+        chatSymbolLabelEl.textContent = `${data.market}:${data.symbol}`;
+        
+        // Add initial message
+        addMessage('assistant', 
+            `I've loaded TradingView data for **${data.market}:${data.symbol}**. ` +
+            "Ask me about the stock's price, technicals, earnings, dividends, or options."
+        );
+        
+        inputEl.focus();
+    }
+
+    // Add message to chat
     function addMessage(role, content) {
         const div = document.createElement('div');
         div.className = 'chat-msg ' + role;
@@ -51,6 +226,7 @@
         messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
+    // Send message
     async function sendMessage() {
         const text = inputEl.value.trim();
         if (!text) return;
@@ -64,10 +240,19 @@
         sendBtn.textContent = '...';
 
         try {
+            const payload = {
+                messages: history,
+                mode: currentMode
+            };
+            
+            if (currentMode === 'quick-analysis') {
+                payload.symbol_data = symbolData;
+            }
+            
             const res = await fetch('/api/chat', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({messages: history}),
+                body: JSON.stringify(payload),
             });
             const data = await res.json();
 
@@ -94,8 +279,14 @@
             sendMessage();
         }
     });
-
-    inputEl.focus();
+    
+    // Enter key on symbol input
+    symbolInputEl.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            fetchAndAnalyze();
+        }
+    });
 })();
 </script>
 {% endblock %}

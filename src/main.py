@@ -27,6 +27,7 @@ class OptionsAgentScheduler:
         self.cosmos = None
         self.context_provider = None
         self._cron_changed = False
+        self._summary_cron_changed = False
     
     def reschedule(self, new_cron: str, new_timezone: str = None):
         """Update cron expression and/or timezone. The run loop will pick it up on next iteration."""
@@ -34,6 +35,13 @@ class OptionsAgentScheduler:
         if new_timezone:
             self.config.timezone = new_timezone
         self._cron_changed = True
+    
+    def reschedule_summary(self, new_cron: str):
+        """Update summary agent cron expression. The run loop will pick it up on next iteration."""
+        summary_config = self.config.config.get('summary_agent', {})
+        summary_config['cron'] = new_cron
+        self.config.config['summary_agent'] = summary_config
+        self._summary_cron_changed = True
     
     def setup(self):
         """Initialize configuration, CosmosDB, and agent runner."""
@@ -74,6 +82,21 @@ class OptionsAgentScheduler:
         
         print(f"Scheduler configured with cron: {self.config.cron_expression}")
         print(f"Scheduler timezone: {self.config.timezone}")
+        
+        # Log summary agent configuration
+        summary_config = self.config.config.get('summary_agent', {})
+        summary_enabled = summary_config.get('enabled', True)
+        summary_cron = summary_config.get('cron', '0 8 * * *')
+        summary_activity_count = summary_config.get('activity_count', 3)
+        
+        print(f"\nSummary Agent Configuration:")
+        print(f"  Enabled: {summary_enabled}")
+        if summary_enabled:
+            print(f"  Cron: {summary_cron}")
+            print(f"  Timezone: {self.config.timezone}")
+            print(f"  Activity count: {summary_activity_count}")
+        else:
+            print(f"  Status: Disabled in config")
     
     def run_all_agents(self):
         """Execute all agents (bridges async to sync for scheduler)."""
@@ -103,9 +126,6 @@ class OptionsAgentScheduler:
             await run_open_call_monitor(config, runner, cosmos, ctx)
             await run_open_put_monitor(config, runner, cosmos, ctx)
             
-            # Run summary agent (if enabled and Telegram is configured)
-            await self._run_summary_agent_if_enabled()
-            
         except Exception as e:
             print(f"ERROR during agent execution: {str(e)}")
         
@@ -115,12 +135,22 @@ class OptionsAgentScheduler:
         print(f"# Completed scheduled agent run at {now_tz.strftime('%Y-%m-%d %H:%M:%S %Z')}")
         print(f"{'#'*70}\n")
     
-    async def _run_summary_agent_if_enabled(self):
+    def run_summary_agent_job(self):
+        """Execute summary agent (bridges async to sync for scheduler)."""
+        asyncio.run(self._run_summary_agent_async())
+    
+    async def _run_summary_agent_async(self):
         """Run summary agent if enabled in config."""
         summary_config = self.config.config.get('summary_agent', {})
         if not summary_config.get('enabled', True):
             print("⏭️  Summary agent disabled in config")
             return
+        
+        tz = pytz.timezone(self.config.timezone)
+        now_tz = datetime.now(tz)
+        print(f"\n{'='*70}")
+        print(f"📊 Summary Agent - Scheduled run at {now_tz.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        print(f"{'='*70}\n")
         
         activity_count = summary_config.get('activity_count', 3)
         await self.runner.run_summary_agent(
@@ -149,30 +179,77 @@ class OptionsAgentScheduler:
         
         tz = pytz.timezone(self.config.timezone)
         now_tz = datetime.now(tz)
-        cron = croniter(self.config.cron_expression, now_tz)
         
-        # Schedule via cron
+        # Initialize main scheduler cron
+        cron = croniter(self.config.cron_expression, now_tz)
         next_run = cron.get_next(datetime)
-        print(f"Next scheduled run: {next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        
+        # Initialize summary agent cron (if enabled)
+        summary_config = self.config.config.get('summary_agent', {})
+        summary_enabled = summary_config.get('enabled', True)
+        summary_cron_expr = summary_config.get('cron', '0 8 * * *')
+        summary_next_run = None
+        summary_cron = None
+        
+        if summary_enabled:
+            try:
+                summary_cron = croniter(summary_cron_expr, now_tz)
+                summary_next_run = summary_cron.get_next(datetime)
+                print(f"\nMonitor Agents - Next run: {next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+                print(f"Summary Agent  - Next run: {summary_next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            except (ValueError, KeyError) as e:
+                print(f"⚠️  Invalid summary agent cron expression '{summary_cron_expr}': {e}")
+                print(f"⚠️  Summary agent scheduling disabled")
+                summary_enabled = False
+        else:
+            print(f"\nMonitor Agents - Next run: {next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            print(f"Summary Agent  - Disabled")
+        
         print("Press Ctrl+C to stop\n")
         
         while self.running:
-            # Check if cron was updated from the web UI
+            # Check if main cron was updated from the web UI
             if self._cron_changed:
                 self._cron_changed = False
                 tz = pytz.timezone(self.config.timezone)
                 now_tz = datetime.now(tz)
                 cron = croniter(self.config.cron_expression, now_tz)
                 next_run = cron.get_next(datetime)
-                print(f"Cron rescheduled to: {self.config.cron_expression}")
+                print(f"Monitor agents cron rescheduled to: {self.config.cron_expression}")
                 print(f"Timezone: {self.config.timezone}")
                 print(f"Next scheduled run: {next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}\n")
+            
+            # Check if summary cron was updated from the web UI
+            if self._summary_cron_changed:
+                self._summary_cron_changed = False
+                summary_config = self.config.config.get('summary_agent', {})
+                summary_cron_expr = summary_config.get('cron', '0 8 * * *')
+                try:
+                    tz = pytz.timezone(self.config.timezone)
+                    now_tz = datetime.now(tz)
+                    summary_cron = croniter(summary_cron_expr, now_tz)
+                    summary_next_run = summary_cron.get_next(datetime)
+                    summary_enabled = summary_config.get('enabled', True)
+                    print(f"Summary agent cron rescheduled to: {summary_cron_expr}")
+                    print(f"Next scheduled run: {summary_next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}\n")
+                except (ValueError, KeyError) as e:
+                    print(f"⚠️  Invalid summary agent cron expression '{summary_cron_expr}': {e}")
+                    summary_enabled = False
 
             now_tz = datetime.now(tz)
+            
+            # Check main scheduler
             if now_tz >= next_run:
                 self.run_all_agents()
                 next_run = cron.get_next(datetime)
-                print(f"Next scheduled run: {next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}\n")
+                print(f"Monitor Agents - Next run: {next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}\n")
+            
+            # Check summary agent scheduler
+            if summary_enabled and summary_next_run and now_tz >= summary_next_run:
+                self.run_summary_agent_job()
+                summary_next_run = summary_cron.get_next(datetime)
+                print(f"Summary Agent  - Next run: {summary_next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}\n")
+            
             time.sleep(1)
         
         print("Scheduler stopped. Goodbye!")

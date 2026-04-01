@@ -693,6 +693,10 @@ Analyze the position risk and output your activity in the required JSON format. 
         """
         from .tv_summary_instructions import TV_SUMMARY_INSTRUCTIONS
         
+        logger.info("="*70)
+        logger.info("Summary Agent - Starting execution")
+        logger.info("  Activity count per symbol: %d", activity_count)
+        
         # Gate check: skip if Telegram is not enabled
         if telegram_notifier is None:
             logger.info("Summary agent skipped — Telegram notifier not configured")
@@ -706,12 +710,14 @@ Analyze the position risk and output your activity in the required JSON format. 
             print("⏭️  Summary agent skipped — Telegram notifications disabled")
             return
         
+        logger.info("Telegram notifier configured - proceeding with summary")
         print("\n" + "="*70)
         print("📊 DAILY PORTFOLIO SUMMARY AGENT")
         print("="*70)
         
         try:
             # Fetch recent activities by symbol
+            logger.info("Fetching recent activities from CosmosDB (limit=%d per symbol)", activity_count)
             activities_by_symbol = cosmos.get_recent_activities_by_symbol(
                 limit_per_symbol=activity_count
             )
@@ -721,11 +727,14 @@ Analyze the position risk and output your activity in the required JSON format. 
                 print("ℹ️  No activities found — nothing to summarize")
                 return
             
+            logger.info("Loaded activities for %d symbol(s)", len(activities_by_symbol))
             print(f"📋 Loaded activities for {len(activities_by_symbol)} symbol(s)")
             
             # Format activities data for the agent
             import json
             activities_text = json.dumps(activities_by_symbol, indent=2, default=str)
+            
+            logger.info("Building prompt with activities data (%d chars)", len(activities_text))
             
             # Build the prompt
             prompt = f"""{TV_SUMMARY_INSTRUCTIONS}
@@ -744,11 +753,13 @@ Generate your 3-line summaries now. Output plain text only — no JSON, no code 
             # Run the agent
             agent = ChatAgent(name="SummaryAgent", client=self.client)
             print("🤖 Running summary agent...")
-            logger.info("Starting summary agent with %d symbols", len(activities_by_symbol))
+            logger.info("Invoking ChatAgent with %d symbols", len(activities_by_symbol))
             
             run_start = time.time()
             response = await agent.run(prompt)
             run_duration = round(time.time() - run_start, 2)
+            
+            logger.info("Agent response received in %.2fs", run_duration)
             
             # Extract the summary text
             summary_text = response.text.strip()
@@ -758,6 +769,7 @@ Generate your 3-line summaries now. Output plain text only — no JSON, no code 
                 print("⚠️  Summary agent returned empty response")
                 return
             
+            logger.info("Summary text extracted (%d chars)", len(summary_text))
             print(f"✅ Summary generated ({run_duration}s)")
             print("\n" + "-"*70)
             print(summary_text)
@@ -765,9 +777,11 @@ Generate your 3-line summaries now. Output plain text only — no JSON, no code 
             
             # Send to Telegram
             print("📤 Sending summary to Telegram...")
+            logger.info("Preparing Telegram message...")
             header = "📊 <b>Daily Portfolio Summary</b>\n\n"
             telegram_message = header + "<pre>" + summary_text + "</pre>"
             
+            logger.info("Sending message to Telegram (length=%d chars)", len(telegram_message))
             success = telegram_notifier.send_message(telegram_message)
             
             if success:
@@ -779,17 +793,21 @@ Generate your 3-line summaries now. Output plain text only — no JSON, no code 
             
             # Telemetry (best-effort)
             try:
+                logger.debug("Writing telemetry data to CosmosDB")
                 cosmos.write_telemetry("agent_run", {
                     "symbol": "ALL",
                     "agent_type": "summary",
                     "duration_seconds": run_duration,
                     "symbols_count": len(activities_by_symbol),
                 })
-            except Exception:
-                logger.debug("Telemetry write skipped for summary agent")
+                logger.debug("Telemetry written successfully")
+            except Exception as telem_err:
+                logger.debug("Telemetry write skipped for summary agent: %s", str(telem_err))
         
         except Exception as e:
             logger.error("Summary agent failed: %s", str(e), exc_info=True)
             print(f"❌ Summary agent failed: {str(e)}")
         
+        logger.info("Summary Agent - Completed execution")
+        logger.info("="*70)
         print("="*70 + "\n")

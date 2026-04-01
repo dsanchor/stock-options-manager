@@ -210,6 +210,96 @@ Each activity document in CosmosDB:
 
 For `SELL` activities, `strike`, `expiration`, and premium fields are populated. A corresponding `alert` document is also created with the actionable subset of the activity data.
 
+### Telegram Notifications
+
+When a `SELL`, `ROLL`, or `CLOSE` alert is generated, a Telegram notification is sent if enabled (see [Configuration](#configuration)). The message includes the symbol, action, and key details (strike, expiration, risk flags).
+
+## Dual-Mode Chat Experience
+
+The `/chat` page now offers two distinct modes for analysis:
+
+### Portfolio Chat
+
+Analyze tracked symbols using your CosmosDB watchlist and position data. The chat context includes:
+- Recent activities and alerts for the selected symbol
+- Open positions (strike, expiration, status)
+- Historical decisions and risk flags
+
+Perfect for in-depth analysis of symbols you're actively tracking.
+
+**How to use:**
+1. Visit `/chat`
+2. Click "Portfolio Chat"
+3. Select a tracked symbol or ask general questions about your portfolio
+4. Get insights based on your historical data and positions
+
+### Quick Analysis
+
+Analyze any symbol (tracked or not) using live TradingView data, without saving to your database. Quick Analysis fetches:
+- Real-time overview (market cap, P/E, dividend yield, etc.)
+- Technical indicators (RSI, MACD, moving averages, etc.)
+- Analyst forecasts (price targets, ratings)
+- Options chain (if available)
+- Dividend history
+
+Perfect for researching new symbols before committing to tracking.
+
+**How to use:**
+1. Visit `/chat`
+2. Click "Quick Analysis"
+3. Enter a symbol and select its market (NASDAQ, NYSE, AMEX, OTC)
+4. Click "Fetch & Analyze"
+5. Chat about the symbol with live data context
+6. Use "Change Mode" to switch back to Portfolio Chat or select a different symbol
+
+**Configuration:** Quick Analysis is read-only — data is fetched but never saved to CosmosDB. Rate limiting is handled gracefully with clear error messages.
+
+## Summarization Agent
+
+An optional daily summary agent that sends a Telegram notification with a digest of your portfolio activities. Useful for staying informed without checking the dashboard daily.
+
+### Features
+
+- **Daily Summaries** — Automatically runs on a configurable schedule (default: 8 AM, America/New_York timezone)
+- **Per-Symbol Activity Digest** — Summarizes the N most recent activities for each tracked symbol (configurable, default: 3)
+- **Configurable Schedule** — Set the cron expression to match your timezone and preferences
+- **Enable/Disable Toggle** — Turn on/off without restarting the application
+- **Telegram Integration** — Requires Telegram notifications to be enabled; summaries are sent via Telegram
+
+### Configuration
+
+Configure the Summarization Agent in the **Settings** page (`/settings`):
+
+1. **Enable/Disable** — Toggle the agent on/off
+2. **Cron Expression** — Set the schedule (e.g., `0 8 * * *` for 8 AM daily)
+3. **Activity Count** — Number of recent activities per symbol to include in the summary (1–5)
+4. **Timezone** — Uses the global scheduler timezone from `config.yaml` (default: `America/New_York`)
+
+Or configure in `config.yaml`:
+```yaml
+summary_agent:
+  enabled: true
+  cron: "0 8 * * *"        # 8 AM daily (America/New_York timezone)
+  activity_count: 3         # Latest N activities per symbol
+```
+
+### How It Works
+
+1. The summarization agent runs on the configured schedule
+2. It queries CosmosDB for all tracked symbols with recent activities
+3. For each symbol, it retrieves the N most recent activities and any related alerts
+4. The agent uses Azure OpenAI to generate a concise summary of recent decisions and trends
+5. A Telegram message is sent with the summary (if Telegram is enabled)
+6. The message includes per-symbol activity digests and portfolio-wide insights
+
+### Requirements
+
+- **Telegram Notifications** must be enabled (see `/settings`)
+- **Azure OpenAI** credentials configured
+- Valid **CosmosDB** connection
+
+If Telegram is disabled, the summary is still generated but not sent.
+
 ## Project Structure
 
 ```
@@ -261,8 +351,11 @@ stock-options-manager/
 - **Alert + Activities** (`/alerts/{agent}/{symbol}/{index}`) — Full alert JSON and backing activities from the same time window.
 - **Symbol Detail** (`/symbols/{symbol}`) — Full detail page for a symbol: expandable positions with source traceability, Close/Roll/Delete actions, activities, alerts, and "Open Position from Alert" / "Roll Position from Alert" buttons on activity detail; per-symbol chat.
 - **Fetch Preview** (`/symbols/{symbol}/fetch-preview`) — Debug page showing raw TradingView data for each resource (overview, technicals, forecast, options chain) with fetch timing and size.
-- **Chat** (`/chat`) — Ask questions about your portfolio. Uses the same Azure OpenAI model with recent activities as context.
-- **Settings** (`/settings`) — Scheduler config, Telegram notifications toggle & test button, runtime stats (today/7d/30d telemetry), and a Debug TradingView Fetch tool for testing data fetching per symbol. Settings are persisted to CosmosDB and survive application restarts and deployments. Changes made in the Settings UI are immediately available to all components (scheduler, telegram notifier, etc.) without requiring a restart.
+- **Chat** (`/chat`) — Dual-mode chat experience powered by Azure OpenAI:
+  - **Portfolio Chat** — Analyze tracked symbols using CosmosDB data (watchlists, positions, recent activities). Click "Portfolio Chat" to ask questions about your tracked symbols.
+  - **Quick Analysis** — Analyze any symbol (tracked or not) by fetching live TradingView data without saving to the database. Click "Quick Analysis", select a market (NASDAQ/NYSE/AMEX/OTC), and get instant analysis without committing to tracking.
+  - Mode selector on the chat page lets you switch between modes at any time.
+- **Settings** (`/settings`) — Scheduler config, Telegram notifications toggle & test button, Summarization Agent config (cron schedule & activity count), runtime stats (today/7d/30d telemetry), and a Debug TradingView Fetch tool for testing data fetching per symbol. Settings are persisted to CosmosDB and survive application restarts and deployments. Changes made in the Settings UI are immediately available to all components (scheduler, telegram notifier, summarization agent, etc.) without requiring a restart.
 
 ---
 
