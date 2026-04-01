@@ -946,3 +946,103 @@ The LLM was ignoring the Earnings Decision Matrix (added in ccf299a) because it 
 - `src/tv_open_put_instructions.py`
 
 **Commit:** b51ea1a
+
+---
+
+## Quick Analysis Chat Decision Summary Table Pattern
+
+**Date:** 2026-04-02  
+**Author:** Rusty (Agent Dev)  
+**Status:** Implemented  
+**Scope:** Web UI / Chat Feature
+
+### Context
+
+The quick analysis chat feature provides conversational analysis of options opportunities, but users requested a more structured way to evaluate decisions. They need to quickly see:
+- Both sides: reasons FOR and AGAINST opening a position
+- Specific recommendations: strikes and expiration dates with reasoning
+- Gate-based risk assessment (earnings, technicals)
+- Actionable decision support
+
+### Decision
+
+Added a **mandatory Decision Summary Table** to the quick analysis chat instructions (both call and put variants).
+
+#### Table Structure (9–10 Key Factors):
+
+1. **Overall Recommendation** — Clear stance (Favorable / Cautiously Favorable / Neutral / Not Recommended)
+2. **Key Reasons AGAINST Opening** — Specific risks with examples (earnings timing, technical red flags, gate violations)
+3. **Key Reasons FOR Opening** — Specific opportunities (support levels, oversold conditions, technical setups)
+4. **Suggested Strike Prices** — 1–2 strikes with reasoning (deltas, support/resistance, moneyness)
+5. **Suggested Expiration Dates** — DTE ranges with reasoning (earnings timing, theta decay, technical timeframe)
+6. **Earnings Gate Status** — SAFE / CAUTION / UNKNOWN with specific guidance based on gate logic
+7. **Technical Gate Status** — Momentum summary (Bullish/Neutral/Bearish with key indicators)
+8. **Primary Risk to Monitor** — Single most important risk factor to watch
+9. **Profit Target / Exit Plan** — Tactical guidance (50% profit rule, roll scenarios)
+10. **Assignment Readiness** (Puts Only) — "Would you own this stock at this strike price?"
+
+### Implementation
+
+- **Location:** `src/tv_open_call_chat_instructions.py` and `src/tv_open_put_chat_instructions.py`
+- **Format:** Markdown table rendered after conversational analysis
+- **Style:** Conversational analysis (3–5 paragraphs) → Decision Summary Table
+- **Specificity:** Table must reference actual numbers (prices, deltas, dates, DTE) from the analysis
+- **Balance:** Present both risks (AGAINST) and opportunities (FOR) equally
+
+### Rationale
+
+1. **Two-mode presentation:**
+   - Conversational analysis for understanding and context
+   - Structured table for decision-making and scanning
+
+2. **Gate integration:**
+   - Leverages existing gate logic from monitoring agents (earnings gates, technical gates)
+   - Makes gate status visible and actionable in the analysis
+
+3. **Balanced perspective:**
+   - Forces presentation of BOTH sides (risks and opportunities)
+   - Helps users make informed decisions, not just confirmation bias
+
+4. **Actionable specificity:**
+   - Not generic advice ("consider options") but specific ("$435 strike at 0.25 delta, 14 DTE expiring before earnings in 18 days")
+   - References support/resistance levels, deltas, DTE, earnings timing
+
+5. **User-centric:**
+   - Answers the key question: "Should I open this position, and if so, how?"
+   - Provides clear exit/profit targets
+
+### Alternatives Considered
+
+1. **Purely conversational (no table):** Too hard to scan and extract decision factors
+2. **Table only (no conversation):** Loses context and nuance
+3. **Separate "summary" endpoint:** Added complexity, better to integrate in one response
+4. **JSON output:** Not human-friendly for chat interface
+
+### Consequences
+
+#### Positive
+- ✅ Users get clear, scannable decision support
+- ✅ Both risks and opportunities presented equally
+- ✅ Gate logic made visible and actionable
+- ✅ Specific recommendations (strikes, dates) with reasoning
+- ✅ Consistent format across call and put analyses
+
+#### Neutral
+- Increases response length (conversational + table)
+- Requires LLM to follow structured format (tested, works well with GPT-4)
+
+#### Negative
+- None identified yet. May need to refine table format based on user feedback.
+
+### Related Files
+
+- `src/tv_open_call_chat_instructions.py` — Call analysis instructions with table
+- `src/tv_open_put_chat_instructions.py` — Put analysis instructions with table
+- `web/app.py` (lines 1688–1699) — Dynamic instruction loading
+- `.squad/agents/rusty/history.md` — Implementation log
+
+### Future Considerations
+
+- May add "confidence score" based on gate alignment
+- Could add "similar historical setups" if we build a pattern library
+- Consider visual formatting enhancements (color coding for gate status)
