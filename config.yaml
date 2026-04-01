@@ -24,3 +24,8 @@ telegram:
   enabled: false
   bot_token: "${TELEGRAM_BOT_TOKEN}"
   chat_id: "${TELEGRAM_CHAT_ID}"
+
+summary_agent:
+  enabled: true
+  cron: "0 8 * * *"  # 8 AM daily (America/New_York timezone)
+  activity_count: 3  # Latest N activities per symbol

@@ -78,6 +78,44 @@
         </div>
     </div>
 
+    <!-- Summary Agent -->
+    <div class="card settings-card">
+        <div class="card-header">
+            <h2>📊 Summary Agent</h2>
+            <span class="badge badge-{{ 'wait' if summary_enabled else 'sell' }}">
+                {{ '✅ Enabled' if summary_enabled else '❌ Disabled' }}
+            </span>
+        </div>
+        <p class="hint">Daily portfolio summary sent via Telegram. Provides 3-line summaries per symbol with position status, technical context, and next action. <strong>Requires Telegram notifications to be enabled.</strong></p>
+        <div style="padding: 0.75rem 1.25rem;">
+            <div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:1rem;">
+                <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+                    <input type="checkbox" name="summary_enabled" value="true" {{ 'checked' if summary_enabled }}>
+                    <span>Enable summary agent</span>
+                </label>
+            </div>
+            <div style="display:grid; grid-template-columns:2fr 1fr; gap:0.75rem;">
+                <div>
+                    <label style="display:block; font-size:0.85rem; color:var(--text-muted); margin-bottom:0.3rem;">
+                        Cron Schedule
+                        <span style="font-size:0.8rem; color:var(--text-muted); font-weight:normal;" title="When to send daily summaries (uses main scheduler timezone)">ⓘ</span>
+                    </label>
+                    <input type="text" name="summary_cron" value="{{ summary_cron }}" placeholder="0 8 * * *" spellcheck="false"
+                           style="width:100%; padding:0.5rem 0.8rem; background:var(--bg); border:1px solid var(--border); color:var(--text); font-family:var(--font-mono); font-size:0.85rem; border-radius:var(--radius);">
+                    <small style="display:block; margin-top:0.3rem; color:var(--text-muted); font-size:0.75rem;">Example: <code>0 8 * * *</code> = 8 AM daily</small>
+                </div>
+                <div>
+                    <label style="display:block; font-size:0.85rem; color:var(--text-muted); margin-bottom:0.3rem;">
+                        Activity Count
+                        <span style="font-size:0.8rem; color:var(--text-muted); font-weight:normal;" title="Number of recent activities per symbol to analyze">ⓘ</span>
+                    </label>
+                    <input type="number" name="summary_activity_count" value="{{ summary_activity_count }}" min="1" max="10"
+                           style="width:100%; padding:0.5rem 0.8rem; background:var(--bg); border:1px solid var(--border); color:var(--text); font-family:var(--font-mono); font-size:0.85rem; border-radius:var(--radius);">
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="form-actions">
         <button type="submit" class="btn btn-primary">💾 Save</button>
     </div>

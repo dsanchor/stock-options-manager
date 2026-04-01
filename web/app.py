@@ -1096,6 +1096,12 @@ async def settings_config_page(request: Request):
     telegram_bot_token = telegram_cfg.get("bot_token", "")
     telegram_chat_id = telegram_cfg.get("chat_id", "")
     
+    # Summary agent settings
+    summary_cfg = config.get("summary_agent", {})
+    summary_enabled = summary_cfg.get("enabled", True)
+    summary_cron = summary_cfg.get("cron", "0 8 * * *")
+    summary_activity_count = summary_cfg.get("activity_count", 3)
+    
     # Resolve env vars for display
     if telegram_bot_token.startswith("${"):
         telegram_bot_token = _resolve_env(telegram_bot_token)
@@ -1109,6 +1115,9 @@ async def settings_config_page(request: Request):
         "telegram_enabled": telegram_enabled,
         "telegram_bot_token": telegram_bot_token,
         "telegram_chat_id": telegram_chat_id,
+        "summary_enabled": summary_enabled,
+        "summary_cron": summary_cron,
+        "summary_activity_count": summary_activity_count,
     })
 
 
@@ -1173,6 +1182,40 @@ async def settings_config_save(request: Request):
     _write_config(config)
     saved.append("Telegram settings")
 
+    # Summary agent settings
+    summary_enabled = form.get("summary_enabled") == "true"
+    summary_cron = str(form.get("summary_cron", "0 8 * * *")).strip()
+    summary_activity_count_str = str(form.get("summary_activity_count", "3")).strip()
+    try:
+        summary_activity_count = int(summary_activity_count_str)
+        summary_activity_count = max(1, min(10, summary_activity_count))  # Clamp to 1-10
+    except ValueError:
+        summary_activity_count = 3
+    
+    # Validate cron if provided
+    if summary_cron:
+        try:
+            croniter(summary_cron)
+            # Update CosmosDB first
+            if cosmos:
+                cosmos_settings = _load_settings_from_cosmos(cosmos) or {}
+                cosmos_settings.setdefault("summary_agent", {})
+                cosmos_settings["summary_agent"]["enabled"] = summary_enabled
+                cosmos_settings["summary_agent"]["cron"] = summary_cron
+                cosmos_settings["summary_agent"]["activity_count"] = summary_activity_count
+                _save_settings_to_cosmos(cosmos, cosmos_settings)
+            
+            # Also update config.yaml for backward compat
+            config = _load_config()
+            config.setdefault("summary_agent", {})
+            config["summary_agent"]["enabled"] = summary_enabled
+            config["summary_agent"]["cron"] = summary_cron
+            config["summary_agent"]["activity_count"] = summary_activity_count
+            _write_config(config)
+            saved.append("Summary agent")
+        except (ValueError, KeyError):
+            pass
+
     # Re-read for display
     cosmos_settings = _load_settings_from_cosmos(cosmos)
     if cosmos_settings:
@@ -1190,6 +1233,12 @@ async def settings_config_save(request: Request):
         tg_bot_token = _resolve_env(tg_bot_token)
     if tg_chat_id.startswith("${"):
         tg_chat_id = _resolve_env(tg_chat_id)
+    
+    # Summary agent settings
+    summary_cfg = config.get("summary_agent", {})
+    sum_enabled = summary_cfg.get("enabled", True)
+    sum_cron = summary_cfg.get("cron", "0 8 * * *")
+    sum_activity_count = summary_cfg.get("activity_count", 3)
 
     return templates.TemplateResponse("settings_config.html", {
         "request": request,
@@ -1199,6 +1248,9 @@ async def settings_config_save(request: Request):
         "telegram_enabled": tg_enabled,
         "telegram_bot_token": tg_bot_token,
         "telegram_chat_id": tg_chat_id,
+        "summary_enabled": sum_enabled,
+        "summary_cron": sum_cron,
+        "summary_activity_count": sum_activity_count,
     })
 
 

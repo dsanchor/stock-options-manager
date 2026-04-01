@@ -610,6 +610,41 @@ class CosmosDBService:
         ))
         return {r["symbol"]: r["count"] for r in results}
 
+    def get_recent_activities_by_symbol(self, limit_per_symbol: int = 3) -> dict[str, list[dict]]:
+        """Get N most recent activities per symbol (cross-partition query).
+        
+        Args:
+            limit_per_symbol: Number of activities to retrieve per symbol (default: 3)
+        
+        Returns:
+            Dictionary mapping symbol -> list of activity documents (newest first)
+        """
+        # First, get all symbols
+        symbols_query = "SELECT DISTINCT c.symbol FROM c WHERE c.doc_type = 'symbol_config'"
+        symbols = list(self.container.query_items(
+            query=symbols_query,
+            enable_cross_partition_query=True,
+        ))
+        
+        result = {}
+        for sym_doc in symbols:
+            symbol = sym_doc["symbol"]
+            # Get top N activities for this symbol, ordered by timestamp desc
+            query = (
+                "SELECT TOP @limit * FROM c "
+                "WHERE c.doc_type = 'activity' "
+                "ORDER BY c.timestamp DESC"
+            )
+            activities = list(self.container.query_items(
+                query=query,
+                parameters=[{"name": "@limit", "value": limit_per_symbol}],
+                partition_key=symbol,
+            ))
+            if activities:
+                result[symbol] = activities
+        
+        return result
+
     # ── Telemetry ──────────────────────────────────────────────────────
 
     def write_telemetry(self, metric_type: str, data: dict) -> None:

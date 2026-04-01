@@ -103,6 +103,9 @@ class OptionsAgentScheduler:
             await run_open_call_monitor(config, runner, cosmos, ctx)
             await run_open_put_monitor(config, runner, cosmos, ctx)
             
+            # Run summary agent (if enabled and Telegram is configured)
+            await self._run_summary_agent_if_enabled()
+            
         except Exception as e:
             print(f"ERROR during agent execution: {str(e)}")
         
@@ -111,6 +114,20 @@ class OptionsAgentScheduler:
         print(f"\n{'#'*70}")
         print(f"# Completed scheduled agent run at {now_tz.strftime('%Y-%m-%d %H:%M:%S %Z')}")
         print(f"{'#'*70}\n")
+    
+    async def _run_summary_agent_if_enabled(self):
+        """Run summary agent if enabled in config."""
+        summary_config = self.config.config.get('summary_agent', {})
+        if not summary_config.get('enabled', True):
+            print("⏭️  Summary agent disabled in config")
+            return
+        
+        activity_count = summary_config.get('activity_count', 3)
+        await self.runner.run_summary_agent(
+            cosmos=self.cosmos,
+            telegram_notifier=self.runner.telegram_notifier,
+            activity_count=activity_count
+        )
     
     def signal_handler(self, sig, frame):
         """Handle graceful shutdown on Ctrl+C."""
