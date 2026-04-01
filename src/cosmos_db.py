@@ -600,10 +600,9 @@ class CosmosDBService:
                           limit: int = 100) -> list[dict]:
         """Get activities across all symbols (cross-partition query).
         
-        Returns activities that are NOT alerts (is_alert != true).
+        Returns all activities, including both alerts and non-alerts.
         """
-        conditions = ["c.doc_type = 'activity'",
-                      "(c.is_alert = false OR NOT IS_DEFINED(c.is_alert))"]
+        conditions = ["c.doc_type = 'activity'"]
         params: list[dict] = []
         if agent_type:
             conditions.append("c.agent_type = @agent_type")

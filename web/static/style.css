@@ -326,6 +326,10 @@ tbody td.num { text-align: right; font-family: var(--font-mono); }
 .activity-item:last-child { border-bottom: none; }
 .activity-time { font-family: var(--font-mono); color: var(--text-muted); font-size: 0.8rem; min-width: 130px; }
 .activity-agent { color: var(--text-muted); }
+.alert-indicator { 
+    font-size: 1rem; 
+    opacity: 0.9;
+}
 
 /* ── Detail page ── */
 .detail-grid {

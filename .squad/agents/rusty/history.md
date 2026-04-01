@@ -519,3 +519,123 @@ After migration completes:
 **Session Log:** `.squad/log/2026-04-01T21-39-cosmosdb-unified-schema.md`  
 **Orchestration Log:** `.squad/orchestration-log/2026-04-01T21-39-rusty.md`
 
+
+## Position ID Uniqueness Fix (2026-04-01T21:49:00Z)
+
+**Status:** ✅ Completed  
+**Critical Bug Fix:** Position ID collisions causing data integrity issues
+
+**Problem:**
+Old position ID format: `pos_{symbol}_{option_type}_{strike}_{expiration}`
+- Caused collisions when rolling A → B → A
+- Caused collisions when closing and reopening same strike/expiration
+- Led to delete operations affecting wrong positions
+- Led to close operations failing on rolled positions
+
+**Solution:**
+New position ID format: `pos_{symbol}_{option_type}_{strike}_{expiration}_{timestamp}`
+- Timestamp format: `YYYYMMDD_HHMMSS` (UTC)
+- Example: `pos_AAPL_PUT_150.0_20260417_20260401_214900`
+- Guarantees uniqueness across position lifetime
+
+**Implementation:**
+1. Added `_generate_position_id()` static method to `CosmosDBService`
+2. Updated `add_position()` to use new ID generation
+3. Updated `roll_position()` to use new ID generation
+4. Removed collision check logic (no longer needed with timestamps)
+
+**Files Modified:**
+- `src/cosmos_db.py`: Added helper method, updated both position creation paths
+
+**Testing:**
+- Verified roll A → B → A creates 3 distinct IDs
+- Verified close/reopen creates 2 distinct IDs
+- Confirmed module imports successfully
+- All position creation paths covered (add_position, roll_position)
+
+**Impact:**
+- Fixes cascade delete bug
+- Fixes close operation failures
+- Ensures data integrity for all position operations
+- No breaking changes to API (position_id is internal)
+
+
+## Run Analysis Symbol Scope Bug Fix (2026-04-01T22:15:00Z)
+
+**Status:** ✅ Completed  
+**Critical Bug Fix:** Run analysis triggering analysis for all symbols instead of single symbol
+
+**Problem:**
+From symbol detail page (e.g., AAPL), clicking "Run Analysis" for open positions:
+- Was analyzing ALL symbols with open call/put positions
+- Should only analyze AAPL's open positions
+- Same issue for covered call and cash secured put analysis triggers
+
+**Root Cause:**
+- Template called `/api/trigger/{agent_type}` without symbol parameter
+- Endpoint didn't accept or pass symbol to agents
+- Agent functions used `get_symbols_with_active_positions()` for all symbols
+- Agent functions used `get_covered_call_symbols()` / `get_cash_secured_put_symbols()` for all symbols
+
+**Solution:**
+1. **Agent Functions:** Added optional `symbol: str = None` parameter to all 4 agents:
+   - `run_open_call_monitor()` — filters to single symbol's call positions
+   - `run_open_put_monitor()` — filters to single symbol's put positions
+   - `run_covered_call_analysis()` — analyzes single symbol only
+   - `run_cash_secured_put_analysis()` — analyzes single symbol only
+
+2. **Web Endpoint:** Modified `/api/trigger/{agent_type}`:
+   - Accepts optional `symbol` from request body (JSON)
+   - Passes `symbol` to `_run_agent_in_background()`
+   - Updated `_run_agent_in_background()` signature
+
+3. **Template:** Modified `symbol_detail.html`:
+   - Sends `{ symbol: SYMBOL }` in POST body with JSON headers
+   - Symbol value available from existing template variable
+
+**Behavior:**
+- **With symbol:** Analyzes only that symbol's positions/opportunities
+- **Without symbol:** Analyzes all symbols (backward compatible for dashboard/settings)
+
+**Files Modified:**
+- `src/open_call_monitor_agent.py`
+- `src/open_put_monitor_agent.py`
+- `src/covered_call_agent.py`
+- `src/cash_secured_put_agent.py`
+- `web/app.py`
+- `web/templates/symbol_detail.html`
+
+**Testing:**
+- Python syntax validation passed for all modified files
+- No other trigger API calls found (scope limited to symbol detail page)
+
+### Activity Dashboard Enhancement (2026-04-01)
+**Status:** ✅ Completed  
+**Request:** Show ALL activities in Recent Activity section (both alerts and non-alerts), add visual indicators for alerts, make entries clickable
+
+**Changes Made:**
+1. **src/cosmos_db.py** — Modified `get_all_activities()` method:
+   - Removed filter that excluded alerts: `"(c.is_alert = false OR NOT IS_DEFINED(c.is_alert))"`
+   - Now returns all activities regardless of alert status
+   - Updated docstring to reflect this behavior
+
+2. **web/templates/dashboard.html** — Enhanced activity items:
+   - Added `clickable-row` class to activity items for hover/click styling
+   - Added `data-href="/symbols/{{ item.symbol }}"` to make entries clickable
+   - Added conditional megaphone emoji (📢) indicator for `is_alert=true` entries
+   - Clicking any activity now navigates to the symbol detail page
+
+3. **web/static/style.css** — Added alert indicator styling:
+   - New `.alert-indicator` class for consistent icon display
+   - Icon appears between timestamp and activity badge
+
+**Pattern:** The existing `clickable-row` infrastructure (CSS + JavaScript) automatically handles navigation without additional code.
+
+**User Preference:** Visual distinction via emoji indicator rather than color coding allows alerts to stand out while maintaining clean design.
+
+## Learnings
+
+- **Activity Dashboard Data Flow:** Dashboard calls `cosmos.get_all_activities()` → filters closed positions → enriches with agent labels → passes to template
+- **Reusable Click Pattern:** The `clickable-row` class with `data-href` is already wired in app.js (lines 5-9), making any element clickable by just adding those attributes
+- **Alert/Activity Distinction:** The data model supports both alerts (is_alert=true) and regular activities in the same collection, allowing flexible display options
+- **Icon Choice:** Megaphone emoji (📢) provides better semantic meaning for "alert" than exclamation (which could mean error/warning)
