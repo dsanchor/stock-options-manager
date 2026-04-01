@@ -8,69 +8,70 @@
 </div>
 
 <!-- Mode Selection Screen -->
-<div id="modeSelector" class="card" style="display: block;">
-    <h2 style="margin-bottom: 1.5rem; text-align: center;">Choose Chat Mode</h2>
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; max-width: 800px; margin: 0 auto;">
-        <div class="mode-option" onclick="selectMode('portfolio')">
-            <div class="mode-icon">💼</div>
-            <h3>Portfolio Chat</h3>
-            <p>Chat about your tracked symbols and recent analysis activities</p>
+<div id="modeSelector" style="display: block;">
+    <div class="card" style="margin-bottom: 1.5rem;">
+        <div class="card-header">
+            <h2>Choose Chat Mode</h2>
         </div>
-        <div class="mode-option" onclick="selectMode('quick-analysis')">
-            <div class="mode-icon">🔍</div>
-            <h3>Quick Analysis</h3>
-            <p>Analyze any symbol (not yet tracked) using live TradingView data</p>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; padding: 1.25rem;">
+            <div style="padding: 1.5rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; transition: all 0.2s;" onclick="selectMode('portfolio')" onmouseenter="this.style.borderColor='var(--accent-blue)'; this.style.background='var(--bg-hover)';" onmouseleave="this.style.borderColor='var(--border)'; this.style.background='var(--bg-input)';">
+                <div style="font-size: 2.5rem; text-align: center; margin-bottom: 1rem;">💼</div>
+                <h3 style="font-size: 1.05rem; font-weight: 600; margin-bottom: 0.5rem; text-align: center; color: var(--text);">Portfolio Chat</h3>
+                <p style="font-size: 0.85rem; color: var(--text-muted); text-align: center; line-height: 1.4;">Chat about your tracked symbols and recent analysis activities</p>
+            </div>
+            <div style="padding: 1.5rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; transition: all 0.2s;" onclick="selectMode('quick-analysis')" onmouseenter="this.style.borderColor='var(--accent-blue)'; this.style.background='var(--bg-hover)';" onmouseleave="this.style.borderColor='var(--border)'; this.style.background='var(--bg-input)';">
+                <div style="font-size: 2.5rem; text-align: center; margin-bottom: 1rem;">🔍</div>
+                <h3 style="font-size: 1.05rem; font-weight: 600; margin-bottom: 0.5rem; text-align: center; color: var(--text);">Quick Analysis</h3>
+                <p style="font-size: 0.85rem; color: var(--text-muted); text-align: center; line-height: 1.4;">Analyze any symbol (not yet tracked) using live TradingView data</p>
+            </div>
         </div>
     </div>
 </div>
 
 <!-- Quick Analysis Form -->
 <div id="quickAnalysisForm" class="card" style="display: none;">
-    <div style="margin-bottom: 1rem;">
-        <button onclick="backToModeSelection()" class="btn" style="background: var(--bg-input);">
-            ← Back to mode selection
+    <div class="card-header">
+        <h2>🔍 Quick Analysis</h2>
+        <button onclick="backToModeSelection()" class="btn-sm">
+            ← Back
         </button>
     </div>
-    <h2 style="margin-bottom: 1rem;">Quick Analysis</h2>
-    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">
+    <p class="hint">
         Enter a symbol and market to fetch live TradingView data and start chatting.
     </p>
-    <div style="display: flex; gap: 1rem; margin-bottom: 1rem; align-items: flex-end;">
-        <div style="flex: 1;">
-            <label style="display: block; margin-bottom: 0.5rem; color: var(--text-muted);">Symbol</label>
-            <input type="text" id="symbolInput" placeholder="AAPL" style="width: 100%; padding: 0.75rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-size: 1rem;">
+    <div style="padding: 1rem 1.25rem;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1rem;">
+            <div>
+                <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.3rem;">Symbol</label>
+                <input type="text" id="symbolInput" placeholder="e.g., AAPL" class="input-field" style="width: 100%; padding: 0.6rem 0.8rem; font-size: 0.9rem; text-transform: uppercase;">
+            </div>
+            <div>
+                <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.3rem;">Market</label>
+                <input type="text" id="marketInput" placeholder="e.g., NASDAQ" class="input-field" style="width: 100%; padding: 0.6rem 0.8rem; font-size: 0.9rem; text-transform: uppercase;">
+            </div>
         </div>
-        <div style="flex: 1;">
-            <label style="display: block; margin-bottom: 0.5rem; color: var(--text-muted);">Market</label>
-            <select id="marketSelect" style="width: 100%; padding: 0.75rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-size: 1rem;">
-                <option value="NASDAQ">NASDAQ</option>
-                <option value="NYSE">NYSE</option>
-                <option value="AMEX">AMEX</option>
-                <option value="OTC">OTC</option>
-            </select>
-        </div>
-        <button id="fetchBtn" onclick="fetchAndAnalyze()" class="btn btn-primary" style="padding: 0.75rem 2rem;">
+        <button id="fetchBtn" onclick="fetchAndAnalyze()" class="btn btn-primary">
             Fetch & Analyze
         </button>
     </div>
-    <div id="fetchError" class="alert alert-error" style="display:none; margin-top: 1rem;"></div>
-    <div id="fetchProgress" style="display: none; margin-top: 1rem; padding: 1rem; background: var(--bg-input); border-radius: var(--radius); color: var(--text-muted);">
+    <div id="fetchError" class="alert alert-error" style="display:none; margin: 0 1.25rem 1rem;"></div>
+    <div id="fetchProgress" style="display: none; margin: 0 1.25rem 1rem; padding: 0.75rem 1rem; background: var(--bg-input); border-radius: var(--radius); color: var(--text-muted);">
         <div style="display: flex; align-items: center; gap: 0.75rem;">
             <div class="spinner"></div>
-            <span>Fetching TradingView data...</span>
+            <span style="font-size: 0.85rem;">Fetching TradingView data...</span>
         </div>
     </div>
 </div>
 
 <!-- Chat Interface -->
 <div id="chatInterface" class="card chat-card" style="display: none;">
-    <div style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
+    <div class="card-header">
         <div>
             <span id="chatModeLabel" style="font-weight: 600;"></span>
-            <span id="chatSymbolLabel" style="color: var(--text-muted); margin-left: 0.5rem;"></span>
+            <span id="chatSymbolLabel" style="color: var(--text-muted); margin-left: 0.5rem; font-size: 0.9rem;"></span>
         </div>
-        <button onclick="backToModeSelection()" class="btn" style="background: var(--bg-input); padding: 0.5rem 1rem;">
-            ← Change Mode
+        <button onclick="backToModeSelection()" class="btn-sm">
+            ← Back
         </button>
     </div>
     <div id="chatMessages" class="chat-messages"></div>
@@ -78,7 +79,7 @@
         <input type="text" id="chatInput" placeholder="Ask a question..." autocomplete="off">
         <button id="chatSend" class="btn btn-primary">Send</button>
     </div>
-    <div id="chatError" class="alert alert-error" style="display:none;"></div>
+    <div id="chatError" class="alert alert-error" style="display:none; margin: 0 1rem 0.5rem;"></div>
 </div>
 {% endblock %}
 
@@ -93,7 +94,7 @@
     const quickAnalysisFormEl = document.getElementById('quickAnalysisForm');
     const chatInterfaceEl = document.getElementById('chatInterface');
     const symbolInputEl = document.getElementById('symbolInput');
-    const marketSelectEl = document.getElementById('marketSelect');
+    const marketInputEl = document.getElementById('marketInput');
     const fetchBtnEl = document.getElementById('fetchBtn');
     const fetchErrorEl = document.getElementById('fetchError');
     const fetchProgressEl = document.getElementById('fetchProgress');
@@ -132,6 +133,7 @@
         messagesEl.innerHTML = '';
         inputEl.value = '';
         symbolInputEl.value = '';
+        marketInputEl.value = '';
     };
 
     // Start portfolio chat
@@ -152,10 +154,16 @@
     // Fetch and analyze symbol
     window.fetchAndAnalyze = async function() {
         const symbol = symbolInputEl.value.trim().toUpperCase();
-        const market = marketSelectEl.value;
+        const market = marketInputEl.value.trim().toUpperCase();
         
         if (!symbol) {
             fetchErrorEl.textContent = '⚠️ Please enter a symbol';
+            fetchErrorEl.style.display = 'block';
+            return;
+        }
+        
+        if (!market) {
+            fetchErrorEl.textContent = '⚠️ Please enter a market';
             fetchErrorEl.style.display = 'block';
             return;
         }
