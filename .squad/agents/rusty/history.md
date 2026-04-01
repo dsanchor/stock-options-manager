@@ -157,3 +157,29 @@ Linus implemented mandatory earnings gate across all 4 instruction files. All ag
 - src/tv_cash_secured_put_instructions.py
 - src/tv_open_call_instructions.py
 - src/tv_open_put_instructions.py
+
+## Summary Agent Categorization Update (2026-07-09)
+**Status:** ✅ Complete
+
+Updated the summary agent to organize daily reports into four distinct sections based on position status and option type.
+
+**Sections:**
+1. **Current Calls** - symbols with active call positions (open_call_monitor)
+2. **Current Puts** - symbols with active put positions (open_put_monitor)
+3. **Watchlist Calls** - symbols watched for covered call opportunities (covered_call, no positions)
+4. **Watchlist Puts** - symbols watched for cash-secured put opportunities (cash_secured_put, no positions)
+
+**Key Changes:**
+- Modified `TV_SUMMARY_INSTRUCTIONS` in `src/tv_summary_instructions.py`
+- Added section headers with `=== SECTION NAME ===` format
+- Empty sections now show simple "No X" messages instead of being omitted
+- Agent categorizes based on `agent_type` field in activities
+
+**Files Changed:**
+- src/tv_summary_instructions.py
+
+**Pattern Notes:**
+- The summary agent receives activities grouped by symbol from `cosmos.get_recent_activities_by_symbol()`
+- Each activity has an `agent_type` field that indicates its purpose (covered_call, cash_secured_put, open_call_monitor, open_put_monitor)
+- Monitor agents (open_call_monitor, open_put_monitor) track active positions
+- Sell agents (covered_call, cash_secured_put) watch for new sell opportunities
