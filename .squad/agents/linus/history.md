@@ -718,3 +718,80 @@ Implemented mandatory earnings gate as FIRST analytical step across all 4 instru
 4. Unified terminology across all 4 files; only actions differ by agent type
 
 **Impact:** Non-breaking schema addition. All agents now output earnings_analysis in every response.
+
+## 2025-01-09: TradingView Bot Detection Fix
+
+### Problem
+TradingView was returning 403 Forbidden errors frequently, blocking our automated data fetching.
+
+### Root Causes Identified
+1. Static User-Agent on all requests
+2. Missing modern browser headers (Sec-Fetch-*, sec-ch-ua)
+3. No session management (cookies)
+4. No request timing randomization
+5. Playwright automation easily detectable
+6. No rate limiting between requests
+
+### Solutions Implemented
+1. **User-Agent Rotation**: Pool of 7 realistic UAs from Chrome, Edge, Firefox, Safari
+2. **Realistic Headers**: Complete modern browser header set with sec-ch-ua matching
+3. **Session Management**: `requests.Session()` for persistent cookies
+4. **Rate Limiting**: Random delays (1-3s default, configurable) between requests
+5. **Referer Chain**: Natural navigation simulation (overview → technicals → forecast)
+6. **Playwright Stealth**: 
+   - `--disable-blink-features=AutomationControlled`
+   - Remove `navigator.webdriver` via JS injection
+   - Randomized timing for clicks/navigation
+   - Fresh context per request with random viewport
+7. **Configuration**: `tradingview.request_delay_min/max` in config.yaml
+
+### Files Modified
+- `src/tv_data_fetcher.py`: Core anti-bot logic, `create_fetcher()` factory
+- `src/config.py`: Added TradingView config properties
+- `config.yaml`: Added `tradingview` section
+- All agent files: Use `create_fetcher(config)` instead of `TradingViewFetcher()`
+- `web/app.py`: Updated 3 fetch locations
+
+### Key Learnings
+- **Bot detection is multi-layered**: Need multiple techniques, not just one
+- **Timing matters**: Random delays are crucial for mimicking human behavior
+- **Headers are fingerprints**: Modern browsers send 10+ headers, all must match
+- **Sessions = identity**: Persistent cookies make you look like a returning user
+- **Playwright is detectable**: Need stealth mode + JS injection to hide automation
+
+### Configuration Guide
+- **Dev/Test**: 0.5-1.5s delays (fast iteration)
+- **Production**: 2-5s delays (maximum stealth)
+- **Default**: 1-3s delays (balanced)
+
+### Performance Impact
+- Adds 5-15s per symbol (acceptable for background jobs)
+- Minimal memory/CPU overhead
+
+### Documentation
+Created `TRADINGVIEW_ANTI_BOT.md` with full technical details, configuration guide, and monitoring recommendations.
+
+
+### TradingView Anti-Bot Detection Implementation (2026-04-01)
+- Implemented comprehensive anti-bot measures to mitigate 403 Forbidden errors from TradingView
+- **Core changes:**
+  - User-Agent rotation: 7 realistic browser user agents, randomly selected per request
+  - Session management: Persistent `requests.Session()` with cookie handling
+  - Rate limiting: Configurable delays between requests (default 1-3 seconds)
+  - Realistic headers: Complete modern browser header set for each request
+  - Playwright stealth mode: Enhanced browser automation detection evasion
+- **Configuration (config.yaml):**
+  ```yaml
+  tradingview:
+    request_delay_min: 1.0
+    request_delay_max: 3.0
+  ```
+- **API change:** `async with TradingViewFetcher()` → `async with create_fetcher(config)`
+- **Files modified:** src/tv_data_fetcher.py, src/config.py, config.yaml, web/app.py, 4 agent files
+- **New files:** TRADINGVIEW_ANTI_BOT.md (comprehensive documentation), scripts/validate_antibot.py (validation suite)
+- **Team impact:**
+  - Rusty: web/app.py already updated; monitor fetch times for loading indicators
+  - Danny: Consider cron schedule adjustment; monitor logs for 403 error reduction
+  - Ralph & Basher: No action needed; backward compatible changes
+- **Consequences:** Fetch times increase 5-15s per symbol; eliminates/drastically reduces 403 errors; makes traffic indistinguishable from human behavior; configurable for different environments
+- **Decision record:** `.squad/decisions/decisions.md`

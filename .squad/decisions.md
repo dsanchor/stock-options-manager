@@ -1245,3 +1245,5 @@ When building chat/analysis features that need different output formats:
 #### Related Decisions
 - Quick Analysis Chat — Centralized Instruction Reuse for Put/Call Analysis (2026-04-01) — established instruction reuse pattern
 - Chat UI Design System Alignment (2026-03-31) — established form and conversation patterns
+
+

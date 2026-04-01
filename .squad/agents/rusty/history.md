@@ -351,3 +351,11 @@ Improved Quick Analysis chat to provide human-friendly conversational analysis i
 - Example response style provided in instructions to guide LLM tone
 - Explicit anti-patterns: "DON'T list out every indicator value", "DON'T use structured JSON"
 - Markdown rendering in frontend (via `marked.js`) preserves formatting while keeping natural flow
+
+### TradingView Anti-Bot Integration in Web UI (2026-04-01)
+- Updated web/app.py to integrate new TradingViewFetcher anti-bot implementation from Linus
+- **Change:** Adopted new `create_fetcher(config)` API for fetcher initialization
+- **Impact:** Market data fetches now protected by comprehensive anti-bot measures (UA rotation, rate limiting, session management)
+- **UI consideration:** Fetch times increased by 5-15s per symbol due to rate limiting; consider adding loading indicators
+- **No backend changes needed:** Web API endpoints unchanged; anti-bot measures transparent to frontend
+- **Team coordination:** Linus (anti-bot) → Rusty (web integration) completed seamlessly

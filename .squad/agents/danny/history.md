@@ -133,3 +133,14 @@
 - User preference: symbol-centric everything, only global = cron; prefers comprehensive docs
 
 **Deliverable:** Feature proposal report (see task output below)
+
+### TradingView Anti-Bot Monitoring and Configuration (2026-04-01)
+- TradingView 403 bot detection blocking has been addressed with comprehensive anti-bot measures (Linus implementation)
+- **Deployment consideration:** Rate limiting default (1-3s per request) means fetch times increase 5-15s per symbol
+- **Current cron schedule (every 4h):** Should remain sufficient; adjust if batch fetch times exceed 15-20 minutes
+- **Monitoring action items:**
+  - Track 403 errors in logs to measure effectiveness of anti-bot implementation
+  - If 403s persist, increase `tradingview.request_delay_max` to 5-10 seconds in config.yaml
+  - Monitor successful fetch rates to ensure no performance degradation
+- **Configuration reference:** `config.yaml` → `tradingview.request_delay_min/max` settings
+- **Documentation:** See TRADINGVIEW_ANTI_BOT.md for full technical details and troubleshooting
