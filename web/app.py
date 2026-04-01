@@ -1655,25 +1655,25 @@ async def chat_api(request: Request):
         
         context_text = "\n\n".join(context_parts)
         
-        # For first analysis, use the same instructions as the monitoring agents
+        # For first analysis, use conversational chat instructions (not monitoring agent JSON output)
         if first_analysis:
             import sys
             sys.path.insert(0, str(PROJECT_ROOT / "src"))
             
             if option_type == "call":
-                from tv_open_call_instructions import TV_OPEN_CALL_INSTRUCTIONS
-                instructions = TV_OPEN_CALL_INSTRUCTIONS
+                from tv_open_call_chat_instructions import TV_OPEN_CALL_CHAT_INSTRUCTIONS
+                instructions = TV_OPEN_CALL_CHAT_INSTRUCTIONS
             else:  # put
-                from tv_open_put_instructions import TV_OPEN_PUT_INSTRUCTIONS
-                instructions = TV_OPEN_PUT_INSTRUCTIONS
+                from tv_open_put_chat_instructions import TV_OPEN_PUT_CHAT_INSTRUCTIONS
+                instructions = TV_OPEN_PUT_CHAT_INSTRUCTIONS
             
             system_prompt = f"{instructions}\n\n{context_text}"
         else:
             # Normal chat mode after first analysis
             system_prompt = (
-                f"You are a stock options analyst analyzing {option_type} options for {market}:{symbol}. "
-                "Use the TradingView data provided below to answer questions about "
-                "the stock's price, technicals, earnings, dividends, and options.\n\n"
+                f"You are a friendly and knowledgeable options analyst discussing {option_type} options for {market}:{symbol}. "
+                "Provide conversational, human-friendly responses. Use the TradingView data provided below to answer questions about "
+                "the stock's price, technicals, earnings, dividends, and options. Avoid JSON or structured output — talk naturally.\n\n"
                 f"TradingView Data:\n{context_text}"
             )
     

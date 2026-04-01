@@ -290,3 +290,47 @@ Added option type dropdown (Call/Put) to Quick Analysis chat that triggers autom
 - `src/tv_open_put_instructions.py` — Centralized put analysis instructions
 - Used by: `open_call_monitor_agent.py`, `open_put_monitor_agent.py`, and now Quick Analysis chat
 
+
+## Quick Analysis Chat — Conversational Output (2026-04-01)
+**Status:** ✅ Complete
+
+Improved Quick Analysis chat to provide human-friendly conversational analysis instead of JSON/structured output.
+
+**Problem:** 
+- Quick Analysis chat was using monitor agent instructions (`TV_OPEN_CALL_INSTRUCTIONS` / `TV_OPEN_PUT_INSTRUCTIONS`)
+- These instructions were designed for monitor agents and requested JSON output with specific fields
+- Chat UI was displaying JSON blocks or structured key-value pairs, not conversational analysis
+- User wanted natural, human-readable conversation like talking to an analyst
+
+**Solution:**
+1. Created new chat-specific instruction files:
+   - `src/tv_open_call_chat_instructions.py` — Conversational call options analysis
+   - `src/tv_open_put_chat_instructions.py` — Conversational put options analysis
+
+2. New instructions guide the LLM to:
+   - Write like talking to a colleague over coffee
+   - Use plain English, no jargon dumps
+   - Provide 3-5 natural paragraphs covering: current setup, technicals, earnings timing, opportunity, final thought
+   - Avoid JSON, structured output, field-value pairs, or data list dumps
+   - Focus on 2-3 key insights that matter, not exhaustive indicator recitation
+
+3. Updated `web/app.py` chat endpoint:
+   - First analysis uses `TV_OPEN_CALL_CHAT_INSTRUCTIONS` / `TV_OPEN_PUT_CHAT_INSTRUCTIONS` (conversational)
+   - Follow-up questions use conversational system prompt (not monitoring instructions)
+   - Both modes now explicitly request natural, friendly responses
+
+**Key Architecture Decision:**
+- **Monitor agents** continue using `TV_OPEN_CALL_INSTRUCTIONS` / `TV_OPEN_PUT_INSTRUCTIONS` (JSON output for DB storage)
+- **Chat interface** uses new `*_CHAT_INSTRUCTIONS` files (conversational output for users)
+- Separate instructions for separate use cases, both pulling from same TradingView data
+
+**Files Changed:**
+- `src/tv_open_call_chat_instructions.py` — NEW conversational call analysis instructions
+- `src/tv_open_put_chat_instructions.py` — NEW conversational put analysis instructions
+- `web/app.py` — Updated imports and system prompts for conversational output
+
+**Pattern:**
+- Chat instructions emphasize: "You're a knowledgeable analyst having a conversation, not a data export tool"
+- Example response style provided in instructions to guide LLM tone
+- Explicit anti-patterns: "DON'T list out every indicator value", "DON'T use structured JSON"
+- Markdown rendering in frontend (via `marked.js`) preserves formatting while keeping natural flow
