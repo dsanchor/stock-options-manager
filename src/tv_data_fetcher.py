@@ -271,9 +271,9 @@ def _build_dividend_dict(sym: dict) -> dict:
 
 
 def _dividends_try_html(soup: BeautifulSoup) -> dict | None:
-    for tag in soup.find_all("h1"):
+    for tag in soup.find_all(["h1", "h2"]):
         text = tag.get_text(strip=True).lower()
-        if "dividends" in text or "fundamentals" in text:
+        if "dividend" in text or "fundamentals" in text:
             parent = tag.parent
             return {"raw_content": parent.get_text(separator="\n", strip=True)}
     return None
@@ -651,8 +651,7 @@ def _forecast_try_html(soup: BeautifulSoup) -> dict | None:
         if "price target" in text or "analyst rating" in text:
             parent = tag.parent
             content = parent.get_text(separator="\n", strip=True)
-            dollar_matches = re.findall(r'\$[\d,.]+', content)
-            if len(dollar_matches) >= 3 and len(content) > 200:
+            if len(content) > 50:
                 return {"raw_content": content}
     return None
 
@@ -865,18 +864,21 @@ class TradingViewFetcher:
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "html.parser")
 
-            data = _forecast_try_html(soup)
-            if data:
+            # Try scanner API first for structured data
+            data = None
+            pro_symbol = _extract_pro_symbol(soup)
+            if pro_symbol:
+                sym = _scanner_api_fetch(pro_symbol, _FORECAST_SCANNER_COLS)
+                if sym:
+                    data = _build_forecast_dict(sym)
+                    data["source"] = "scanner_api"
+                    data["pro_symbol"] = pro_symbol
+            
+            # Fall back to HTML extraction if scanner API failed
+            if not data:
+                data = _forecast_try_html(soup)
                 if data:
-                    data["source"] = "embedded_json"
-                else:
-                    pro_symbol = _extract_pro_symbol(soup)
-                    if pro_symbol:
-                        sym = _scanner_api_fetch(pro_symbol, _FORECAST_SCANNER_COLS)
-                        if sym:
-                            data = _build_forecast_dict(sym)
-                            data["source"] = "scanner_api"
-                            data["pro_symbol"] = pro_symbol
+                    data["source"] = "embedded_html"
 
             if data is None:
                 logger.warning("No forecast data found for %s", full_symbol)
@@ -917,18 +919,21 @@ class TradingViewFetcher:
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "html.parser")
 
-            data = _dividends_try_html(soup)
-            if data:
+            # Try scanner API first for structured data
+            data = None
+            pro_symbol = _extract_pro_symbol(soup)
+            if pro_symbol:
+                sym = _scanner_api_fetch(pro_symbol, _DIVIDEND_SCANNER_COLS)
+                if sym:
+                    data = _build_dividend_dict(sym)
+                    data["source"] = "scanner_api"
+                    data["pro_symbol"] = pro_symbol
+            
+            # Fall back to HTML extraction if scanner API failed
+            if not data:
+                data = _dividends_try_html(soup)
                 if data:
-                    data["source"] = "embedded_json"
-                else:
-                    pro_symbol = _extract_pro_symbol(soup)
-                    if pro_symbol:
-                        sym = _scanner_api_fetch(pro_symbol, _DIVIDEND_SCANNER_COLS)
-                        if sym:
-                            data = _build_dividend_dict(sym)
-                            data["source"] = "scanner_api"
-                            data["pro_symbol"] = pro_symbol
+                    data["source"] = "embedded_html"
 
             if data is None:
                 logger.warning("No dividends data found for %s", full_symbol)
