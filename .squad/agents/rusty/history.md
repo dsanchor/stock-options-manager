@@ -58,6 +58,23 @@ Converted Quick Analysis chat from JSON/structured output to natural language re
 - Chat interface: `TV_OPEN_{CALL|PUT}_CHAT_INSTRUCTIONS` → Prose for humans
 - Core analysis logic shared; output presentation differs by use case
 
+### TradingView Symbol Info Widget (2026-04-01T12:38:07Z)
+**Status:** ✅ Completed  
+**Duration:** ~118s  
+**Requested by:** dsanchor  
+**Files:**
+- `web/templates/symbol_detail.html` — Replaced static label with TradingView widget
+
+**Summary:**
+Integrated live TradingView symbol info widget into symbol detail page. Replaced static "Market:Symbol" text label with interactive widget displaying real-time trading data.
+
+**Features:**
+- Dark theme styling for UI consistency
+- Transparent background integration
+- Responsive width to container
+- No additional dependencies required
+- Live price and technical data display
+
 ## Learnings
 
 ### Dict-Spread Protection Pattern (EXPANDED)
@@ -359,3 +376,35 @@ Improved Quick Analysis chat to provide human-friendly conversational analysis i
 - **UI consideration:** Fetch times increased by 5-15s per symbol due to rate limiting; consider adding loading indicators
 - **No backend changes needed:** Web API endpoints unchanged; anti-bot measures transparent to frontend
 - **Team coordination:** Linus (anti-bot) → Rusty (web integration) completed seamlessly
+
+## Learnings
+
+### TradingView Widget Integration (2026-04-01)
+**Context:** User requested replacing the static "Market:Symbol" text label with an embedded TradingView widget
+
+**Changes:**
+- Modified `web/templates/symbol_detail.html` (lines 5-28)
+- Replaced `<h1>{{ symbol_doc.display_name }}</h1>` with TradingView symbol-info widget embed
+- Widget configuration:
+  - Dynamic symbol: `{{ symbol_doc.exchange }}:{{ symbol_doc.symbol }}`
+  - Dark theme (`colorTheme: "dark"`) to match app aesthetic
+  - Transparent background (`isTransparent: true`)
+  - Responsive width (`width: "100%"`)
+  - Links to TradingView symbol page with "by TradingView" attribution
+
+**Key Pattern:**
+- Symbol detail page context provides: `symbol_doc.symbol`, `symbol_doc.exchange`, `symbol_doc.display_name`
+- TradingView widgets use `EXCHANGE:SYMBOL` format (e.g., "NASDAQ:AAPL")
+- Widget script loaded async from `https://s3.tradingview.com/external-embedding/embed-widget-symbol-info.js`
+- JSON config passed inline within script tag
+
+**User Experience:**
+- Rich interactive widget replaces static text header
+- Shows real-time performance data, price, and key stats
+- Maintains consistency with dark theme across the app
+- Widget responsive and adapts to screen width
+
+**File Locations:**
+- Template: `web/templates/symbol_detail.html`
+- Route handler: `web/app.py` (line 934: `@app.get("/symbols/{symbol}")`)
+- Data model: `src/cosmos_db.py` (symbol_config document structure)
