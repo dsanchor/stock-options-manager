@@ -1782,3 +1782,44 @@ The old format caused collisions in these scenarios:
 ✓ Close/reopen creates 2 distinct IDs  
 ✓ Module imports successfully  
 ✓ All position creation paths covered
+
+---
+
+### 16. Alert Link Pattern: Document ID Field Usage
+
+**Date:** 2026-04-02  
+**Author:** Rusty (UI/Integration)  
+**Status:** ✅ Implemented  
+**Impact:** Symbol detail page, alert navigation UX
+
+#### Problem Statement
+
+Alert rows on symbol detail page generated 404 errors when clicked. Activity rows worked correctly. Dashboard links (both alerts and activities) worked.
+
+#### Root Cause
+
+Alert row template referenced non-existent field `alt.activity_id` instead of the actual document ID field `alt.id`. The activity template correctly used `item.id`. Dashboard patterns showed both activities and alerts use the same `id` field format for detail navigation.
+
+#### Solution
+
+Changed alert row template:
+- **From:** `data-href="/activities/{{ alt.activity_id }}"`
+- **To:** `data-href="/activities/{{ alt.id }}"`
+
+File: `web/templates/symbol_detail.html` — Alert row clickable navigation link
+
+#### Pattern
+
+Both activities and alerts are documents stored in CosmosDB with an `id` field. Both link to the same `/activities/{id}` detail endpoint (alerts and activities share the same document type with `is_alert` boolean discriminator). Always use `{item}.id` for activity/alert detail links, never invent intermediate field names.
+
+#### Context
+
+- Activities: `doc_type = 'activity', is_alert = false` (or undefined)
+- Alerts: `doc_type = 'activity', is_alert = true`
+- ID format: `{symbol}_{agent_type}[_{position_id}]_{ts_compact}` (no prefixes)
+
+#### Impact
+
+✓ Alert navigation now works  
+✓ Consistent with activity and dashboard patterns  
+✓ No data model changes

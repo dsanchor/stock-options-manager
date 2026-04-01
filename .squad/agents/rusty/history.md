@@ -117,7 +117,22 @@ Mandatory earnings gate across all 4 instruction files. All agent responses now 
 ### Summary Agent Categorization (2026-07-09)
 Updated summary agent to organize daily reports into four sections: Current Calls, Current Puts, Watchlist Calls, Watchlist Puts. Empty sections show "No X" messages.
 
+### Alert Link Bug Fix (2026-04-02)
+**Issue:** Symbol detail page alert links generated 404s while activity links worked. Dashboard links worked for both.
+**Root cause:** Alert row template used non-existent field `alt.activity_id` instead of `alt.id`.
+**Fix:** Changed alert template from `data-href="/activities/{{ alt.activity_id }}"` to `data-href="/activities/{{ alt.id }}"` to match activities and dashboard patterns.
+**Pattern:** Both activities and alerts are documents with an `id` field. Always use `{item}.id` for activity detail links, never invent intermediate field names.
+
 ---
+
+## Scribe Orchestration Records (2026-04)
+
+### 2026-04-02T22:35:22Z — Alert Link Fix Summary
+
+**Status:** ✅ Documented  
+**Summary:** Completed alert link navigation fix. Updated decisions.md with pattern documentation for consistent ID field usage across activities and alerts.
+
+
 
 ## Archived Work (March 2026)
 
