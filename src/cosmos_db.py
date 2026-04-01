@@ -246,6 +246,15 @@ class CosmosDBService:
         exp_compact = new_expiration.replace("-", "")
         new_position_id = f"pos_{symbol}_{new_type}_{new_strike}_{exp_compact}"
 
+        # Check for collision with existing positions (active or closed)
+        existing_ids = {p["position_id"] for p in doc.get("positions", [])}
+        if new_position_id in existing_ids and new_position_id != old_position_id:
+            raise ValueError(
+                f"Cannot roll to {new_type} {new_strike} exp {new_expiration}: "
+                f"a position with these parameters already exists. "
+                f"Please delete or modify the existing position first."
+            )
+
         # Close old position
         now = datetime.utcnow().isoformat() + "Z"
         old_pos["status"] = "closed"
@@ -278,12 +287,19 @@ class CosmosDBService:
         if doc is None:
             raise ValueError(f"Symbol {symbol} not found")
 
+        found = False
         for pos in doc.get("positions", []):
             if pos["position_id"] == position_id:
+                if pos.get("status") == "closed":
+                    # Position is already closed, just return success
+                    logger.warning("Position %s is already closed", position_id)
+                    return doc
                 pos["status"] = "closed"
                 pos["closed_at"] = datetime.utcnow().isoformat() + "Z"
-                break
-        else:
+                found = True
+                # Don't break - handle any duplicate IDs if they exist
+        
+        if not found:
             raise ValueError(f"Position {position_id} not found")
 
         doc["updated_at"] = datetime.utcnow().isoformat() + "Z"

@@ -544,7 +544,7 @@ async def api_roll_position_from_activity(request: Request, symbol: str,
 @app.post("/api/symbols/{symbol}/positions/{position_id}/roll")
 async def api_manual_roll_position(request: Request, symbol: str,
                                    position_id: str):
-    """Manually roll a position to a new strike/expiration without an alert."""
+    """Manually roll a position to a new strike/expiration, optionally attaching alert data."""
     try:
         cosmos = _get_cosmos(request)
         body = await request.json()
@@ -574,10 +574,31 @@ async def api_manual_roll_position(request: Request, symbol: str,
             )
 
         notes = body.get("notes", "")
+        source_activity_id = body.get("source_activity_id", "").strip() if body.get("source_activity_id") else ""
+
+        # Build source from activity if provided
+        source = None
+        if source_activity_id:
+            activity = cosmos.get_activity_by_id(source_activity_id)
+            if activity is not None:
+                source = {
+                    "source_type": "manual_with_alert",
+                    "activity_id": activity["id"],
+                    "agent_type": activity.get("agent_type"),
+                    "activity": activity.get("activity"),
+                    "confidence": activity.get("confidence"),
+                    "reason": activity.get("reason"),
+                    "underlying_price": activity.get("underlying_price"),
+                    "premium": activity.get("premium"),
+                    "iv": activity.get("iv"),
+                    "risk_flags": activity.get("risk_flags", []),
+                    "timestamp": activity.get("timestamp"),
+                }
 
         doc = cosmos.roll_position(
             symbol.upper(), position_id, pos["type"],
             float(new_strike), new_expiration,
+            source=source,
             notes=notes,
         )
 
