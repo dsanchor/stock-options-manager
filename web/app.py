@@ -1468,7 +1468,7 @@ AGENT_FUNCTIONS = {
 }
 
 
-def _run_agent_in_background(agent_type: str, scheduler):
+def _run_agent_in_background(agent_type: str, scheduler, symbol: str = None):
     import asyncio
     from src.covered_call_agent import run_covered_call_analysis
     from src.cash_secured_put_agent import run_cash_secured_put_analysis
@@ -1484,7 +1484,8 @@ def _run_agent_in_background(agent_type: str, scheduler):
     func = funcs[agent_type]
     try:
         asyncio.run(func(scheduler.config, scheduler.runner,
-                         scheduler.cosmos, scheduler.context_provider))
+                         scheduler.cosmos, scheduler.context_provider,
+                         symbol=symbol))
     except Exception as e:
         print(f"ERROR running {agent_type} trigger: {e}")
 
@@ -1501,13 +1502,16 @@ async def trigger_agent(request: Request, agent_type: str):
             {"error": "Scheduler not running — cannot trigger agents"},
             status_code=503)
 
+    body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+    symbol = body.get("symbol")
+
     thread = threading.Thread(
         target=_run_agent_in_background,
-        args=(agent_type, scheduler),
+        args=(agent_type, scheduler, symbol),
         daemon=True,
     )
     thread.start()
-    return JSONResponse({"status": "triggered", "agent_type": agent_type})
+    return JSONResponse({"status": "triggered", "agent_type": agent_type, "symbol": symbol})
 
 
 # ===========================================================================

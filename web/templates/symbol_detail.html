@@ -787,7 +787,11 @@
                     if (agents.length > 1) {
                         runPosBtn.textContent = '⏳ Running… (' + (index + 1) + '/' + agents.length + ')';
                     }
-                    return fetch('/api/trigger/' + agentType, { method: 'POST' })
+                    return fetch('/api/trigger/' + agentType, { 
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ symbol: SYMBOL })
+                    })
                         .then(function(resp) {
                             if (resp.ok) { success++; } else { failed++; }
                         })

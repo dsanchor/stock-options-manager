@@ -1670,3 +1670,115 @@ When building chat/analysis features that need different output formats:
 - Chat UI Design System Alignment (2026-03-31) — established form and conversation patterns
 
 
+# Agent Trigger Scope: Optional Symbol Parameter
+
+**Date:** 2026-04-01  
+**Author:** Rusty  
+**Type:** Architecture Decision
+
+## Context
+
+User reported bug: "Run Analysis" button on symbol detail page was triggering analysis for ALL symbols instead of just the symbol being viewed.
+
+Example: On AAPL detail page, clicking "Run Analysis" for open call positions analyzed ALL symbols with open call positions, not just AAPL.
+
+## Decision
+
+All agent entry point functions now accept an optional `symbol: str = None` parameter:
+- `run_open_call_monitor(config, runner, cosmos, context_provider, symbol=None)`
+- `run_open_put_monitor(config, runner, cosmos, context_provider, symbol=None)`
+- `run_covered_call_analysis(config, runner, cosmos, context_provider, symbol=None)`
+- `run_cash_secured_put_analysis(config, runner, cosmos, context_provider, symbol=None)`
+
+Web API endpoint `/api/trigger/{agent_type}` accepts optional `symbol` in request body and passes it through.
+
+## Rationale
+
+1. **Backward Compatible:** No symbol = analyze all (preserves existing behavior for dashboard/scheduled runs)
+2. **Single Responsibility:** Symbol detail page should only trigger analysis for that symbol
+3. **User Expectation:** Clicking "Run Analysis" on AAPL page should only run for AAPL
+4. **Performance:** Scoped analysis completes faster and generates less noise
+
+## Implementation Pattern
+
+```python
+if symbol:
+    sym_doc = cosmos.get_symbol(symbol)
+    if not sym_doc:
+        print(f"Symbol {symbol} not found — skipping")
+        return
+    # Filter to just this symbol's positions/settings
+    symbol_list = [sym_doc]
+else:
+    # Get all symbols (existing behavior)
+    symbol_list = cosmos.get_symbols_with_active_positions(...)
+```
+
+## Alternatives Considered
+
+1. **Separate endpoints** (`/api/trigger-symbol/{symbol}/{agent_type}`) — More explicit but breaks REST patterns
+2. **Query parameter** (`?symbol=AAPL`) — Less flexible for future parameters, non-standard for POST
+3. **No fix** — Would continue confusing users and generating incorrect analysis scope
+
+## Impact
+
+- All agent trigger paths support scoped execution
+- Symbol detail page now correctly scopes analysis
+- Dashboard/settings pages unaffected (don't pass symbol)
+- Scheduler unaffected (doesn't pass symbol)
+
+# Position ID Uniqueness Fix
+
+**Date:** 2026-04-01  
+**Agent:** Rusty  
+**Type:** Bug Fix / Data Integrity
+
+## Decision
+
+Position IDs now include a UTC timestamp to guarantee uniqueness across the entire lifetime of positions.
+
+## Old Format
+
+```
+pos_{symbol}_{option_type}_{strike}_{expiration}
+```
+
+Example: `pos_AAPL_PUT_150.0_20260417`
+
+## New Format
+
+```
+pos_{symbol}_{option_type}_{strike}_{expiration}_{timestamp}
+```
+
+Example: `pos_AAPL_PUT_150.0_20260417_20260401_214900`
+
+Timestamp format: `YYYYMMDD_HHMMSS` (UTC)
+
+## Rationale
+
+The old format caused collisions in these scenarios:
+1. **Roll A → B → A**: Rolling from strike A to B, then later rolling back from B to A
+2. **Close/Reopen**: Closing a position at strike X, then later opening a new position at same strike X
+3. **Data Integrity**: Collisions led to delete operations affecting wrong positions and close operations failing
+
+## Impact
+
+- **Fixes**: Cascade delete bug, close operation failures
+- **Guarantees**: Each position has a unique ID forever
+- **Breaking Changes**: None (position_id is internal, API unchanged)
+- **Performance**: Negligible (just appending a timestamp)
+
+## Implementation
+
+- **File**: `src/cosmos_db.py`
+- **Method**: `_generate_position_id()` (new static method)
+- **Updated**: `add_position()`, `roll_position()`
+- **Removed**: Collision check logic (no longer needed)
+
+## Testing
+
+✓ Roll A → B → A creates 3 distinct IDs  
+✓ Close/reopen creates 2 distinct IDs  
+✓ Module imports successfully  
+✓ All position creation paths covered

@@ -6,7 +6,8 @@ from .tv_covered_call_instructions import TV_COVERED_CALL_INSTRUCTIONS
 
 async def run_covered_call_analysis(config, runner: AgentRunner,
                                      cosmos: CosmosDBService,
-                                     context_provider: ContextProvider):
+                                     context_provider: ContextProvider,
+                                     symbol: str = None):
     """Run covered call analysis for all enabled symbols from CosmosDB.
 
     Args:
@@ -14,15 +15,26 @@ async def run_covered_call_analysis(config, runner: AgentRunner,
         runner: Initialized AgentRunner instance
         cosmos: CosmosDBService instance
         context_provider: ContextProvider for activity history
+        symbol: Optional symbol to filter analysis (e.g., 'NYSE-AAPL')
     """
     print(f"\n{'='*60}")
-    print(f"Starting CoveredCallAgent analysis")
+    print(f"Starting CoveredCallAgent analysis" + (f" for {symbol}" if symbol else ""))
     print(f"{'='*60}")
 
-    cc_symbols = cosmos.get_covered_call_symbols()
-    if not cc_symbols:
-        print("No symbols enabled for covered call — skipping")
-        return
+    if symbol:
+        sym_doc = cosmos.get_symbol(symbol)
+        if not sym_doc:
+            print(f"Symbol {symbol} not found — skipping")
+            return
+        if not sym_doc.get("watchlist", {}).get("covered_call", False):
+            print(f"Symbol {symbol} not enabled for covered call — skipping")
+            return
+        cc_symbols = [sym_doc]
+    else:
+        cc_symbols = cosmos.get_covered_call_symbols()
+        if not cc_symbols:
+            print("No symbols enabled for covered call — skipping")
+            return
 
     symbol_names = [s["symbol"] for s in cc_symbols]
     print(f"Analyzing {len(cc_symbols)} symbols: {', '.join(symbol_names)}")

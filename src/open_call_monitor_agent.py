@@ -5,7 +5,8 @@ from .context import ContextProvider
 
 async def run_open_call_monitor(config, runner: AgentRunner,
                                  cosmos: CosmosDBService,
-                                 context_provider: ContextProvider):
+                                 context_provider: ContextProvider,
+                                 symbol: str = None):
     """Run open covered call position monitoring from CosmosDB.
 
     Args:
@@ -13,17 +14,33 @@ async def run_open_call_monitor(config, runner: AgentRunner,
         runner: Initialized AgentRunner instance
         cosmos: CosmosDBService instance
         context_provider: ContextProvider for activity history
+        symbol: Optional symbol to filter positions (e.g., 'NYSE-AAPL')
     """
     from .tv_open_call_instructions import TV_OPEN_CALL_INSTRUCTIONS
 
     print(f"\n{'='*60}")
-    print(f"Starting OpenCallMonitor monitoring")
+    print(f"Starting OpenCallMonitor monitoring" + (f" for {symbol}" if symbol else ""))
     print(f"{'='*60}")
 
-    call_symbols = cosmos.get_symbols_with_active_positions("call")
-    if not call_symbols:
-        print("No active call positions — skipping OpenCallMonitor")
-        return
+    if symbol:
+        sym_doc = cosmos.get_symbol(symbol)
+        if not sym_doc:
+            print(f"Symbol {symbol} not found — skipping OpenCallMonitor")
+            return
+        active_positions = [
+            p for p in sym_doc.get("positions", [])
+            if p["type"] == "call" and p["status"] == "active"
+        ]
+        if not active_positions:
+            print(f"No active call positions for {symbol} — skipping OpenCallMonitor")
+            return
+        sym_doc["_active_positions"] = active_positions
+        call_symbols = [sym_doc]
+    else:
+        call_symbols = cosmos.get_symbols_with_active_positions("call")
+        if not call_symbols:
+            print("No active call positions — skipping OpenCallMonitor")
+            return
 
     total = sum(len(s["_active_positions"]) for s in call_symbols)
     print(f"Monitoring {total} open call position(s)")

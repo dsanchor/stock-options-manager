@@ -639,3 +639,46 @@ From symbol detail page (e.g., AAPL), clicking "Run Analysis" for open positions
 - **Reusable Click Pattern:** The `clickable-row` class with `data-href` is already wired in app.js (lines 5-9), making any element clickable by just adding those attributes
 - **Alert/Activity Distinction:** The data model supports both alerts (is_alert=true) and regular activities in the same collection, allowing flexible display options
 - **Icon Choice:** Megaphone emoji (📢) provides better semantic meaning for "alert" than exclamation (which could mean error/warning)
+
+### Fixed Run Analysis Scope Bug (2026-04-01T21:59:25Z)
+**Status:** ✅ Completed  
+**Critical Bug:** Run Analysis button on symbol detail page triggered analysis for ALL symbols instead of just the viewed symbol
+
+**Problem:**
+- On AAPL symbol detail page, clicking "Run Analysis" for open call positions analyzed ALL symbols with open call positions
+- Expected: Only analyze AAPL's positions
+- Affected: Open call monitor, open put monitor, covered call analysis, cash secured put analysis
+
+**Solution:** 
+Added optional `symbol: str = None` parameter to all 4 agent entry points:
+- `run_open_call_monitor(config, runner, cosmos, context_provider, symbol=None)`
+- `run_open_put_monitor(config, runner, cosmos, context_provider, symbol=None)`
+- `run_covered_call_analysis(config, runner, cosmos, context_provider, symbol=None)`
+- `run_cash_secured_put_analysis(config, runner, cosmos, context_provider, symbol=None)`
+
+Web API endpoint `/api/trigger/{agent_type}` now accepts optional `symbol` in request body and passes it through.
+
+**Pattern:** If `symbol` is provided, analysis scopes to that symbol only. If no symbol, analyzes all (preserves existing behavior for dashboard/scheduled runs).
+
+**Files Modified:**
+- `src/open_call_monitor_agent.py` — Added symbol parameter
+- `src/open_put_monitor_agent.py` — Added symbol parameter
+- `src/covered_call_agent.py` — Added symbol parameter
+- `src/cash_secured_put_agent.py` — Added symbol parameter
+- `web/app.py` — Updated trigger endpoint
+
+**Decision Logged:** `rusty-analysis-scope.md` (Architecture Decision)
+
+### Enhanced Activity Dashboard UI (2026-04-01T21:59:25Z)
+**Status:** ✅ Completed  
+**Enhancement:** Activity dashboard now shows ALL activities with alert indicators and clickable rows
+
+**Changes:**
+1. Display all activities (not just recent subset)
+2. Visual alert indicators for importance/status
+3. Clickable rows for navigation to symbol detail pages
+4. Improved table layout and responsiveness
+
+**Pattern:** Leverages existing clickable-row CSS + JavaScript infrastructure for navigation.
+
+**Decision Logged:** Session log entry created
