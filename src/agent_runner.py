@@ -751,7 +751,7 @@ Generate your 3-line summaries now. Output plain text only — no JSON, no code 
 """
             
             # Run the agent
-            agent = ChatAgent(name="SummaryAgent", client=self.client)
+            agent = ChatAgent(name="SummaryAgent", chat_client=self.client)
             print("🤖 Running summary agent...")
             logger.info("Invoking ChatAgent with %d symbols", len(activities_by_symbol))
             
