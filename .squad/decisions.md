@@ -2,194 +2,6 @@
 
 ## Active Decisions
 
-### 1. Trading Agent Instructions Design
-**Date:** 2024-01-15  
-**Author:** Linus (Quant Dev)  
-**Status:** Completed  
-**Impact:** Team-wide (defines agent behavior)
-
-#### Context
-Created system prompt instructions for covered call and cash-secured put agents. These instructions define how Azure AI Agents will analyze market data and make trading decisions.
-
-#### Key Design Decisions
-
-1. **Dual-Threshold Decision Framework**
-   - **Standard SELL criteria**: Solid setups with IV Rank ≥50, proper Greeks, clean calendar
-   - **CLEAR SELL SIGNAL criteria**: Exceptional setups (premium 2-2.5%, IV Rank ≥70) that trigger alerts
-   - **Rationale**: Separates "good" opportunities from "don't miss this" opportunities
-
-2. **Greeks-Based Strike Selection**
-   - **Covered Calls:** Conservative (Δ 0.20-0.25), Moderate (Δ 0.25-0.30), Aggressive (Δ 0.30-0.35)
-   - **Cash-Secured Puts:** Strike AT or BELOW support levels with same delta ranges
-   - **Rationale**: Assignment on puts should happen at attractive prices (support), not above
-
-3. **Standardized Output Format**
-   - `[TIMESTAMP] SYMBOL | DECISION: SELL/WAIT | Strike: $X | Exp: YYYY-MM-DD | IV: X% | Reason: ... | Waiting for: ...`
-   - **Rationale**: Enables easy parsing for decision logs and downstream analysis
-
-4. **Fundamental Quality Gate (CSP Only)**
-   - Mandatory check: "Would you want to own this stock at strike price?"
-   - If NO → automatic WAIT regardless of premium
-   - **Rationale**: Bad assignment on deteriorating stock wipes out months of premium
-
-5. **Optimal DTE Window: 30-45 Days**
-   - Balances premium amount with theta decay rate
-   - Avoids <21 DTE (insufficient premium) and >60 DTE (too much time risk)
-   - **Rationale**: Theta acceleration in final 30 days, but need enough time to manage position
-
-6. **Earnings Calendar Integration**
-   - **Covered Calls:** NEVER sell expiring after next earnings (gap risk)
-   - **Cash-Secured Puts:** IDEAL to sell 1-3 days post-earnings (capture IV crush)
-   - **Rationale**: Different risk profiles—calls fear upward gaps, puts benefit from volatility collapse
-
-7. **MCP Tool Integration Strategy**
-   - Phase 1: Core data (ticker, price history, options chain)
-   - Phase 2: Volatility/sentiment (earnings calendar, fear/greed, trends)
-   - Phase 3: Institutional context (holders, insiders)
-   - **Rationale**: Systematic data gathering ensures no analysis gaps
-
-#### Implications
-- Instructions are Python string constants for Azure AI Agent's `instructions` parameter
-- Decision logs must be appended to instruction context on each run
-- CLEAR SELL SIGNAL marker enables alert detection in frontend
-- Test edge cases: low IV, pre-earnings, post-earnings
-
-#### Trade-offs
-1. **Complexity vs. Flexibility**: Comprehensive (~12-18KB) to reduce hallucination
-2. **Strict Rules vs. Agent Discretion**: Rules-based with interpretation room in "Reason" field
-3. **Strike Selection**: Fixed delta ranges (0.20-0.35) per industry standard
-
----
-
-### 2. Python Implementation Architecture (agent-framework SDK)
-**Date:** 2024-03-26  
-**Author:** Rusty (Python Dev)  
-**Status:** In Progress (SDK migration from azure-ai-agents)  
-**Impact:** Technical (defines project structure and integration points)
-
-#### Context
-Building complete Python project for periodic options trading agents with Azure AI Agents Framework and MCP integration.
-
-#### Key Design Decisions
-
-1. **Agent Framework SDK for Agent Management**
-   - **Decision**: Use `agent-framework` SDK (correct) instead of `azure-ai-agents` (incorrect)
-   - **Rationale**: Official framework for Microsoft Foundry with proper abstractions
-   - **Impact**: Clean, maintainable code with proper resource cleanup
-
-2. **Per-Symbol Agent Creation**
-   - **Decision**: Create new agent for each symbol analysis, then delete after completion
-   - **Rationale**: Avoids thread state accumulation, cleaner isolation, prevents cross-contamination
-   - **Trade-off**: Slightly higher latency per symbol, worth it for reliability
-
-3. **Dual-Log Strategy**
-   - **Decision**: Maintain decision log (all decisions) and signal log (SELL only)
-   - **Rationale**: Decision log captures history for context; signal log enables quick trader review
-   - **Impact**: Better UX—traders know exactly where to look for actionable signals
-
-4. **Context Continuity via Log Reading**
-   - **Decision**: Read last 20 decision log entries and include in each analysis prompt
-   - **Rationale**: Agents learn from previous decisions, avoid flip-flopping, provide temporal context
-   - **Implementation**: `read_decision_log()` called before each analysis run
-
-5. **Simple Scheduling with Python `schedule` Library**
-   - **Decision**: Use `schedule` library instead of cron or APScheduler
-   - **Rationale**: Simple readable syntax, no external dependencies, easy to test/debug
-   - **Trade-off**: Less robust than systemd timers, sufficient for this use case
-
-6. **Environment Variable Substitution in Config**
-   - **Decision**: Support `${VAR_NAME}` syntax in config.yaml with validation
-   - **Rationale**: Azure endpoints are sensitive and environment-specific
-   - **Pattern**: Recursive substitution handles nested configs
-
-7. **Separate Instruction Files**
-   - **Decision**: Import instructions from separate files rather than inline strings
-   - **Rationale**: Enables parallel development, cleaner separation of concerns
-   - **Coordination**: Import pattern: `from covered_call_instructions import COVERED_CALL_INSTRUCTIONS`
-
-#### Architecture
-```
-config.yaml → Config → AgentRunner → [CoveredCallAgent, CashSecuredPutAgent]
-                          ↓
-                  Agent Framework + MCP Tool
-                          ↓
-                Per-symbol analysis with decision context
-```
-
-#### Trade-offs
-1. **Agent Reuse vs. Fresh Creation**: Chose fresh for isolation; can revisit if latency becomes issue
-2. **Inline vs. File-Based Configs**: Chose files for easier management across environments
-3. **Polling vs. Event-Driven**: Chose scheduled polling for simplicity and consistency
-
-#### Current Issue
-Used `azure-ai-agents` SDK in original implementation. Needs migration to `agent-framework` SDK. Architecture and patterns remain valid.
-
----
-
-### 3. Switch MCP Server to mcp_massive
-**Date:** 2026-03-26  
-**Decider:** Rusty (Agent Dev)  
-**Status:** ✅ Completed  
-**Impact:** Team-wide (data source integration)
-
-#### Context
-
-The project was initially configured to use `iflow-mcp-ferdousbhai-investor-agent` as the MCP server for financial market data. Migration to `mcp_massive` from Massive.com (https://github.com/massive-com/mcp_massive) for improved data access and composable tool architecture.
-
-#### Decision
-
-Migrated all MCP server references and configuration from `iflow-mcp_ferdousbhai_investor-agent` to `mcp_massive v0.8.7`.
-
-#### Rationale
-
-- **Comprehensive API**: mcp_massive provides access to Massive.com's financial data API covering stocks, options, forex, and crypto
-- **Built-in Analytics**: Includes Black-Scholes Greeks calculations (bs_price, bs_delta, bs_gamma, bs_theta, bs_vega, bs_rho)
-- **SQL Querying**: Supports SQL-based data queries for flexible analysis
-- **Technical Indicators**: Built-in SMA, EMA, and return calculations
-- **Single Source**: Consolidates financial data access through one well-maintained API
-
-#### Implementation
-
-**Changed Files:**
-1. `config.yaml` - Updated MCP command from `uvx --from iflow-mcp-ferdousbhai-investor-agent investor-agent` to `mcp_massive` with empty args
-2. `src/agent_runner.py` - Changed MCPStdioTool name from `"investor-agent"` to `"massive"`
-3. `.squad/team.md` - Updated MCP Data reference
-4. `.squad/agents/rusty/charter.md` - Updated MCP Data Source in Tech Context
-5. `.squad/agents/linus/charter.md` - Updated MCP Data Source in Tech Context
-6. `README.md` - Updated all MCP server references and setup instructions
-
-**Installation Requirements:**
-```bash
-uv tool install "mcp_massive @ git+https://github.com/massive-com/mcp_massive@v0.8.7"
-export MASSIVE_API_KEY="your-api-key"
-```
-
-**Transport:** Stdio (unchanged) - MCP server launches as subprocess, no HTTP server needed.
-
-#### Consequences
-
-**Positive:**
-- Access to comprehensive Massive.com financial data API
-- Built-in Black-Scholes Greeks simplify options calculations
-- SQL querying enables more flexible data analysis
-- Reduced complexity with single API source
-
-**Neutral:**
-- Requires `MASSIVE_API_KEY` environment variable (similar to previous setup requirements)
-- Installation via `uv tool install` (slightly different from uvx pattern)
-
-**Mitigations:**
-- Linus updated agent instructions to ensure compatibility with mcp_massive tools
-- Fallback strategies documented for missing data signals
-
-#### Next Steps
-
-1. **Basher**: Test that MCP server launches correctly with `mcp_massive` command
-2. **Danny**: Run end-to-end test to confirm agents can successfully fetch data and generate signals
-3. **Team**: Verify that `MASSIVE_API_KEY` is documented and available in deployment environment
-
----
-
 ### 4. MCP Server Migration to Massive.com (Agent Instructions)
 **Date:** 2026-03-26  
 **Author:** Linus (Quant Dev)  
@@ -1180,3 +992,48 @@ Updated `.scheduler-bar` CSS to use flexbox space distribution:
 - **Simplicity:** CSS-only approach avoids template changes
 - **Consistency:** Uses existing flexbox patterns already in codebase
 
+
+---
+
+### 9. Chat UI Design System Alignment
+**Date:** 2024-03-31  
+**Author:** Rusty (Agent Dev)  
+**Status:** Completed  
+**Impact:** Web UI consistency
+
+#### Context
+The dual-mode chat interface (Portfolio Chat + Quick Analysis) was initially implemented with custom CSS styles that didn't match the rest of the application's design system. User feedback indicated the look and feel was inconsistent with dashboard, settings, and other pages.
+
+#### Key Design Decisions
+
+1. **Use Standard Card Components**
+   - Replace custom `.mode-option` styles with standard `.card` + `.card-header` structure
+   - Use existing design tokens (`var(--bg-input)`, `var(--bg-hover)`, `var(--border)`, `var(--accent-blue)`)
+   - Match padding, spacing, and border-radius to other cards in the app
+
+2. **Free Text Input for Market Field**
+   - Replace dropdown with text input for flexibility
+   - Apply text-transform: uppercase for consistent display
+   - Allows users to enter any market/exchange name
+
+3. **Unified Navigation Pattern**
+   - Use `.btn-sm` class for all back buttons across both modes
+   - Consistent placement in card headers
+   - Same "← Back" text pattern throughout
+
+4. **Form Consistency**
+   - Use `.hint` class for descriptive text (matches settings pages)
+   - Use `.input-field` class for form inputs
+   - Match label styling from `settings_config.html`
+
+#### Implementation
+- **Files Changed:** `web/templates/chat.html`, `web/static/style.css`
+- **Design Tokens Used:** `--bg-card`, `--bg-input`, `--bg-hover`, `--border`, `--accent-blue`, `--text`, `--text-muted`, `--radius`
+- **Refactoring:** Removed 30+ lines of unused CSS
+
+#### Result
+Standard card-based selection with free text inputs matching app design; all functionality preserved, visual consistency achieved.
+
+#### Trade-offs
+- **Flexibility vs Validation**: Free text input allows any market name but sacrifices dropdown validation (acceptable for power users)
+- **Simplicity**: CSS reuse reduces code duplication and future maintenance burden

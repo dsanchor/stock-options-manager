@@ -183,3 +183,32 @@ Updated the summary agent to organize daily reports into four distinct sections 
 - Each activity has an `agent_type` field that indicates its purpose (covered_call, cash_secured_put, open_call_monitor, open_put_monitor)
 - Monitor agents (open_call_monitor, open_put_monitor) track active positions
 - Sell agents (covered_call, cash_secured_put) watch for new sell opportunities
+
+## Chat UI Design System Alignment (2024-03-31)
+**Status:** ✅ Complete
+**Commit:** 1baaaab
+
+Refactored the dual-mode chat interface to align with the application's existing design system instead of using custom styling.
+
+**Key Changes:**
+1. **Mode Selection Cards** — Replaced custom `.mode-option` CSS with inline styles using standard design tokens (`var(--bg-input)`, `var(--bg-hover)`, `var(--border)`, `var(--accent-blue)`)
+2. **Quick Analysis Form** — Changed market input from dropdown (`<select>`) to free text field (`<input type="text">`) for flexibility
+3. **Unified Navigation** — Standardized back buttons across all screens using existing `.btn-sm` class instead of custom button styles
+4. **Form Consistency** — Used standard `.card-header`, `.hint`, and `.input-field` classes matching `settings_config.html` patterns
+5. **CSS Cleanup** — Removed 30+ lines of unused `.mode-option`, `.mode-icon` custom styles and responsive overrides
+
+**Design Patterns Applied:**
+- Card structure: `.card` → `.card-header` → content padding
+- Form labels: `font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.3rem`
+- Input styling: `.input-field` with `var(--bg-input)`, `var(--border)`, consistent padding
+- Navigation buttons: `.btn-sm` for secondary actions in card headers
+
+**Files Changed:**
+- `web/templates/chat.html` — HTML structure and JavaScript variable names
+- `web/static/style.css` — Removed custom chat mode CSS
+
+**User Experience:**
+- Both Portfolio Chat and Quick Analysis now have identical navigation patterns
+- Market field accepts any text (e.g., "NASDAQ", "NYSE", or custom exchanges)
+- Visual consistency with dashboard, settings, and symbol detail pages
+
