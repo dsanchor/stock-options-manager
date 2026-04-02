@@ -51,10 +51,7 @@
 
 <!-- Chat Screen (initially hidden) -->
 <div id="chatScreen" style="display: none;">
-    <div style="margin-bottom: 0.75rem; display: flex; justify-content: space-between; align-items: center;">
-        <button id="changeContextBtn" class="btn" style="font-size: 0.85rem; padding: 0.4rem 0.75rem;">
-            ⚙️ Change Context
-        </button>
+    <div style="margin-bottom: 0.75rem; display: flex; justify-content: flex-end; align-items: center;">
         <div id="contextIndicator" style="font-size: 0.85rem; color: var(--text-muted, #707090);"></div>
     </div>
     <div class="card chat-card">
@@ -87,7 +84,6 @@
     const selectionScreen = document.getElementById('selectionScreen');
     const chatScreen = document.getElementById('chatScreen');
     const startChatBtn = document.getElementById('startChatBtn');
-    const changeContextBtn = document.getElementById('changeContextBtn');
     const contextIndicator = document.getElementById('contextIndicator');
     
     const tvCheckbox = document.getElementById('contextTradingView');
@@ -265,36 +261,6 @@
         // Mark as started and load context
         chatStarted = true;
         loadContext();
-    });
-    
-    // Change Context button handler
-    changeContextBtn.addEventListener('click', function() {
-        // Reset chat state
-        history = [];
-        cachedContext = null;
-        chatStarted = false;
-        
-        // Clear chat messages except welcome
-        while (messagesEl.children.length > 1) {
-            messagesEl.removeChild(messagesEl.lastChild);
-        }
-        welcomeBubble.textContent = '⏳ Loading market data for ' + SYMBOL + '...';
-        
-        // Reset input state
-        inputEl.value = '';
-        inputEl.disabled = true;
-        inputEl.placeholder = 'Loading market data...';
-        sendBtn.disabled = true;
-        sendBtn.textContent = 'Send';
-        errorEl.style.display = 'none';
-        
-        // Reset start button
-        startChatBtn.disabled = false;
-        startChatBtn.textContent = 'Start Chat';
-        
-        // Show selection screen, hide chat screen
-        chatScreen.style.display = 'none';
-        selectionScreen.style.display = 'block';
     });
 
     sendBtn.addEventListener('click', sendMessage);
