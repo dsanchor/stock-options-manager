@@ -18,11 +18,11 @@
     </div>
     <div class="summary-card">
         <div class="summary-value">{{ grand_totals.week }}</div>
-        <div class="summary-label">This Week</div>
+        <div class="summary-label">Last 7 Days</div>
     </div>
     <div class="summary-card">
         <div class="summary-value">{{ grand_totals.month }}</div>
-        <div class="summary-label">This Month</div>
+        <div class="summary-label">Last 30 Days</div>
     </div>
     <div class="summary-card">
         <div class="summary-value">{{ symbol_count }}</div>
@@ -67,8 +67,8 @@
                 <tr>
                     <th>{{ "Position" if agent.is_position_monitor else "Symbol" }}</th>
                     <th class="num">Today</th>
-                    <th class="num">This Week</th>
-                    <th class="num">This Month</th>
+                    <th class="num">Last 7 Days</th>
+                    <th class="num">Last 30 Days</th>
                     {% if agent.is_position_monitor %}
                     <th class="num">DTE</th>
                     <th>Moneyness</th>

@@ -95,8 +95,8 @@ def parse_timestamp(ts: str) -> Optional[datetime]:
 def _count_by_range(entries: List[Dict[str, Any]]) -> Dict[str, int]:
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    week_start = today_start - timedelta(days=today_start.weekday())
-    month_start = today_start.replace(day=1)
+    seven_days_ago = now - timedelta(days=7)
+    thirty_days_ago = now - timedelta(days=30)
     counts = {"today": 0, "week": 0, "month": 0, "total": len(entries)}
     for e in entries:
         ts = parse_timestamp(e.get("timestamp", ""))
@@ -104,9 +104,9 @@ def _count_by_range(entries: List[Dict[str, Any]]) -> Dict[str, int]:
             continue
         if ts >= today_start:
             counts["today"] += 1
-        if ts >= week_start:
+        if ts >= seven_days_ago:
             counts["week"] += 1
-        if ts >= month_start:
+        if ts >= thirty_days_ago:
             counts["month"] += 1
     return counts
 

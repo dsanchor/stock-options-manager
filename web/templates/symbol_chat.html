@@ -10,40 +10,42 @@
 
 <!-- Selection Screen -->
 <div id="selectionScreen">
-    <div class="card" style="max-width: 600px; margin: 2rem auto;">
-        <h3 style="margin-top: 0; margin-bottom: 1rem; font-size: 1.1rem; color: var(--text-primary, #e0e0ff);">Select Context Sources</h3>
-        <p style="margin-bottom: 1.5rem; font-size: 0.95rem; color: var(--text-secondary, #a0a0c0);">
-            Choose which data sources to include in your chat session:
-        </p>
-        <div style="display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1.5rem;">
-            <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer; user-select: none; padding: 0.75rem; border: 1px solid var(--border-color, #3a3a50); border-radius: 6px; background: var(--bg-secondary, #1e1e2e); transition: all 0.2s;">
-                <input type="checkbox" id="contextTradingView" checked style="cursor: pointer; width: 18px; height: 18px;">
-                <div>
-                    <div style="font-weight: 500; color: var(--text-primary, #e0e0ff);">📊 TradingView Data</div>
-                    <div style="font-size: 0.85rem; color: var(--text-muted, #707090); margin-top: 0.25rem;">Real-time price, volume, and technical indicators</div>
-                </div>
-            </label>
-            <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer; user-select: none; padding: 0.75rem; border: 1px solid var(--border-color, #3a3a50); border-radius: 6px; background: var(--bg-secondary, #1e1e2e); transition: all 0.2s;">
-                <input type="checkbox" id="contextPositions" checked style="cursor: pointer; width: 18px; height: 18px;">
-                <div>
-                    <div style="font-weight: 500; color: var(--text-primary, #e0e0ff);">📈 Current Active Positions</div>
-                    <div style="font-size: 0.85rem; color: var(--text-muted, #707090); margin-top: 0.25rem;">Your open positions for this symbol</div>
-                </div>
-            </label>
-            <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer; user-select: none; padding: 0.75rem; border: 1px solid var(--border-color, #3a3a50); border-radius: 6px; background: var(--bg-secondary, #1e1e2e); transition: all 0.2s;">
-                <input type="checkbox" id="contextActivities" checked style="cursor: pointer; width: 18px; height: 18px;">
-                <div>
-                    <div style="font-weight: 500; color: var(--text-primary, #e0e0ff);">📋 Last 3 Activities</div>
-                    <div style="font-size: 0.85rem; color: var(--text-muted, #707090); margin-top: 0.25rem;">Recent agent decisions and recommendations</div>
-                </div>
-            </label>
+    <div class="card settings-card" style="max-width: 600px; margin: 2rem auto;">
+        <div class="card-header">
+            <h2>Select Context Sources</h2>
         </div>
-        <button id="startChatBtn" class="btn btn-primary" style="width: 100%; padding: 0.75rem; font-size: 1rem;">
-            Start Chat
-        </button>
-        <p style="margin-top: 1rem; margin-bottom: 0; font-size: 0.85rem; color: var(--text-muted, #707090); text-align: center;">
-            Your preferences will be saved for future sessions
-        </p>
+        <p class="hint">Choose which data sources to include in your chat session:</p>
+        <div style="padding: 0.75rem 1.25rem;">
+            <div style="display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1.5rem;">
+                <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer; user-select: none; padding: 0.75rem; border: 1px solid var(--border-color, #3a3a50); border-radius: 6px; background: var(--bg-secondary, #1e1e2e); transition: all 0.2s;">
+                    <input type="checkbox" id="contextTradingView" checked style="cursor: pointer; width: 18px; height: 18px;">
+                    <div>
+                        <div style="font-weight: 500; color: var(--text-primary, #e0e0ff);">📊 TradingView Data</div>
+                        <div style="font-size: 0.85rem; color: var(--text-muted, #707090); margin-top: 0.25rem;">Real-time price, volume, and technical indicators</div>
+                    </div>
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer; user-select: none; padding: 0.75rem; border: 1px solid var(--border-color, #3a3a50); border-radius: 6px; background: var(--bg-secondary, #1e1e2e); transition: all 0.2s;">
+                    <input type="checkbox" id="contextPositions" checked style="cursor: pointer; width: 18px; height: 18px;">
+                    <div>
+                        <div style="font-weight: 500; color: var(--text-primary, #e0e0ff);">📈 Current Active Positions</div>
+                        <div style="font-size: 0.85rem; color: var(--text-muted, #707090); margin-top: 0.25rem;">Your open positions for this symbol</div>
+                    </div>
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer; user-select: none; padding: 0.75rem; border: 1px solid var(--border-color, #3a3a50); border-radius: 6px; background: var(--bg-secondary, #1e1e2e); transition: all 0.2s;">
+                    <input type="checkbox" id="contextActivities" checked style="cursor: pointer; width: 18px; height: 18px;">
+                    <div>
+                        <div style="font-weight: 500; color: var(--text-primary, #e0e0ff);">📋 Last 3 Activities</div>
+                        <div style="font-size: 0.85rem; color: var(--text-muted, #707090); margin-top: 0.25rem;">Recent agent decisions and recommendations</div>
+                    </div>
+                </label>
+            </div>
+            <button id="startChatBtn" class="btn btn-primary" style="width: 100%; padding: 0.75rem; font-size: 1rem;">
+                Start Chat
+            </button>
+            <p style="margin-top: 1rem; margin-bottom: 0; font-size: 0.85rem; color: var(--text-muted, #707090); text-align: center;">
+                Your preferences will be saved for future sessions
+            </p>
+        </div>
     </div>
 </div>
 
