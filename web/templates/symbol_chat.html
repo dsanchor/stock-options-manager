@@ -8,6 +8,27 @@
     <p class="subtitle">Ask questions about {{ symbol_doc.symbol }} with live market data</p>
 </div>
 
+<div class="card" style="margin-bottom: 1rem;">
+    <h3 style="margin-top: 0; margin-bottom: 0.75rem; font-size: 0.95rem; color: var(--text-secondary, #a0a0c0);">Context Options</h3>
+    <div style="display: flex; flex-wrap: wrap; gap: 1rem;">
+        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; user-select: none;">
+            <input type="checkbox" id="contextTradingView" checked style="cursor: pointer;">
+            <span>📊 TradingView Data</span>
+        </label>
+        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; user-select: none;">
+            <input type="checkbox" id="contextPositions" checked style="cursor: pointer;">
+            <span>📈 Current Active Positions</span>
+        </label>
+        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; user-select: none;">
+            <input type="checkbox" id="contextActivities" checked style="cursor: pointer;">
+            <span>📋 Last 3 Activities</span>
+        </label>
+    </div>
+    <p style="margin-top: 0.5rem; margin-bottom: 0; font-size: 0.85rem; color: var(--text-muted, #707090);">
+        Select which context to include when loading chat data. Changes will apply when you start a new chat session.
+    </p>
+</div>
+
 <div class="card chat-card">
     <div id="chatMessages" class="chat-messages">
         <div class="chat-msg assistant">
@@ -33,9 +54,47 @@
     const sendBtn = document.getElementById('chatSend');
     const errorEl = document.getElementById('chatError');
     const welcomeBubble = document.getElementById('welcomeBubble');
+    
+    const tvCheckbox = document.getElementById('contextTradingView');
+    const posCheckbox = document.getElementById('contextPositions');
+    const actCheckbox = document.getElementById('contextActivities');
 
     let history = [];
     let cachedContext = null;
+    
+    // Load preferences from localStorage
+    const storageKey = 'symbol_chat_context_prefs';
+    const savedPrefs = localStorage.getItem(storageKey);
+    if (savedPrefs) {
+        try {
+            const prefs = JSON.parse(savedPrefs);
+            if (typeof prefs.tradingview === 'boolean') tvCheckbox.checked = prefs.tradingview;
+            if (typeof prefs.positions === 'boolean') posCheckbox.checked = prefs.positions;
+            if (typeof prefs.activities === 'boolean') actCheckbox.checked = prefs.activities;
+        } catch (e) {}
+    }
+    
+    // Save preferences on change
+    function savePreferences() {
+        const prefs = {
+            tradingview: tvCheckbox.checked,
+            positions: posCheckbox.checked,
+            activities: actCheckbox.checked
+        };
+        localStorage.setItem(storageKey, JSON.stringify(prefs));
+    }
+    
+    tvCheckbox.addEventListener('change', savePreferences);
+    posCheckbox.addEventListener('change', savePreferences);
+    actCheckbox.addEventListener('change', savePreferences);
+    
+    function getContextPreferences() {
+        return {
+            tradingview: tvCheckbox.checked,
+            positions: posCheckbox.checked,
+            activities: actCheckbox.checked
+        };
+    }
 
     function addMessage(role, content) {
         const div = document.createElement('div');
@@ -55,10 +114,11 @@
 
     async function loadContext() {
         try {
+            const prefs = getContextPreferences();
             const res = await fetch('/api/symbols/' + SYMBOL + '/chat/context', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: '{}',
+                body: JSON.stringify({preferences: prefs}),
             });
             const data = await res.json();
 
@@ -68,9 +128,15 @@
                     'responses may be slower as I fetch data per message. What would you like to know?';
             } else {
                 cachedContext = data.context;
+                const contextItems = [];
+                if (prefs.tradingview) contextItems.push('TradingView data');
+                if (prefs.positions) contextItems.push('current positions');
+                if (prefs.activities) contextItems.push('recent activities');
+                const contextDesc = contextItems.length > 0 
+                    ? contextItems.join(', ')
+                    : 'no additional context';
                 welcomeBubble.textContent =
-                    'Hello! I\'m focused on ' + SYMBOL + '. I have access to live TradingView data ' +
-                    '(overview, technicals, forecast, dividends, options chain) and your recent analysis history. ' +
+                    'Hello! I\'m focused on ' + SYMBOL + '. I have access to ' + contextDesc + '. ' +
                     'What would you like to know?';
             }
         } catch (e) {

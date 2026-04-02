@@ -186,3 +186,39 @@ Earlier phases and implementation details archived to `.squad/decisions/decision
 **Why this matters:**
 Mobile IM apps have limited screen real estate. Dense paragraphs are hard to scan. Emojis + bold + short lines = instant comprehension while scrolling. User can quickly assess portfolio status without opening full dashboard.
 
+### Symbol Chat Context Selection (2026-04-02)
+**Status:** ✅ Completed  
+**Files:**
+- `web/templates/symbol_chat.html` — Added context selection checkboxes
+- `web/app.py` — Updated `_build_symbol_context()` and endpoints to accept preferences
+
+**Implementation:**
+Added user-configurable context selection for symbol detail chat. Three checkboxes control what context is loaded:
+1. 📊 TradingView Data — Live market data (overview, technicals, forecast, dividends, options chain)
+2. 📈 Current Active Positions — Open positions and watchlist status for the symbol
+3. 📋 Last 3 Activities — Recent analysis activities (reduced from 5 to 3 per requirements)
+
+**Key design decisions:**
+- **localStorage persistence:** User preferences saved to `symbol_chat_context_prefs` key, restored on page load
+- **Backward compatibility:** All checkboxes default to checked (preserves existing behavior)
+- **Dynamic context building:** Backend conditionally includes sections based on preferences dict
+- **Frontend feedback:** Welcome message adapts to show which context types are loaded
+
+**Architecture pattern:**
+```javascript
+// Frontend: Send preferences in POST body
+const prefs = {tradingview: bool, positions: bool, activities: bool};
+POST /api/symbols/{symbol}/chat/context { preferences: prefs }
+
+// Backend: Build context conditionally
+if preferences.get('tradingview', True):
+    # Include TradingView data
+if preferences.get('positions', True):
+    # Include symbol config with positions
+if preferences.get('activities', True):
+    # Include last 3 activities (not 5)
+```
+
+**Why this matters:**
+Different chat scenarios need different context. Quick technical questions don't need full position history. Position management questions don't need all TradingView data. User control reduces token usage and improves response relevance. LocalStorage persistence means users set it once per workflow preference.
+

@@ -1781,11 +1781,25 @@ async def symbol_chat_page(request: Request, symbol: str):
     })
 
 
-async def _build_symbol_context(symbol: str, cosmos) -> dict:
+async def _build_symbol_context(symbol: str, cosmos, 
+                                preferences: dict = None) -> dict:
     """Build context data for a symbol (CosmosDB + TradingView).
+    
+    Args:
+        symbol: Stock symbol
+        cosmos: CosmosDB client
+        preferences: Dict with keys: tradingview, positions, activities (all bool)
 
     Returns dict with keys: context, exchange, display_name.
     """
+    # Default to all enabled for backward compatibility
+    if preferences is None:
+        preferences = {
+            'tradingview': True,
+            'positions': True,
+            'activities': True
+        }
+    
     context_parts: List[str] = []
     symbol_doc = None
     exchange = "NYSE"
@@ -1795,16 +1809,19 @@ async def _build_symbol_context(symbol: str, cosmos) -> dict:
             symbol_doc = cosmos.get_symbol(symbol)
             if symbol_doc:
                 exchange = symbol_doc.get("exchange", "NYSE")
-                context_parts.append("--- Symbol Config ---")
-                context_parts.append(json.dumps(
-                    {k: v for k, v in symbol_doc.items()
-                     if k in ("symbol", "display_name", "exchange",
-                              "watchlist", "positions")},
-                    indent=2, default=str))
+                # Only include positions if requested
+                if preferences.get('positions', True):
+                    context_parts.append("--- Symbol Config ---")
+                    context_parts.append(json.dumps(
+                        {k: v for k, v in symbol_doc.items()
+                         if k in ("symbol", "display_name", "exchange",
+                                  "watchlist", "positions")},
+                        indent=2, default=str))
         except Exception as exc:
             logger.warning("symbol_chat: failed to load symbol doc: %s", exc)
 
-    if cosmos:
+    # Only include activities if requested
+    if cosmos and preferences.get('activities', True):
         try:
             activities: List[Dict] = []
             for agent_type, meta in AGENT_TYPES.items():
@@ -1815,10 +1832,11 @@ async def _build_symbol_context(symbol: str, cosmos) -> dict:
                 activities.extend(acts)
             activities.sort(key=lambda d: d.get("timestamp", ""),
                             reverse=True)
-            activities = activities[:5]
+            # Limit to last 3 activities as per requirements
+            activities = activities[:3]
 
             if activities:
-                context_parts.append("\n--- Recent Activities ---")
+                context_parts.append("\n--- Recent Activities (Last 3) ---")
                 for d in activities:
                     context_parts.append(json.dumps(
                         _clean_doc(d), indent=2, default=str))
@@ -1826,33 +1844,35 @@ async def _build_symbol_context(symbol: str, cosmos) -> dict:
             logger.warning("symbol_chat: failed to load activities: %s", exc)
             context_parts.append("(Error loading activities from CosmosDB)")
 
-    try:
-        from src.tv_data_fetcher import create_fetcher
-        from src.config import Config
+    # Only include TradingView data if requested
+    if preferences.get('tradingview', True):
+        try:
+            from src.tv_data_fetcher import create_fetcher
+            from src.config import Config
 
-        config = Config()
-        full_symbol = f"{exchange}-{symbol}"
-        async with create_fetcher(config) as fetcher:
-            tv_data = await fetcher.fetch_all(full_symbol)
+            config = Config()
+            full_symbol = f"{exchange}-{symbol}"
+            async with create_fetcher(config) as fetcher:
+                tv_data = await fetcher.fetch_all(full_symbol)
 
-        tv_sections = []
-        for section_key, section_label in [
-            ("overview", "Overview"),
-            ("technicals", "Technicals"),
-            ("forecast", "Forecast"),
-            ("dividends", "Dividends"),
-            ("options_chain", "Options Chain"),
-        ]:
-            content = tv_data.get(section_key, "")
-            if content and not content.startswith("[ERROR"):
-                tv_sections.append(
-                    f"\n--- TradingView {section_label} ---\n{content}")
+            tv_sections = []
+            for section_key, section_label in [
+                ("overview", "Overview"),
+                ("technicals", "Technicals"),
+                ("forecast", "Forecast"),
+                ("dividends", "Dividends"),
+                ("options_chain", "Options Chain"),
+            ]:
+                content = tv_data.get(section_key, "")
+                if content and not content.startswith("[ERROR"):
+                    tv_sections.append(
+                        f"\n--- TradingView {section_label} ---\n{content}")
 
-        if tv_sections:
-            context_parts.append("\n".join(tv_sections))
-    except Exception as exc:
-        logger.warning("symbol_chat: TradingView fetch failed: %s", exc)
-        context_parts.append("(Live TradingView data unavailable)")
+            if tv_sections:
+                context_parts.append("\n".join(tv_sections))
+        except Exception as exc:
+            logger.warning("symbol_chat: TradingView fetch failed: %s", exc)
+            context_parts.append("(Live TradingView data unavailable)")
 
     context_text = ("\n".join(context_parts) if context_parts
                     else "No context data available.")
@@ -1890,9 +1910,16 @@ async def symbol_chat_context(request: Request, symbol: str):
     """Pre-fetch all heavy context (CosmosDB + TradingView) for a symbol."""
     symbol = symbol.upper()
     cosmos = getattr(request.app.state, "cosmos", None)
+    
+    # Get preferences from request body
+    try:
+        body = await request.json()
+        preferences = body.get('preferences', {})
+    except Exception:
+        preferences = {}
 
     try:
-        result = await _build_symbol_context(symbol, cosmos)
+        result = await _build_symbol_context(symbol, cosmos, preferences)
         return JSONResponse(result)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
