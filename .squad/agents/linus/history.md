@@ -1125,3 +1125,14 @@ Implemented a selection-first UX pattern in `web/templates/symbol_chat.html`:
   - Padding standardized to match settings page (0.75rem 1.25rem)
 - **Orchestration Log**: .squad/orchestration-log/2026-04-02T09:24:24Z-linus.md
 - **Session Log**: .squad/log/2026-04-02T09:24:24Z-context-styling.md
+
+### Symbol Chat: Removed Change Context Button (2026-04-02)
+- **Task**: Removed "Change Context" button from symbol chat interface
+- **Rationale**: User prefers to manually navigate back to context selection screen rather than having an in-chat button
+- **Changes**:
+  - Removed `⚙️ Change Context` button from chat header (was on lines 55-57)
+  - Removed `changeContextBtn` variable declaration from JavaScript (line 90)
+  - Removed entire `changeContextBtn.addEventListener('click')` event handler (lines 270-298)
+  - Updated flex container to use `justify-content: flex-end` instead of `space-between` (context indicator now right-aligned)
+- **Files Modified**: `web/templates/symbol_chat.html`
+- **User Pattern**: Prefers explicit navigation over in-context actions for changing chat settings
