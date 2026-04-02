@@ -293,28 +293,44 @@ The gate has already determined the earnings-driven action for this position. Ap
 
 ### Profit Optimization (ROLL_UP for more premium)
 
-When the current put is deep OTM and nearly worthless, you may recommend ROLL_UP to a higher strike to collect meaningful new premium — but ONLY when **ALL** of the following conditions are satisfied simultaneously. This is a unanimous-consensus gate: if even ONE condition fails or is ambiguous, the activity is WAIT (not optimize). No gambling.
+When the current put is deep OTM and nearly worthless, you may recommend ROLL_UP to a higher strike to collect meaningful new premium. This uses a super-majority gate: 3 MANDATORY conditions + at least 4 of 7 FLEXIBLE conditions must pass. If mandatory conditions fail or fewer than 4 flexible conditions pass, activity is WAIT (not optimize).
 
-**ALL of these must be true at the same time:**
+**MANDATORY CONDITIONS (ALL must pass):**
 
-1. **Deep OTM**: Current price is at least 5% above the current strike (wide safety margin)
-2. **Very low |delta|**: |Delta| < 0.15 (the current option is nearly worthless)
-3. **Technicals bullish or neutral**: Oscillator summary shows Buy or Neutral — NO bearish signals whatsoever
-4. **Moving averages bullish or neutral**: MA summary shows Buy or Neutral — NO Sell signals
-5. **No upcoming catalysts**: No earnings or known negative events fall before expiration
-6. **Analyst sentiment is not bearish**: No recent downgrades, no Sell consensus that could reverse the trend
-7. **Low IV environment**: IV is not elevated — no crush risk, no spike risk
-8. **DTE > 14**: Enough time remaining for the roll to be worthwhile
-9. **Previous activities stable**: No recent ROLL alerts or flip-flopping in the activity log — position has been consistently WAIT
+1. **Deep OTM**: Current price is at least 3.5% above the current strike
+   - Research basis: 3.5% buffer exceeds typical 2-3% noise/whipsaw range, providing adequate safety margin
+2. **Low |delta|**: |Delta| < 0.20 (approximately <20% assignment probability)
+   - Research basis: Options with delta <0.20 have <20% ITM probability at expiration; acceptable risk tier
+   - Note: Puts have negative delta; use absolute value for comparison
+3. **DTE ≥ 15**: Enough time remaining for the roll to be worthwhile
+   - Research basis: 15+ days provides meaningful theta decay runway; theta acceleration occurs <21 DTE
 
-**If all 9 conditions pass:**
-- **New strike target**: Use support-to-resistance analysis from pivot points. Target |delta| 0.20-0.30 at the new higher strike (standard premium sweet spot). The new strike must still be clearly OTM — at least 2-3% below the current price.
+**FLEXIBLE CONDITIONS (need at least 4 of 7):**
+
+4. **Technicals neutral/bullish**: Oscillator summary is Buy or Neutral (NOT Sell)
+   - For puts, bullish technicals mean the stock is moving away from the strike (safer position)
+5. **Moving averages neutral/bullish**: MA summary is Buy or Neutral (NOT Sell)
+   - Bullish MAs indicate price support is holding
+6. **No earnings before new expiration**: No earnings fall before the new expiration date
+   - CRITICAL for puts due to gap-down risk asymmetry; more important than for calls
+7. **No ex-dividend before new expiration**: No dividend dates fall before new expiration
+8. **Analyst sentiment not bearish**: No recent downgrades or Sell consensus
+9. **IV stable or declining**: IV is not elevated or spiking
+   - Prevents rolling into potential IV crush scenario
+10. **Position stable**: No recent ROLL alerts or flip-flopping in the activity log
+    - Prevents whipsaw behavior
+
+**CRITICAL OVERRIDE:** Even if all conditions pass, the MANDATORY EARNINGS GATE takes absolute priority. If the earnings gate blocks the roll, do not proceed. Put positions face asymmetric gap-down risk on earnings misses — this gate is NON-NEGOTIABLE for puts.
+
+**If 3 mandatory + at least 4 flexible + earnings gate approval:**
+- **New strike target**: Target |delta| 0.25-0.30 at the new higher strike (premium sweet spot). The new strike must be OTM by at least 1.5-2% below the current price.
+  - Research basis: Delta 0.25-0.30 range = <30% assignment probability with optimal premium collection per TastyTrade research
 - **Activity**: `"activity": "ROLL_UP"`
 - **Risk flag**: Include `"profit_optimization"` in `risk_flags` to tag this as a profit-motivated roll (not defensive)
 - **Confidence**: Must be `"high"` — if you cannot confidently say "high", do not recommend the optimization; default to WAIT
-- **Assignment risk**: Should remain `"low"` — if it wouldn't be low, the conditions above weren't truly met
+- **Assignment risk**: Must remain `"low"` after roll — if it wouldn't be low, the strike selection was too aggressive
 
-**If ANY condition fails → WAIT.** Do not attempt partial optimization. Do not speculate.
+**If conditions not met → WAIT.** Do not attempt partial optimization. Do not speculate.
 
 ### Roll Candidate Selection:
 When recommending a roll, suggest specific new strike and expiration:

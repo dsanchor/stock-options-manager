@@ -856,3 +856,172 @@ Created `TRADINGVIEW_ANTI_BOT.md` with full technical details, configuration gui
   - Clear distinction: only suggest roll downs for existing positions, not new opens
 - **Key principle preserved**: Earnings gate remains STRICT — never roll down if earnings fall before new expiration
 - Files modified: `src/tv_open_call_instructions.py`, `src/tv_open_call_chat_instructions.py`
+
+### Put Roll Up Strategy Analysis (2026-04-01)
+- **Context:** Following covered call roll down relaxation, user requested analysis of put roll up strategy for similar improvements
+- **Current State:** Unanimous 9/9 consensus gate for ROLL_UP profit optimization (very conservative)
+- **Analysis Findings:**
+  - Current gate: Deep OTM ≥5%, |delta| <0.15, 9 unanimous conditions
+  - Mirrors previous call gate structure (before relaxation)
+  - Overly restrictive; misses valid optimization opportunities
+  - Delta <0.15 = ~15% assignment probability (very conservative)
+- **Recommendations:**
+  - Adopt same structure as relaxed call gate: 3 mandatory + 4 of 7 flexible
+  - **Mandatory conditions:** Deep OTM ≥3.5%, |delta| <0.20, DTE ≥15
+  - **Flexible conditions (need 4/7):** Technicals neutral/bullish, MAs neutral/bullish, no earnings, no ex-div, analyst not bearish, IV stable/declining, position stable
+  - **Relaxed thresholds:** Delta 0.15→0.20, Deep OTM 5%→3.5%, DTE 14→15, new strike OTM 2-3%→1.5-2%, new strike delta 0.20-0.30→0.25-0.30
+  - **Research basis:** |Delta| 0.20 ≈ 20% assignment probability (acceptable risk tier), 3.5% OTM exceeds typical noise range (2-3%), 15 DTE provides meaningful theta decay window
+- **Safety Preservations:**
+  - Earnings gate remains STRICT (non-negotiable override)
+  - Assignment risk must stay "low" after roll
+  - Confidence must be "high"
+  - New strike must be OTM by ≥1.5-2%
+- **Put-Specific Considerations:**
+  - Puts have downside gap risk on earnings misses (higher than calls)
+  - Support levels critical for strike selection
+  - Assignment can be desirable (buying stock at discount)
+  - Bullish technicals = safer for puts (stock moving away from strike)
+- **Files to Update:**
+  - `src/tv_open_put_instructions.py` (lines 296-317) — update gate logic
+  - `src/tv_open_put_chat_instructions.py` — add roll up strategy section (currently missing)
+- **Alignment:** Consistent with recent call work; same philosophy and threshold relaxations
+- **Detailed Analysis:** Created comprehensive report at `put_strategy_analysis.md` with research basis, thresholds, implementation plan, code snippets
+
+### Put Roll Up Strategy Implementation (2026-04-01)
+- **Status:** COMPLETED
+- **Context:** User approved put roll up strategy relaxation recommendations from `put_strategy_analysis.md`
+- **Implementation:**
+  1. **Updated `src/tv_open_put_instructions.py` (lines 294-332):**
+     - Replaced unanimous 9/9 gate with super-majority gate: 3 mandatory + 4 of 7 flexible
+     - **Mandatory conditions:** Deep OTM ≥3.5% (was 5%), |delta| <0.20 (was 0.15), DTE ≥15 (was >14)
+     - **Flexible conditions (need 4/7):** Technicals neutral/bullish, MAs neutral/bullish, no earnings, no ex-div, analyst not bearish, IV stable/declining, position stable
+     - **New strike targets:** Delta 0.25-0.30 (was 0.20-0.30), OTM by 1.5-2% (was 2-3%)
+     - **Research annotations:** Added inline research basis for each threshold (TastyTrade, Option Alpha, assignment probability studies)
+     - **Critical override:** Emphasized earnings gate is NON-NEGOTIABLE for puts due to gap-down asymmetry
+  2. **Updated `src/tv_open_put_chat_instructions.py` (lines 221-292):**
+     - Added new "PROFIT OPTIMIZATION: ROLL UP STRATEGY" section (mirroring call chat instructions structure)
+     - **Gate logic guidance:** Plain-language explanation of 3 mandatory + 4 of 7 flexible conditions
+     - **Conversational examples:** "Good setup", "Marginal setup", "Earnings blocker" scenarios with realistic language
+     - **Put-specific risk emphasis:**
+       - Rolling UP for puts = HIGHER strike = MORE aggressive (closer to money)
+       - Earnings risk is SEVERE for puts (gap-down can move OTM to ITM instantly)
+       - Assignment readiness check: "Would you be comfortable owning at the new higher strike?"
+     - **When NOT to suggest:** Bearish signals, earnings uncertainty, <4 flexible conditions, flip-flopping activity
+- **Key Differences vs Calls:**
+  - Puts: Rolling UP = higher strike (more aggressive); Calls: Rolling DOWN = lower strike (more aggressive)
+  - Puts: Bullish technicals = safer (stock moving away); Calls: Bearish technicals = safer
+  - Puts: Gap-down earnings risk more severe (assignment at bad entry); Calls: Gap-up risk loses profit potential
+  - Puts: Earnings gate MORE critical due to downside asymmetry
+- **Consistency with Recent Call Work:**
+  - Same gate structure philosophy: 3 mandatory + super-majority flexible
+  - Same threshold relaxations: delta 0.15→0.20, OTM 5%→3.5%, DTE 14→15, new strike adjustments
+  - Same strict preservation: Earnings gate non-negotiable, assignment risk must stay "low", confidence must be "high"
+- **Files Modified:**
+  - `src/tv_open_put_instructions.py`
+  - `src/tv_open_put_chat_instructions.py`
+- **Decision Record:** Created at `.squad/decisions/inbox/linus-put-roll-implementation.md`
+
+## Learnings
+
+### Gate Design Philosophy (from Roll Strategy Work)
+- **Super-majority gates (3 mandatory + 4 of 7 flexible) provide optimal balance:**
+  - Mandatory floor ensures non-negotiable safety requirements (OTM margin, delta, DTE)
+  - Flexible majority allows for real-world market conditions (not everything perfect simultaneously)
+  - 4 of 7 = 57% agreement threshold still requires substantial confirmation
+- **Unanimous gates (9/9) are overly restrictive in practice:**
+  - Market conditions rarely align perfectly on all factors simultaneously
+  - Misses valid optimization opportunities where risk is acceptably low
+  - Single outlier can block an otherwise safe trade
+- **Research-backed thresholds are critical:**
+  - Delta <0.20 = <20% assignment probability (quantifiable risk)
+  - OTM margin 3.5% exceeds typical noise range 2-3% (empirical)
+  - DTE 15+ provides meaningful theta decay window (time-value math)
+  - Citing research (TastyTrade, Option Alpha, CBOE) builds trust and justifies relaxations
+
+### Strategy-Specific Risk Asymmetries
+- **Puts vs Calls have opposite directional implications:**
+  - **Puts:** Rolling UP = higher strike = more aggressive (closer to money, higher assignment risk)
+  - **Calls:** Rolling DOWN = lower strike = more aggressive (closer to money, higher assignment risk)
+  - Must adapt language and risk framing accordingly in chat instructions
+- **Earnings risk severity differs:**
+  - **Puts:** Gap-down on earnings miss can move safe OTM position to deep ITM instantly (catastrophic assignment at bad entry)
+  - **Calls:** Gap-up on earnings beat moves OTM to ITM (assignment loses upside, but stock still profitable)
+  - Puts require stricter earnings gate adherence due to downside asymmetry
+- **Technical indicator interpretation flips:**
+  - **Puts:** Bullish technicals = safer (stock moving away from strike, reducing assignment risk)
+  - **Calls:** Bearish technicals = safer (stock moving away from strike, reducing assignment risk)
+  - Gate conditions must account for this directional inversion
+
+### Code Instruction Design Patterns
+- **Dual instruction pattern works well:**
+  1. **Formal instructions** (`tv_open_put_instructions.py`): Detailed gate logic, research citations, precise thresholds
+  2. **Chat instructions** (`tv_open_put_chat_instructions.py`): Conversational guidance, example language, plain-English explanations
+  - Formal instructions for programmatic analysis (structured JSON output)
+  - Chat instructions for quick user-facing analysis (natural language)
+  - Keep both in sync but adapt tone/style to audience
+- **Example-driven guidance is powerful:**
+  - Providing "Good setup", "Marginal setup", "Blocker" scenario examples helps model understand application
+  - Realistic conversational phrasing ("Here's what I'm seeing...", "The interesting thing is...") sets tone
+  - "When NOT to suggest" lists prevent over-optimization and maintain safety standards
+- **Critical overrides must be explicit and repeated:**
+  - Earnings gate override mentioned in multiple places (mandatory conditions, critical override section, examples)
+  - "NON-NEGOTIABLE" language emphasizes absolute nature
+  - Prevents model from trading off earnings risk against other favorable conditions
+
+### Consistency and Cross-Strategy Alignment
+- **When relaxing multiple strategies, maintain parallel structure:**
+  - Same gate logic (3 mandatory + 4 of 7 flexible) across call roll down and put roll up
+  - Same threshold adjustments (delta, OTM, DTE) for consistency
+  - Same research basis and safety preservation principles
+  - Easier to understand, debug, and maintain when structures mirror each other
+- **Adapt for strategy-specific risks while preserving framework:**
+  - Framework (super-majority gate) stays consistent
+  - Individual conditions flip based on directional risk (bullish/bearish for puts vs calls)
+  - Emphasis changes (earnings MORE critical for puts) without changing gate structure
+  - Allows team to reason about all strategies using same mental model
+
+### Decision Documentation Best Practices
+- **Analysis-first, implementation-second workflow:**
+  - Created detailed analysis document (`put_strategy_analysis.md`) with research, comparisons, recommendations
+  - User reviewed and approved before implementation
+  - Implementation then follows approved spec exactly
+  - Reduces rework and ensures alignment before code changes
+- **Decision records should capture context and rationale:**
+  - Not just "what changed" but "why we changed it"
+  - Research citations and threshold justifications
+  - Comparison to alternatives (unanimous vs super-majority)
+  - Safety preservation mechanisms documented
+  - Future maintainers can understand decision basis, not just current state
+
+## Scheduler Config Auto-Reload Implementation (2025-01)
+
+### Problem Solved
+Web UI and scheduler ran as separate processes. When users changed cron schedules via web UI (saved to CosmosDB), the scheduler never picked up the changes because the `_cron_changed` flags were in a different process memory space.
+
+### Solution: Periodic Config Reload
+Implemented automatic config reloading in `src/main.py`:
+- Every 60 seconds, scheduler queries CosmosDB via `cosmos.get_settings()`
+- Compares loaded values with in-memory state
+- Detects changes to:
+  - Main monitoring cron (`scheduler.cron`)
+  - Summary agent cron (`summary_agent.cron`)
+  - Timezone (`scheduler.timezone`)
+- When changes detected, sets internal flags (`_cron_changed`, `_summary_cron_changed`)
+- Existing reschedule logic handles the actual job updates
+- Prints clear notifications: "✓ Config reloaded from CosmosDB: summary cron changed to X"
+
+### Implementation Details
+- Added `_last_config_reload` timestamp and `_config_reload_interval = 60` to `__init__`
+- Created `_reload_config_from_cosmos()` method with change detection logic
+- Added periodic reload check in main `run()` loop
+- Error handling prevents config reload failures from crashing scheduler
+- Backward compatible: `reschedule()` and `reschedule_summary()` still work for future use
+
+### Key Design Decisions
+- **60-second interval:** Balances responsiveness vs CosmosDB query cost
+- **Reuses existing reschedule logic:** Sets flags that existing code already handles
+- **Non-blocking:** Config reload errors logged but don't stop scheduler
+- **Updates all relevant settings:** Also syncs `summary_agent.enabled` and `activity_count`
+
+### Testing Approach
+Mental test: User changes cron in web UI → CosmosDB updated → within 60s, scheduler detects change → reschedules jobs → user sees new schedule applied without restart.
