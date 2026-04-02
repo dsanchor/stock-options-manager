@@ -28,6 +28,8 @@ class OptionsAgentScheduler:
         self.context_provider = None
         self._cron_changed = False
         self._summary_cron_changed = False
+        self._last_config_reload = None
+        self._config_reload_interval = 60  # seconds
     
     def reschedule(self, new_cron: str, new_timezone: str = None):
         """Update cron expression and/or timezone. The run loop will pick it up on next iteration."""
@@ -164,6 +166,74 @@ class OptionsAgentScheduler:
         print("\n\nShutdown signal received. Stopping scheduler...")
         self.running = False
     
+    def _reload_config_from_cosmos(self):
+        """Reload settings from CosmosDB and detect changes to cron/timezone.
+        
+        This method is called periodically to pick up configuration changes
+        made through the web UI without requiring a scheduler restart.
+        """
+        try:
+            cosmos_settings = self.cosmos.get_settings()
+            if not cosmos_settings:
+                return
+            
+            # Track if we need to update anything
+            main_cron_changed = False
+            summary_cron_changed = False
+            timezone_changed = False
+            
+            # Check scheduler settings
+            scheduler_settings = cosmos_settings.get('scheduler', {})
+            new_cron = scheduler_settings.get('cron')
+            new_timezone = scheduler_settings.get('timezone')
+            
+            if new_cron and new_cron != self.config.cron_expression:
+                self.config.cron_expression = new_cron
+                main_cron_changed = True
+            
+            if new_timezone and new_timezone != self.config.timezone:
+                old_timezone = self.config.timezone
+                self.config.timezone = new_timezone
+                timezone_changed = True
+                # If timezone changed, recalculate both schedules
+                if not main_cron_changed:
+                    main_cron_changed = True
+            
+            # Check summary agent settings
+            summary_settings = cosmos_settings.get('summary_agent', {})
+            new_summary_cron = summary_settings.get('cron')
+            current_summary_cron = self.config.config.get('summary_agent', {}).get('cron', '0 8 * * *')
+            
+            if new_summary_cron and new_summary_cron != current_summary_cron:
+                if 'summary_agent' not in self.config.config:
+                    self.config.config['summary_agent'] = {}
+                self.config.config['summary_agent']['cron'] = new_summary_cron
+                summary_cron_changed = True
+            
+            # Update other summary agent settings
+            if summary_settings:
+                if 'summary_agent' not in self.config.config:
+                    self.config.config['summary_agent'] = {}
+                for key in ['enabled', 'activity_count']:
+                    if key in summary_settings:
+                        self.config.config['summary_agent'][key] = summary_settings[key]
+            
+            # Set flags for the main loop to pick up
+            if main_cron_changed:
+                self._cron_changed = True
+                if timezone_changed:
+                    print(f"✓ Config reloaded from CosmosDB: timezone changed to {new_timezone}")
+                if new_cron:
+                    print(f"✓ Config reloaded from CosmosDB: monitor cron changed to {new_cron}")
+            
+            if summary_cron_changed:
+                self._summary_cron_changed = True
+                print(f"✓ Config reloaded from CosmosDB: summary cron changed to {new_summary_cron}")
+                
+        except Exception as e:
+            # Don't crash the scheduler on config reload errors
+            print(f"⚠️  Error reloading config from CosmosDB: {e}")
+    
     def run(self, install_signals=True):
         """Main execution loop using cron expression.
         
@@ -205,9 +275,18 @@ class OptionsAgentScheduler:
             print(f"\nMonitor Agents - Next run: {next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}")
             print(f"Summary Agent  - Disabled")
         
+        # Track when we last reloaded config
+        self._last_config_reload = time.time()
+        
         print("Press Ctrl+C to stop\n")
         
         while self.running:
+            # Periodically reload config from CosmosDB to pick up web UI changes
+            current_time = time.time()
+            if current_time - self._last_config_reload >= self._config_reload_interval:
+                self._reload_config_from_cosmos()
+                self._last_config_reload = current_time
+            
             # Check if main cron was updated from the web UI
             if self._cron_changed:
                 self._cron_changed = False
