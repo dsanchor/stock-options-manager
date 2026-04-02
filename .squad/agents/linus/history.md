@@ -1075,3 +1075,26 @@ Implemented a selection-first UX pattern in `web/templates/symbol_chat.html`:
 - Clear visibility of what data the assistant has access to
 - Reduced confusion about checkbox toggles during chat
 - Clean, focused selection interface before chat starts
+
+### Dashboard Alert Count Timeframes (2026-04-01)
+- Updated dashboard alert counts from calendar-based to rolling window timeframes
+- **Backend (`web/app.py`)**: Modified `_count_by_range()` function to use rolling windows:
+  - "This Week" → Last 7 days: `now - timedelta(days=7)`
+  - "This Month" → Last 30 days: `now - timedelta(days=30)`
+  - "Today" remains as midnight UTC to now
+- **Frontend (`web/templates/dashboard.html`)**: Updated labels in summary cards and agent table headers:
+  - "This Week" → "Last 7 Days"
+  - "This Month" → "Last 30 Days"
+- The dictionary keys remain `"week"` and `"month"` internally for backward compatibility
+- All counts now use rolling windows instead of calendar-aligned periods (no Monday reset for week, no month-start reset)
+
+### Dashboard Alert Timeframe Migration (2026-04-02)
+- Orchestrated update from calendar-based to rolling window alert timeframes
+- **Backend (`web/app.py`)**: Modified `_count_by_range()` to use rolling windows
+  - "This Week" → Last 7 days (rolling window)
+  - "This Month" → Last 30 days (rolling window)
+  - Consistent date ranges regardless of calendar alignment
+- **Frontend (`web/templates/dashboard.html`)**: Updated UI labels for clarity
+  - Removed calendar-based terminology
+  - Added rolling window descriptions
+- Benefits: Predictable, consistent date ranges for alert monitoring; no confusion from week/month resets

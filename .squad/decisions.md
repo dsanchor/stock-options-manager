@@ -1823,3 +1823,112 @@ Both activities and alerts are documents stored in CosmosDB with an `id` field. 
 ✓ Alert navigation now works  
 ✓ Consistent with activity and dashboard patterns  
 ✓ No data model changes
+
+---
+
+## Pending Review Decisions (from inbox — 2026-04-02)
+
+### 17. Symbol Chat Context Selection Screen
+
+**Date:** 2025-01  
+**Author:** Linus (Backend Dev)  
+**Status:** ✅ Implemented  
+**Impact:** Symbol chat UX (affects web/templates/symbol_chat.html)
+
+#### Context
+
+The symbol detail chat previously showed the chat interface immediately with context checkboxes at the top. Users could toggle checkboxes while chatting, but this created confusion about what context was loaded when chat started.
+
+#### Decision
+
+Implement a two-screen flow for symbol chat:
+1. **Selection Screen** appears first with 3 context checkboxes
+2. **Chat Screen** appears after deliberate selection
+
+#### Implementation
+
+Modified `web/templates/symbol_chat.html`:
+- Created selection screen div with checkbox layout
+- Created chat screen div with context indicator
+- Added JavaScript handlers for screen transitions
+- Added context change reset functionality
+- Preferences saved to localStorage
+
+#### Rationale
+
+- Makes context choices deliberate and conscious
+- Clear visibility of what data assistant has
+- Prevents mid-chat confusion about loaded data
+- Locked context prevents partial updates during conversation
+
+#### Benefits
+
+✓ Clarity: Users know exactly what context is loaded  
+✓ Intent: Deliberate selection before engaging  
+✓ Simplicity: No confusing mid-chat checkbox toggles  
+✓ Persistence: Preferences saved via localStorage  
+✓ Flexibility: Can change context and restart easily
+
+---
+
+### 18. Put Roll Up Strategy Relaxation Implementation
+
+**Date:** 2026-04-01  
+**Author:** Linus (Backend Dev)  
+**Status:** Implemented  
+**Context:** Roll strategy optimization following covered call roll down relaxation
+
+#### Decision Summary
+
+Implemented relaxation of the cash-secured put ROLL_UP profit optimization gate from unanimous 9/9 consensus requirement to super-majority gate (3 mandatory + 4 of 7 flexible conditions). Aligns with recent covered call roll down relaxation work and applies research-backed thresholds.
+
+#### Implementation
+
+Updated put roll optimization gates to apply research-validated profit/margin thresholds with flexible condition matching rather than requiring all conditions to pass.
+
+#### Benefits
+
+- Improved optimization opportunities while maintaining strict safety standards
+- Consistent with covered call roll down approach
+- Aligned with quantitative research findings
+
+---
+
+### 19. Scheduler Reload Implementation
+
+**Date:** 2026-04-02  
+**Author:** Linus (Backend Dev)  
+**Status:** Implemented  
+**Context:** Configuration and runtime management improvements
+
+#### Decision Summary
+
+Implemented scheduler reload capability to apply configuration changes without full application restart, reducing deployment friction and enabling faster iteration on scheduling logic.
+
+#### Benefits
+
+✓ Faster configuration updates  
+✓ Reduced downtime  
+✓ Better operational flexibility
+
+---
+
+### 20. Put Roll Implementation Details
+
+**Date:** 2026-04-01  
+**Author:** Linus (Backend Dev)  
+**Status:** Implemented  
+**Context:** Options trading automation and roll mechanics
+
+#### Implementation
+
+Completed implementation of put roll mechanics with proper state transitions, position tracking, and integration with existing roll frameworks. Validated through comprehensive scenario testing.
+
+#### Scope
+
+- Position state management for put rolls
+- Roll mechanics and validation
+- Integration with existing position management systems
+
+---
+
