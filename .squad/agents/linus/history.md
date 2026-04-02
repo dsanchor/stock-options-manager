@@ -1098,3 +1098,30 @@ Implemented a selection-first UX pattern in `web/templates/symbol_chat.html`:
   - Removed calendar-based terminology
   - Added rolling window descriptions
 - Benefits: Predictable, consistent date ranges for alert monitoring; no confusion from week/month resets
+
+### Context Selection Screen Styling Update (2026-04-02)
+- **Task**: Applied settings page styling to the "Select Context Sources" screen in `web/templates/symbol_chat.html`
+- **Changes**:
+  - Added `.settings-card` class to match settings containers
+  - Added `.card-header` with `<h2>` title (Settings pattern)
+  - Converted description paragraph to `.hint` class
+  - Wrapped content in `style="padding: 0.75rem 1.25rem;"` container (standard padding pattern from settings)
+  - Maintained checkbox labels and button functionality
+- **Visual Consistency**: Context selection screen now matches look and feel of Settings/Configuration page
+  - Same card styling and borders
+  - Same header treatment
+  - Same padding and spacing patterns
+  - Same hint text styling for descriptions
+- **Files Modified**: `web/templates/symbol_chat.html` (lines 11-48)
+- **Pattern**: Settings page uses `.card.settings-card` + `.card-header` + `.hint` + consistent padding wrapper for all configuration containers
+
+### Context Selection Screen Styling Orchestration (2026-04-02T09:24:24Z)
+- **Requested By**: dsanchor
+- **Mode**: Background agent execution
+- **Task Assigned**: Match context selection screen styling to settings/configuration page
+- **Expected Outcomes**:
+  - web/templates/symbol_chat.html updated with .settings-card class
+  - .card-header structure applied for header consistency
+  - Padding standardized to match settings page (0.75rem 1.25rem)
+- **Orchestration Log**: .squad/orchestration-log/2026-04-02T09:24:24Z-linus.md
+- **Session Log**: .squad/log/2026-04-02T09:24:24Z-context-styling.md
