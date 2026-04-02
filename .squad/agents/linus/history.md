@@ -1025,3 +1025,53 @@ Implemented automatic config reloading in `src/main.py`:
 
 ### Testing Approach
 Mental test: User changes cron in web UI → CosmosDB updated → within 60s, scheduler detects change → reschedules jobs → user sees new schedule applied without restart.
+
+## Symbol Chat Context Selection Screen UX (2025-01)
+
+### Problem Solved
+Previous chat flow immediately loaded chat interface with context checkboxes at the top. Users couldn't make deliberate context choices before starting - they had to toggle checkboxes while chatting, which was confusing and didn't clearly show what context was loaded.
+
+### Solution: Two-Screen Flow
+Implemented a selection-first UX pattern in `web/templates/symbol_chat.html`:
+1. **Selection Screen:** Users see 3 context checkboxes with descriptions + "Start Chat" button
+2. **Chat Screen:** Shows locked-in context and chat interface (with optional "Change Context" button)
+
+### Implementation Details
+**HTML Structure:**
+- `#selectionScreen` div: Contains checkboxes in card-style boxes with descriptions, centered layout
+- `#chatScreen` div: Contains context indicator + chat interface (initially `display: none`)
+- Each checkbox option now has title + description for clarity
+- "Start Chat" button triggers transition
+
+**JavaScript Flow:**
+- On page load: Selection screen visible, checkboxes populated from localStorage
+- On "Start Chat" click:
+  - Save preferences to localStorage
+  - Hide selection screen, show chat screen
+  - Update context indicator (shows selected sources in compact format)
+  - Call `loadContext()` with locked preferences
+  - Set `chatStarted` flag
+- On "Change Context" click:
+  - Reset chat state (history, cachedContext, messages)
+  - Show selection screen, hide chat screen
+  - Allows starting fresh session with different context
+
+**Key Features:**
+- Context preferences persist via localStorage (same key as before)
+- Context indicator shows active sources: "📊 TV • 📈 Positions • 📋 Activities"
+- Clean, centered card design for selection screen with descriptive text
+- "Change Context" button allows resetting without page reload
+- Button states managed (disabled during loading, text changes)
+
+### Design Decisions
+- **Selection-first over inline toggles:** Makes context choices deliberate and visible
+- **Locked context after start:** Prevents mid-chat confusion about what data is loaded
+- **Reset on context change:** Clearer than trying to merge new context into existing chat
+- **Descriptions on each checkbox:** "Real-time price, volume, and technical indicators" helps users understand what they're selecting
+- **localStorage persistence:** Remembers user preferences across sessions
+
+### UX Benefits
+- Users consciously choose context before engaging
+- Clear visibility of what data the assistant has access to
+- Reduced confusion about checkbox toggles during chat
+- Clean, focused selection interface before chat starts
