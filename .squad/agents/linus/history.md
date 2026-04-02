@@ -842,3 +842,17 @@ Created `TRADINGVIEW_ANTI_BOT.md` with full technical details, configuration gui
 **Session Log:** `.squad/log/2026-04-01T21-39-cosmosdb-unified-schema.md`  
 **Orchestration Log:** `.squad/orchestration-log/2026-04-01T21-39-linus.md`
 
+
+### Roll Down Strategy Relaxation (2026-04-01)
+- Updated roll down gate logic in `src/tv_open_call_instructions.py` from unanimous (9/9) to super-majority (3 mandatory + 4 of 7 flexible):
+  - **Mandatory conditions**: Deep OTM (≥3.5%), low delta (<0.20), minimum DTE (≥15 days)
+  - **Flexible conditions** (need 4/7): Technicals neutral/bearish, MAs neutral/bearish, no earnings before expiry, no ex-dividend, analyst sentiment not bullish, IV stable/declining, position stable
+  - **Relaxed thresholds**: Delta 0.15→0.20, Deep OTM 5%→3.5%, DTE 14→15, new strike OTM 2-3%→1.5-2%, new strike target delta 0.20-0.30→0.25-0.30
+  - **Research-backed**: Thresholds align with <8-10% assignment probability studies, adequate safety buffers, meaningful premium windows
+- Added roll down strategy section to `src/tv_open_call_chat_instructions.py`:
+  - Conversational guidance for quick analysis chat mode when user has existing deep OTM positions
+  - Same gate logic (3 mandatory + 4 of 7 flexible) with plain-language explanations
+  - Example language emphasizing earnings gate non-negotiable and low assignment risk
+  - Clear distinction: only suggest roll downs for existing positions, not new opens
+- **Key principle preserved**: Earnings gate remains STRICT — never roll down if earnings fall before new expiration
+- Files modified: `src/tv_open_call_instructions.py`, `src/tv_open_call_chat_instructions.py`

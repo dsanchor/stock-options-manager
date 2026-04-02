@@ -288,28 +288,34 @@ The gate has already determined the earnings-driven action for this position. Ap
 
 ### Profit Optimization (ROLL_DOWN for more premium)
 
-When the current call is deep OTM and nearly worthless, you may recommend ROLL_DOWN to a lower strike to collect meaningful new premium — but ONLY when **ALL** of the following conditions are satisfied simultaneously. This is a unanimous-consensus gate: if even ONE condition fails or is ambiguous, the activity is WAIT (not optimize). No gambling.
+When the current call is deep OTM and nearly worthless, you may recommend ROLL_DOWN to a lower strike to collect meaningful new premium — but ONLY when the mandatory conditions are met AND a super-majority of flexible conditions pass. This balanced gate allows optimization when conditions are broadly favorable while maintaining strict safety on critical factors.
 
-**ALL of these must be true at the same time:**
+**MANDATORY CONDITIONS (all 3 must pass):**
 
-1. **Deep OTM**: Current price is at least 5% below the current strike (wide safety margin)
-2. **Very low delta**: Delta < 0.15 (the current option is nearly worthless)
-3. **Technicals bearish or neutral**: Oscillator summary shows Sell or Neutral — NO bullish signals whatsoever
-4. **Moving averages bearish or neutral**: MA summary shows Sell or Neutral — NO Buy signals
-5. **No upcoming catalysts**: No earnings, ex-dividend dates, or other known events fall before expiration
-6. **Analyst sentiment is not bullish**: No recent upgrades, no Strong Buy consensus that could reverse the trend
-7. **Low IV environment**: IV is not elevated — no crush risk, no spike risk
-8. **DTE > 14**: Enough time remaining for the roll to be worthwhile
-9. **Previous activities stable**: No recent ROLL alerts or flip-flopping in the activity log — position has been consistently WAIT
+1. **Deep OTM**: Current price is at least 3.5% below the current strike (adequate safety buffer based on historical research)
+2. **Low delta**: Delta < 0.20 (captures <8-10% assignment probability, research-backed threshold)
+3. **Minimum DTE**: DTE ≥ 15 days (2+ weeks provide meaningful premium opportunity)
 
-**If all 9 conditions pass:**
-- **New strike target**: Use resistance-to-support analysis from pivot points. Target delta 0.20-0.30 at the new lower strike (standard premium sweet spot). The new strike must still be clearly OTM — at least 2-3% above the current price.
+**FLEXIBLE CONDITIONS (need at least 4 of 7):**
+
+4. **Technicals bearish or neutral**: Oscillator summary shows Sell or Neutral — NO bullish signals whatsoever
+5. **Moving averages bearish or neutral**: MA summary shows Sell or Neutral — NO Buy signals
+6. **No earnings before expiration**: Critical gate — never roll down if earnings fall before the new expiration
+7. **No ex-dividend before expiration**: No dividend payment dates before expiration that could trigger assignment
+8. **Analyst sentiment is not bullish**: No recent upgrades, no Strong Buy consensus that could reverse the trend
+9. **IV stable or declining**: IV is not elevated or spiking — no crush risk that would reduce premium capture
+10. **Previous activities stable**: No recent ROLL alerts or flip-flopping in the activity log — position has been consistently WAIT
+
+**Gate Logic: 3 mandatory + 4 of 7 flexible = PASS**
+
+**If the gate passes:**
+- **New strike target**: Use resistance-to-support analysis from pivot points. Target delta 0.25-0.30 at the new lower strike (optimal premium sweet spot per research). The new strike must still be clearly OTM — at least 1.5-2% above the current price.
 - **Activity**: `"activity": "ROLL_DOWN"`
 - **Risk flag**: Include `"profit_optimization"` in `risk_flags` to tag this as a profit-motivated roll (not defensive)
 - **Confidence**: Must be `"high"` — if you cannot confidently say "high", do not recommend the optimization; default to WAIT
-- **Assignment risk**: Should remain `"low"` — if it wouldn't be low, the conditions above weren't truly met
+- **Assignment risk**: Should remain `"low"` — if it wouldn't be low, the mandatory conditions weren't truly met
 
-**If ANY condition fails → WAIT.** Do not attempt partial optimization. Do not speculate.
+**If ANY mandatory condition fails OR fewer than 4 flexible conditions pass → WAIT.** Do not attempt partial optimization. Earnings gate (#6) is especially critical — never compromise on this.
 
 ### Roll Candidate Selection:
 When recommending a roll, suggest specific new strike and expiration:
