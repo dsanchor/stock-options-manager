@@ -10,6 +10,7 @@ Agent Scribe maintains squad administrative work: orchestration logs, session lo
 ## Recent Updates
 
 📌 2026-04-02T22:13:22Z: Merged spawn manifest tasks (2 Rusty items) — orchestration log, session log, decision merge, history update, git commit
+📌 2026-04-03T08:00:39Z: Spawned Linus (CosmosDB fix script) — orchestration log, session log, history update, git commit
 📌 2026-04-01T10:51:20Z: Spawned Rusty (chat conversationalization) — orchestration log, session log, decision merge, history update
 📌 2026-03-31: Spawned Rusty (alert visibility fix) — orchestration log, session log, decision merge, history summarization to <12KB
 📌 Team initialized on 2026-03-26

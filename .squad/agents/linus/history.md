@@ -1155,3 +1155,29 @@ Implemented a selection-first UX pattern in `web/templates/symbol_chat.html`:
 
 ### Alert Logic Unified: Blacklist Approach (2026-04-03)
 Changed alert detection from whitelist (checking specific activities like SELL, ROLL_*) to blacklist (marking everything except WAIT, HOLD, DO_NOTHING as alerts). This matches the user requirement: "Anything that is NOT wait, hold or doing nothing should be marked as alert." Implemented via unified `_is_alert()` method checking `activity NOT IN _NON_ALERT_ACTIVITIES`, making new activity types automatically alerts (safer, future-proof). Files: src/tv_open_call_agent.py, src/tv_open_put_agent.py.
+
+### CosmosDB Alert Flag Fix Script (2026-04-03)
+- **Task**: Built script to fix existing activities in CosmosDB that have incorrect `is_alert` values from old logic
+- **Script Location**: `scripts/fix_alert_flags.py`
+- **Key Features**:
+  - Cross-partition query to fetch all activities (`doc_type='activity'`)
+  - Recalculates `is_alert` using blacklist approach: `activity.upper() NOT IN ["WAIT", "HOLD", "DO_NOTHING", "DOING_NOTHING"]`
+  - Dry-run mode (`--dry-run`) to preview changes without updating
+  - Detailed statistics: total activities, correct/incorrect counts, breakdown by action type
+  - Progress tracking during updates with error handling
+  - Sample output display in dry-run mode
+- **Technical Details**:
+  - Uses `container.query_items()` with `enable_cross_partition_query=True`
+  - Updates via `container.replace_item()` to preserve all other fields
+  - Loads config from `config.yaml` with environment variable expansion
+  - Comprehensive error handling with per-item error logging
+- **Documentation**: `scripts/README_fix_alert_flags.md` with usage examples and output samples
+- **Pattern**: Always provide dry-run mode for data migration scripts to allow safe preview before applying changes
+- **User Workflow**: Run with `--dry-run` first, review stats, then run without flag to apply fixes
+
+### CosmosDB Alert Flags Fix Script (2026-04-03)
+- Delivered `scripts/fix_alert_flags.py` with dry-run mode, progress tracking, and comprehensive statistics
+- Recalculates `is_alert` flags for existing activities using new blacklist approach
+- Features: cursor-based pagination for large datasets, atomic per-item updates, detailed error reporting, stats summary
+- Documented with `scripts/README_fix_alert_flags.md` including usage examples and sample outputs
+- Follows best practices: dry-run preview before applying changes, per-item error isolation, config loading with env expansion
