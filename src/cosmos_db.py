@@ -429,18 +429,18 @@ class CosmosDBService:
             "doc_type": "activity",
             "agent_type": agent_type,
             "timestamp": ts,
-            "is_alert": False,
             **activity_data,
         }
         # The **activity_data spread above can silently overwrite earlier keys.
         # Reassert all routing/identity fields so LLM-generated dicts never
-        # corrupt id, doc_type, symbol, agent_type, timestamp, or is_alert.
+        # corrupt id, doc_type, symbol, agent_type, or timestamp.
+        # NOTE: is_alert is intentionally NOT reasserted — it's a dynamic field
+        # computed by agent_runner based on the activity type.
         doc["id"] = doc_id
         doc["timestamp"] = ts
         doc["doc_type"] = "activity"
         doc["symbol"] = symbol
         doc["agent_type"] = agent_type
-        doc["is_alert"] = False
 
         if ttl_seconds is not None:
             doc["ttl"] = ttl_seconds
