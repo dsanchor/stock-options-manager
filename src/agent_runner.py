@@ -159,7 +159,7 @@ class AgentRunner:
 
     # Activities that are NOT alerts (non-actionable states)
     _NON_ALERT_ACTIVITIES = frozenset({
-        "WAIT", "HOLD", "DO_NOTHING", "DOING_NOTHING",
+        "WAIT", "HOLD", "DO_NOTHING", "DOING_NOTHING", "SKIPPED",
     })
 
     # Roll activities that trigger alerts (position monitors)
@@ -171,7 +171,7 @@ class AgentRunner:
     def _is_alert(self, response_text: str, json_data: Optional[Dict] = None) -> bool:
         """Check if response indicates an alert.
         
-        Rule: Anything that is NOT wait, hold, or doing nothing is an alert.
+        Rule: Anything that is NOT wait, hold, doing nothing, or skipped is an alert.
         This includes SELL, ROLL_*, CLOSE, and any other action-oriented activities.
         """
         if json_data is not None:

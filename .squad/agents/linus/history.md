@@ -1181,3 +1181,19 @@ Changed alert detection from whitelist (checking specific activities like SELL, 
 - Features: cursor-based pagination for large datasets, atomic per-item updates, detailed error reporting, stats summary
 - Documented with `scripts/README_fix_alert_flags.md` including usage examples and sample outputs
 - Follows best practices: dry-run preview before applying changes, per-item error isolation, config loading with env expansion
+
+### SKIPPED Added to Non-Alert Blacklist (2026-04-03)
+- **Task**: Add "SKIPPED" to non-alert activities blacklist so it's not marked as an alert
+- **User Pattern**: "skipped should not be marked as alert" - user wants SKIPPED treated same as WAIT/HOLD/DO_NOTHING
+- **Changes Made**:
+  - Updated `src/agent_runner.py`: Added "SKIPPED" to `_NON_ALERT_ACTIVITIES` frozenset
+  - Updated `scripts/fix_alert_flags.py`: Added "SKIPPED" to `NON_ALERT_ACTIVITIES` frozenset
+  - Updated `scripts/README_fix_alert_flags.md`: Documentation now lists SKIPPED in blacklist
+  - Updated docstring in `_is_alert()` method to mention "skipped" in the rule description
+- **New Blacklist**: `["WAIT", "HOLD", "DO_NOTHING", "DOING_NOTHING", "SKIPPED"]`
+- **Behavior**: Any activity with action="SKIPPED" will now have `is_alert=false`
+- **Files Modified**: 
+  - `src/agent_runner.py`
+  - `scripts/fix_alert_flags.py`
+  - `scripts/README_fix_alert_flags.md`
+- **Note**: Users can run `python scripts/fix_alert_flags.py` to update any existing SKIPPED activities in CosmosDB
