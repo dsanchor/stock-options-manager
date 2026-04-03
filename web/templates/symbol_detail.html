@@ -407,13 +407,10 @@
                     <td class="mono">{% if d.underlying_price %}${{ d.underlying_price }}{% else %}—{% endif %}</td>
                     <td><span class="confidence confidence-{{ d.confidence or 'medium' }}">{{ d.confidence or "—" }}</span></td>
                     <td>
-                        {% if d.is_alert %}
+                        {{ d.reason[:120] ~ ("…" if d.reason | length > 120 else "") if d.reason else "—" }}
                         {% for flag in (d.risk_flags or []) %}
                         <span class="flag">{{ flag }}</span>
                         {% endfor %}
-                        {% else %}
-                        {{ d.reason[:120] ~ ("…" if d.reason | length > 120 else "") if d.reason else "—" }}
-                        {% endif %}
                     </td>
                 </tr>
                 {% endfor %}
