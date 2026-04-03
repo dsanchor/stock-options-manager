@@ -157,22 +157,42 @@ class AgentRunner:
         reason = response_text[:100].replace('\n', ' ').strip()
         return f"{ticker} | ACTIVITY: {activity} | Reason: {reason}", None
 
+    # Activities that are NOT alerts (non-actionable states)
+    _NON_ALERT_ACTIVITIES = frozenset({
+        "WAIT", "HOLD", "DO_NOTHING", "DOING_NOTHING",
+    })
+
     # Roll activities that trigger alerts (position monitors)
     _ROLL_ACTIVITIES = frozenset({
         "ROLL_UP", "ROLL_DOWN", "ROLL_OUT",
         "ROLL_UP_AND_OUT", "ROLL_DOWN_AND_OUT", "CLOSE",
     })
 
-    def _is_roll_alert(self, response_text: str, json_data: Optional[Dict] = None) -> bool:
-        """Check if response indicates a roll or close alert."""
+    def _is_alert(self, response_text: str, json_data: Optional[Dict] = None) -> bool:
+        """Check if response indicates an alert.
+        
+        Rule: Anything that is NOT wait, hold, or doing nothing is an alert.
+        This includes SELL, ROLL_*, CLOSE, and any other action-oriented activities.
+        """
         if json_data is not None:
-            activity = json_data.get("activity", "").upper()
-            if activity in self._ROLL_ACTIVITIES:
-                return True
-        # Fallback text check
+            activity = json_data.get("activity", "").upper().strip()
+            if activity:
+                # If activity is NOT in the non-alert list, it's an alert
+                return activity not in self._NON_ALERT_ACTIVITIES
+        
+        # Fallback text check - look for non-alert keywords
         upper = response_text.upper()
-        return any(f"ACTIVITY: {rd}" in upper or f'"activity": "{rd}"' in upper.replace(" ", "")
-                   for rd in self._ROLL_ACTIVITIES)
+        # Check if it explicitly states a non-alert activity
+        for non_alert in self._NON_ALERT_ACTIVITIES:
+            if f"ACTIVITY: {non_alert}" in upper or f'"activity": "{non_alert}"' in upper.replace(" ", ""):
+                return False
+        
+        # If we find any activity indicator but no non-alert match, assume it's an alert
+        if "ACTIVITY:" in upper or '"activity"' in upper:
+            return True
+        
+        # Legacy fallback: check for explicit alert indicators
+        return "CLEAR SELL ALERT" in upper or "🚨" in response_text or "ALERT: SELL" in upper
 
     def _extract_alert_enrichment(self, json_data: Optional[Dict]) -> Dict:
         """Extract alert-specific enrichment fields (confidence, risk_flags).
@@ -188,21 +208,6 @@ class AgentRunner:
             if "risk_flags" in json_data:
                 enrichment["risk_flags"] = json_data["risk_flags"]
         return enrichment
-
-    def _is_sell_alert(self, response_text: str, json_data: Optional[Dict] = None) -> bool:
-        """Check if response indicates a clear sell alert.
-
-        Uses structured JSON ``activity`` field when available, with fallback
-        to text-based keyword matching for backward compatibility.
-        """
-        # Structured check
-        if json_data is not None:
-            if json_data.get("activity", "").upper() == "SELL":
-                return True
-
-        # Legacy text-based checks
-        upper = response_text.upper()
-        return "CLEAR SELL ALERT" in upper or "🚨" in response_text or "ALERT: SELL" in upper
     
     async def run_symbol_agent(
         self,
@@ -335,8 +340,8 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
                     "timestamp": analysis_ts,
                 }
 
-            # Determine if this is an alert
-            is_alert = self._is_sell_alert(response_text, json_data)
+            # Determine if this is an alert (anything NOT wait/hold/do_nothing)
+            is_alert = self._is_alert(response_text, json_data)
             activity_payload["is_alert"] = is_alert
             
             # If alert, merge alert-enrichment fields into activity payload
@@ -576,8 +581,8 @@ Analyze the position risk and output your activity in the required JSON format. 
             if "action" in activity_payload and "activity" not in activity_payload:
                 activity_payload["activity"] = activity_payload["action"]
 
-            # Determine if this is a roll/close alert
-            is_alert = self._is_roll_alert(response_text, json_data)
+            # Determine if this is an alert (anything NOT wait/hold/do_nothing)
+            is_alert = self._is_alert(response_text, json_data)
             activity_payload["is_alert"] = is_alert
             
             # If alert, merge alert-enrichment fields into activity payload
