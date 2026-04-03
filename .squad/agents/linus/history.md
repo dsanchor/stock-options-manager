@@ -1136,3 +1136,22 @@ Implemented a selection-first UX pattern in `web/templates/symbol_chat.html`:
   - Updated flex container to use `justify-content: flex-end` instead of `space-between` (context indicator now right-aligned)
 - **Files Modified**: `web/templates/symbol_chat.html`
 - **User Pattern**: Prefers explicit navigation over in-context actions for changing chat settings
+
+## Learnings
+
+### Alert Generation Logic Fixed (2026-04-02)
+- **Issue**: Alert generation was using narrow whitelist approach - only marking specific activities (SELL, ROLL_*) as alerts
+- **Root Cause**: `_is_sell_alert()` and `_is_roll_alert()` methods only checked for specific activity types
+- **User Requirement**: "Anything that is NOT wait, hold, or doing nothing should be marked as alert"
+- **Solution**: 
+  - Created unified `_is_alert()` method that uses blacklist approach
+  - Defined `_NON_ALERT_ACTIVITIES` frozenset: {"WAIT", "HOLD", "DO_NOTHING", "DOING_NOTHING"}
+  - Logic: `activity not in _NON_ALERT_ACTIVITIES` = alert
+  - Replaced both `_is_sell_alert()` and `_is_roll_alert()` with single `_is_alert()` method
+  - Both covered_call and position monitor agents now use same alert detection logic
+- **Files Modified**: `src/agent_runner.py`
+- **Key Principle**: Use negative logic (what's NOT an alert) rather than positive logic (what IS an alert) when the exception list is smaller than the inclusion list
+- **Architecture**: Alert field (`is_alert`) is set on all activities; alerts are just activities with `is_alert=true`
+
+### Alert Logic Unified: Blacklist Approach (2026-04-03)
+Changed alert detection from whitelist (checking specific activities like SELL, ROLL_*) to blacklist (marking everything except WAIT, HOLD, DO_NOTHING as alerts). This matches the user requirement: "Anything that is NOT wait, hold or doing nothing should be marked as alert." Implemented via unified `_is_alert()` method checking `activity NOT IN _NON_ALERT_ACTIVITIES`, making new activity types automatically alerts (safer, future-proof). Files: src/tv_open_call_agent.py, src/tv_open_put_agent.py.
