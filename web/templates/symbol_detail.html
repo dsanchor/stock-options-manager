@@ -348,68 +348,7 @@
     </div>
 </div>
 
-<!-- Recent Alerts -->
-<div class="card">
-    <div class="card-header">
-        <h2>Recent Alerts</h2>
-        <div class="filter-group">
-            <div class="filter-pills" id="sym-alert-time-filter">
-                <button class="pill active" data-range="1">1d</button>
-                <button class="pill" data-range="7">7d</button>
-                <button class="pill" data-range="30">30d</button>
-            </div>
-            <span class="card-badge">{{ alerts | length }}</span>
-        </div>
-    </div>
-    {% if alerts %}
-    <div class="table-wrap">
-        <table id="alerts-table">
-            <thead>
-                <tr>
-                    <th>Timestamp</th>
-                    <th>Agent</th>
-                    <th>Activity</th>
-                    <th>Strike</th>
-                    <th>Expiration</th>
-                    <th>Confidence</th>
-                    <th>Flags</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for alt in alerts %}
-                <tr class="clickable-row" data-href="/activities/{{ alt.id }}" data-timestamp="{{ alt.timestamp[:19] }}">
-                    <td class="mono">{{ alt.timestamp[:19] }}</td>
-                    <td>{{ alt._agent_label }}</td>
-                    <td><span class="badge badge-{{ (alt.activity | default('UNKNOWN', true)) | lower }}">{{ alt.activity | default("—", true) }}</span></td>
-                    <td class="mono">
-                        {% if alt.strike %}${{ alt.strike }}{% else %}—{% endif %}
-                        {% if alt.new_strike and alt.current_strike %}
-                        <span style="color:var(--text-muted, #666); font-size:0.8rem;"> (from ${{ alt.current_strike }})</span>
-                        {% endif %}
-                    </td>
-                    <td class="mono">
-                        {{ alt.expiration or "—" }}
-                        {% if alt.new_expiration and alt.current_expiration %}
-                        <span style="color:var(--text-muted, #666); font-size:0.8rem;"> (from {{ alt.current_expiration }})</span>
-                        {% endif %}
-                    </td>
-                    <td><span class="confidence confidence-{{ alt.confidence or 'medium' }}">{{ alt.confidence or "—" }}</span></td>
-                    <td>
-                        {% for flag in (alt.risk_flags or []) %}
-                        <span class="flag">{{ flag }}</span>
-                        {% endfor %}
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    {% else %}
-    <p class="empty-state">No alerts yet for this symbol.</p>
-    {% endif %}
-</div>
-
-<!-- Recent Activities -->
+<!-- Recent Activities (Unified with Alerts) -->
 <div class="card">
     <div class="card-header">
         <h2>Recent Activities</h2>
@@ -419,6 +358,7 @@
                 <button class="pill" data-range="7">7d</button>
                 <button class="pill" data-range="30">30d</button>
             </div>
+            <button class="pill" id="sym-alerts-only-filter" title="Show alerts only">📢 Alerts</button>
             <span class="card-badge">{{ activities | length }}</span>
         </div>
     </div>
@@ -430,20 +370,51 @@
                     <th>Timestamp</th>
                     <th>Agent</th>
                     <th>Activity</th>
+                    <th>Strike</th>
+                    <th>Expiration</th>
                     <th>Underlying</th>
                     <th>Confidence</th>
-                    <th>Reason</th>
+                    <th>Details</th>
                 </tr>
             </thead>
             <tbody>
                 {% for d in activities %}
-                <tr class="clickable-row" data-href="/activities/{{ d.id }}" data-timestamp="{{ d.timestamp[:19] }}">
+                <tr class="clickable-row" data-href="/activities/{{ d.id }}" data-timestamp="{{ d.timestamp[:19] }}" data-is-alert="{{ 'true' if d.is_alert else 'false' }}">
                     <td class="mono">{{ d.timestamp[:19] }}</td>
                     <td>{{ d._agent_label }}</td>
-                    <td><span class="badge badge-{{ d.activity | lower }}">{{ d.activity }}</span>{% if d.is_alert %} ⚡{% endif %}</td>
-                    <td class="mono">${{ d.underlying_price if d.underlying_price else "—" }}</td>
+                    <td>
+                        {% if d.is_alert %}
+                        <span class="alert-indicator" title="Alert">📢</span>
+                        {% endif %}
+                        <span class="badge badge-{{ (d.activity | default('UNKNOWN', true)) | lower }}">{{ d.activity | default("—", true) }}</span>
+                    </td>
+                    <td class="mono">
+                        {% if d.strike %}
+                        ${{ d.strike }}
+                        {% if d.new_strike and d.current_strike %}
+                        <span style="color:var(--text-muted, #666); font-size:0.8rem;"> (from ${{ d.current_strike }})</span>
+                        {% endif %}
+                        {% else %}—{% endif %}
+                    </td>
+                    <td class="mono">
+                        {% if d.expiration %}
+                        {{ d.expiration }}
+                        {% if d.new_expiration and d.current_expiration %}
+                        <span style="color:var(--text-muted, #666); font-size:0.8rem;"> (from {{ d.current_expiration }})</span>
+                        {% endif %}
+                        {% else %}—{% endif %}
+                    </td>
+                    <td class="mono">{% if d.underlying_price %}${{ d.underlying_price }}{% else %}—{% endif %}</td>
                     <td><span class="confidence confidence-{{ d.confidence or 'medium' }}">{{ d.confidence or "—" }}</span></td>
-                    <td>{{ d.reason[:120] ~ ("…" if d.reason | length > 120 else "") if d.reason else "—" }}</td>
+                    <td>
+                        {% if d.is_alert %}
+                        {% for flag in (d.risk_flags or []) %}
+                        <span class="flag">{{ flag }}</span>
+                        {% endfor %}
+                        {% else %}
+                        {{ d.reason[:120] ~ ("…" if d.reason | length > 120 else "") if d.reason else "—" }}
+                        {% endif %}
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>

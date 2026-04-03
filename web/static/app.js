@@ -123,16 +123,28 @@ function applyDashboardFilters() {
     });
 }
 
-function applyTableFilter(pillContainerId, tableSelector) {
+function applyTableFilter(pillContainerId, tableSelector, alertsOnlyBtnId = null) {
     const activePill = document.querySelector('#' + pillContainerId + ' .pill.active');
     const days = activePill ? parseInt(activePill.dataset.range, 10) : 7;
     const cutoff = cutoffDate(days);
+    
+    // Check if alerts-only filter is active
+    const alertsOnlyBtn = alertsOnlyBtnId ? document.getElementById(alertsOnlyBtnId) : null;
+    const alertsOnly = alertsOnlyBtn ? alertsOnlyBtn.classList.contains('active') : false;
+    
     let visible = 0;
     
     document.querySelectorAll(tableSelector + ' tbody tr').forEach(row => {
         if (row.classList.contains('pos-detail-row')) return;
+        
         const ts = new Date(row.dataset.timestamp);
-        const show = ts >= cutoff;
+        const isAlert = row.dataset.isAlert === 'true';
+        
+        // Apply both time and alerts-only filters
+        const showTime = ts >= cutoff;
+        const showAlert = !alertsOnly || isAlert;
+        const show = showTime && showAlert;
+        
         row.style.display = show ? '' : 'none';
         if (show) visible++;
     });
@@ -151,13 +163,20 @@ document.querySelectorAll('.filter-pills').forEach(container => {
             if (container.id === 'activity-time-filter') {
                 applyDashboardFilters();
             } else if (container.id === 'sym-activity-time-filter') {
-                applyTableFilter('sym-activity-time-filter', '#activities-table');
-            } else if (container.id === 'sym-alert-time-filter') {
-                applyTableFilter('sym-alert-time-filter', '#alerts-table');
+                applyTableFilter('sym-activity-time-filter', '#activities-table', 'sym-alerts-only-filter');
             }
         });
     });
 });
+
+// Alerts-only filter toggle
+const alertsOnlyBtn = document.getElementById('sym-alerts-only-filter');
+if (alertsOnlyBtn) {
+    alertsOnlyBtn.addEventListener('click', () => {
+        alertsOnlyBtn.classList.toggle('active');
+        applyTableFilter('sym-activity-time-filter', '#activities-table', 'sym-alerts-only-filter');
+    });
+}
 
 const symFilter = document.getElementById('activity-symbol-filter');
 if (symFilter) {
@@ -178,8 +197,5 @@ if (document.getElementById('activity-time-filter')) {
     applyDashboardFilters();
 }
 if (document.getElementById('sym-activity-time-filter')) {
-    applyTableFilter('sym-activity-time-filter', '#activities-table');
-}
-if (document.getElementById('sym-alert-time-filter')) {
-    applyTableFilter('sym-alert-time-filter', '#alerts-table');
+    applyTableFilter('sym-activity-time-filter', '#activities-table', 'sym-alerts-only-filter');
 }

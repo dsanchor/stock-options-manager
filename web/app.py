@@ -970,16 +970,26 @@ async def symbol_detail_page(request: Request, symbol: str):
     if not doc:
         return HTMLResponse(f"Symbol {symbol} not found", status_code=404)
 
-    # Gather recent activities across all agent types
+    # Gather recent activities AND alerts across all agent types (unified list)
     activities: List[Dict] = []
     for agent_type, meta in AGENT_TYPES.items():
+        # Get non-alert activities
         acts = cosmos.get_recent_activities(
             symbol.upper(), agent_type, max_entries=50)
         for d in acts:
             d["_agent_label"] = meta["label"]
         activities.extend(acts)
+        
+        # Get alerts
+        alts = cosmos.get_recent_alerts(
+            symbol.upper(), agent_type, max_entries=30)
+        for s in alts:
+            s["_agent_label"] = meta["label"]
+        activities.extend(alts)
+    
+    # Sort unified list by timestamp and cap at ~80 items
     activities.sort(key=lambda d: d.get("timestamp", ""), reverse=True)
-    activities = activities[:50]
+    activities = activities[:80]
 
     # Enrich open positions with latest monitor data (assignment_risk, moneyness)
     _monitor_agents = {"open_call_monitor", "open_put_monitor"}
@@ -994,7 +1004,7 @@ async def symbol_detail_page(request: Request, symbol: str):
             pos["_assignment_risk"] = mon.get("assignment_risk")
             pos["_moneyness"] = mon.get("moneyness")
 
-    # Gather recent alerts
+    # Gather alerts separately for latest_sell_alerts computation
     alerts: List[Dict] = []
     for agent_type, meta in AGENT_TYPES.items():
         alts = cosmos.get_recent_alerts(
