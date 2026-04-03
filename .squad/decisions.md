@@ -1932,3 +1932,65 @@ Completed implementation of put roll mechanics with proper state transitions, po
 
 ---
 
+
+### 21. Unified Activities + Alerts View with Alert Filter
+
+**Date:** 2026-04-02  
+**Author:** Rusty (Agent Dev)  
+**Status:** ✅ Implemented  
+**Scope:** Symbol detail page UX
+
+#### Decision
+
+Unified the separate "Recent Alerts" and "Recent Activities" cards on symbol detail pages into a single chronological list. Added 📢 megaphone icon for alerts and "📢 Alerts" filter pill.
+
+#### Context
+
+Previously, symbol detail pages showed two separate cards:
+1. **Recent Alerts** — Alerts only (is_alert=true)
+2. **Recent Activities** — Non-alerts only (is_alert!=true)
+
+**Problem:** Users couldn't determine chronological order between alerts and activities. Monitoring requires temporal context.
+
+#### Implementation
+
+**Backend (web/app.py lines 973-1013):**
+- Merged `get_recent_activities()` and `get_recent_alerts()` calls
+- Combined into single `activities` list, sorted by timestamp desc
+- Increased item cap from 50 to 80 items
+- Preserved separate `alerts` variable for position form pre-fill logic
+
+**Frontend (symbol_detail.html lines 351-426):**
+- Removed separate "Recent Alerts" card
+- Updated "Recent Activities" card to show both types
+- Unified columns: Timestamp | Agent | Activity | Strike | Expiration | Underlying | Confidence | Details
+- Added megaphone icon (📢) for alert rows
+- Added "📢 Alerts" filter toggle button
+
+**JavaScript (app.js lines 126-200):**
+- Enhanced `applyTableFilter()` with alerts-only filtering
+- Combined time range and type filtering logic
+- Dynamic badge count update
+
+#### Rationale
+
+**UX improvement:** Single chronological view eliminates mental timeline reconstruction. Users need temporal context for monitoring workflows.
+
+**Data integrity preserved:** Backend maintains separate `alerts` list for position form logic. No breaking changes.
+
+**Consistent pattern:** Megaphone icon matches dashboard visual language.
+
+#### Pattern for Future Work
+
+When displaying time-series data with multiple types (alerts, activities, events), prefer:
+- Single unified chronological view with type filters
+- Over separate cards requiring mental timeline reconstruction
+
+#### Files Modified
+
+- `web/app.py` — Backend merge logic (lines 973-1013)
+- `web/templates/symbol_detail.html` — Template restructure (lines 351-426)
+- `web/static/app.js` — Filter logic with alerts toggle (lines 126-200)
+
+---
+

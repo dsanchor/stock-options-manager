@@ -222,3 +222,30 @@ if preferences.get('activities', True):
 **Why this matters:**
 Different chat scenarios need different context. Quick technical questions don't need full position history. Position management questions don't need all TradingView data. User control reduces token usage and improves response relevance. LocalStorage persistence means users set it once per workflow preference.
 
+### Unified Activities List with Alert Filter (2026-04-02)
+**Status:** ✅ Completed  
+**Files:**
+- `web/app.py` — Merged alerts and activities into single unified list (lines 973-1013)
+- `web/templates/symbol_detail.html` — Removed separate alerts card, updated activities card with unified columns (lines 351-426)
+- `web/static/app.js` — Added alerts-only toggle filter logic (lines 126-200)
+
+**Implementation:**
+Unified the previously separate "Recent Alerts" and "Recent Activities" cards on symbol detail pages into a single chronological list. User can now see the full timeline without mental interleaving. Added 📢 megaphone icon for alerts (same as dashboard pattern). Added "📢 Alerts" filter pill to show only alert items.
+
+**Key design decisions:**
+- **Backend merge:** Both `get_recent_activities()` and `get_recent_alerts()` called, combined into single `activities` list sorted by timestamp desc, capped at 80 items (increased from 50)
+- **Separate alerts variable preserved:** Still compute `latest_sell_alerts` from alerts-only list for position form pre-fill logic
+- **Unified table columns:** Timestamp | Agent | Activity | Strike | Expiration | Underlying | Confidence | Details
+  - Alerts show strike, expiration, risk flags in Details column
+  - Non-alerts show underlying price, reason in Details column
+  - "—" displayed for missing fields
+- **Megaphone pattern:** `{% if d.is_alert %}<span class="alert-indicator" title="Alert">📢</span>{% endif %}` in Activity column (matches dashboard.html line 138-140)
+- **Filter logic:** Combined time range + alerts-only toggle. JS checks both `data-timestamp` (time cutoff) and `data-is-alert` (alert filter) on each row
+- **Badge count:** Dynamically updates to show visible item count after filtering
+
+**Why this matters:**
+Users couldn't tell chronological order between alerts and activities when split into separate cards. Monitoring requires temporal context — "did the alert come before or after this activity?" Unified list solves this. Alerts-only filter lets users quickly review signals without scrolling through monitor status updates. Maintains same data availability (alerts list still exists for position form logic) while improving UX.
+
+**Pattern for future work:**
+When displaying time-series data with multiple types (alerts, activities, events), prefer single unified chronological view with type filters over separate cards. Users scan top-to-bottom for recency; splitting forces mental timline reconstruction.
+
