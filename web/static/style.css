@@ -218,6 +218,26 @@ code { font-family: var(--font-mono); background: var(--bg-input); padding: 2px 
     background: var(--accent);
     color: white;
 }
+#sym-alerts-only-filter {
+    padding: 0.2rem 0.6rem;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.15s;
+    margin-left: 0.3rem;
+}
+#sym-alerts-only-filter:hover {
+    color: var(--text);
+}
+#sym-alerts-only-filter.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+}
 .filter-select {
     padding: 0.2rem 0.5rem;
     border: 1px solid var(--border);
