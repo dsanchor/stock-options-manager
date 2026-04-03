@@ -748,8 +748,10 @@ def _build_dashboard_tables(cosmos, all_symbols, all_alerts, all_activities):
             groups.setdefault(key, []).append(alert)
 
         # Latest activity per key — for health metrics and risk flags
+        # Filter out SKIPPED activities so we show meaningful data
         agent_acts = [d for d in all_activities
-                      if d.get("agent_type") == agent_key]
+                      if d.get("agent_type") == agent_key
+                      and d.get("activity", "").upper() != "SKIPPED"]
         latest_by_key: Dict[str, Dict] = {}
         for d in agent_acts:
             sym = d.get("symbol", "")
