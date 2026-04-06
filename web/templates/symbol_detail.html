@@ -243,6 +243,10 @@
                                     <div class="detail-value mono">{{ pos.closed_at[:10] }}</div>
                                 </div>
                                 {% endif %}
+                            </div>
+                            {% endif %}
+
+                            <div class="detail-grid" style="margin-top:0.75rem;">
                                 <div class="detail-field" style="grid-column: 1 / -1;">
                                     <div class="detail-label">Notes</div>
                                     <div class="detail-value detail-notes-wrapper" data-pos-id="{{ pos.position_id }}">
@@ -257,7 +261,6 @@
                                     </div>
                                 </div>
                             </div>
-                            {% endif %}
 
                             {% if pos.closing_source %}
                             <div style="margin-top:1rem; padding-top:0.75rem; border-top:1px dashed var(--border-color, #2a2a4a);">
