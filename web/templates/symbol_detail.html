@@ -110,7 +110,16 @@
                     </td>
                     <td><span class="badge badge-{{ 'wait' if pos.status == 'active' else 'info' }}">{{ pos.status }}</span></td>
                     <td class="mono">{{ pos.opened_at[:10] if pos.opened_at else "—" }}</td>
-                    <td>{{ pos.notes or "—" }}</td>
+                    <td class="pos-notes-cell" data-pos-id="{{ pos.position_id }}">
+                        <span class="notes-display" title="Click to edit">{{ pos.notes or "—" }}</span>
+                        <div class="notes-edit" style="display:none;">
+                            <textarea class="input-field notes-input" rows="2" style="width:100%; min-width:140px; resize:vertical; font-size:0.85rem;">{{ pos.notes or "" }}</textarea>
+                            <div style="display:flex; gap:0.4rem; margin-top:0.3rem;">
+                                <button class="btn-sm btn-primary notes-save" data-pos-id="{{ pos.position_id }}">Save</button>
+                                <button class="btn-sm notes-cancel">Cancel</button>
+                            </div>
+                        </div>
+                    </td>
                     <td>
                         {% if pos.status == 'active' %}
                         <button class="btn-sm" data-close-pos="{{ pos.position_id }}">Close</button>
@@ -234,12 +243,19 @@
                                     <div class="detail-value mono">{{ pos.closed_at[:10] }}</div>
                                 </div>
                                 {% endif %}
-                                {% if pos.notes %}
-                                <div class="detail-field">
+                                <div class="detail-field" style="grid-column: 1 / -1;">
                                     <div class="detail-label">Notes</div>
-                                    <div class="detail-value">{{ pos.notes }}</div>
+                                    <div class="detail-value detail-notes-wrapper" data-pos-id="{{ pos.position_id }}">
+                                        <span class="detail-notes-display" title="Click to edit" style="cursor:pointer;">{{ pos.notes or "Click to add notes…" }}</span>
+                                        <div class="detail-notes-edit" style="display:none;">
+                                            <textarea class="input-field detail-notes-input" rows="2" style="width:100%; resize:vertical; font-size:0.85rem;">{{ pos.notes or "" }}</textarea>
+                                            <div style="display:flex; gap:0.4rem; margin-top:0.3rem;">
+                                                <button class="btn-sm btn-primary detail-notes-save" data-pos-id="{{ pos.position_id }}">Save</button>
+                                                <button class="btn-sm detail-notes-cancel">Cancel</button>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
-                                {% endif %}
                             </div>
                             {% endif %}
 
@@ -578,7 +594,7 @@
     document.querySelectorAll('tr.pos-row').forEach(function(row) {
         row.addEventListener('click', function(e) {
             // Don't toggle when clicking action buttons
-            if (e.target.closest('[data-close-pos], [data-delete-pos], [data-roll-pos], .roll-form')) return;
+            if (e.target.closest('[data-close-pos], [data-delete-pos], [data-roll-pos], .roll-form, .notes-edit, .notes-display')) return;
             var idx = this.dataset.posIdx;
             var detailRow = document.querySelector('tr.pos-detail-row[data-pos-idx="' + idx + '"]');
             var chevron = this.querySelector('.pos-chevron');
@@ -610,6 +626,115 @@
             } catch(e) {
                 alert('Network error: ' + e.message);
             }
+        });
+    });
+
+    // ── Inline notes editing (table cell) ──
+    document.querySelectorAll('.pos-notes-cell').forEach(function(cell) {
+        var display = cell.querySelector('.notes-display');
+        var editDiv = cell.querySelector('.notes-edit');
+        var input = cell.querySelector('.notes-input');
+        var saveBtn = cell.querySelector('.notes-save');
+        var cancelBtn = cell.querySelector('.notes-cancel');
+
+        display.addEventListener('click', function(e) {
+            e.stopPropagation();
+            display.style.display = 'none';
+            editDiv.style.display = 'block';
+            input.focus();
+        });
+
+        cancelBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            editDiv.style.display = 'none';
+            display.style.display = '';
+        });
+
+        saveBtn.addEventListener('click', async function(e) {
+            e.stopPropagation();
+            var posId = this.dataset.posId;
+            var newNotes = input.value.trim();
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving…';
+            try {
+                var res = await fetch('/api/symbols/' + SYMBOL + '/positions/' + encodeURIComponent(posId) + '/notes', {
+                    method: 'PATCH',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ notes: newNotes })
+                });
+                if (res.ok) {
+                    display.textContent = newNotes || '—';
+                    editDiv.style.display = 'none';
+                    display.style.display = '';
+                    // Also update the detail panel if present
+                    var detailDisplay = document.querySelector('.detail-notes-wrapper[data-pos-id="' + posId + '"] .detail-notes-display');
+                    if (detailDisplay) detailDisplay.textContent = newNotes || 'Click to add notes…';
+                    var detailInput = document.querySelector('.detail-notes-wrapper[data-pos-id="' + posId + '"] .detail-notes-input');
+                    if (detailInput) detailInput.value = newNotes;
+                } else {
+                    var data = await res.json();
+                    alert('Error: ' + (data.error || 'Failed to update notes'));
+                }
+            } catch(err) {
+                alert('Network error: ' + err.message);
+            }
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Save';
+        });
+    });
+
+    // ── Inline notes editing (detail panel) ──
+    document.querySelectorAll('.detail-notes-wrapper').forEach(function(wrapper) {
+        var display = wrapper.querySelector('.detail-notes-display');
+        var editDiv = wrapper.querySelector('.detail-notes-edit');
+        var input = wrapper.querySelector('.detail-notes-input');
+        var saveBtn = wrapper.querySelector('.detail-notes-save');
+        var cancelBtn = wrapper.querySelector('.detail-notes-cancel');
+
+        display.addEventListener('click', function(e) {
+            e.stopPropagation();
+            display.style.display = 'none';
+            editDiv.style.display = 'block';
+            input.focus();
+        });
+
+        cancelBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            editDiv.style.display = 'none';
+            display.style.display = '';
+        });
+
+        saveBtn.addEventListener('click', async function(e) {
+            e.stopPropagation();
+            var posId = this.dataset.posId;
+            var newNotes = input.value.trim();
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving…';
+            try {
+                var res = await fetch('/api/symbols/' + SYMBOL + '/positions/' + encodeURIComponent(posId) + '/notes', {
+                    method: 'PATCH',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ notes: newNotes })
+                });
+                if (res.ok) {
+                    display.textContent = newNotes || 'Click to add notes…';
+                    editDiv.style.display = 'none';
+                    display.style.display = '';
+                    // Also update the table cell if present
+                    var tableCell = document.querySelector('.pos-notes-cell[data-pos-id="' + posId + '"]');
+                    if (tableCell) {
+                        tableCell.querySelector('.notes-display').textContent = newNotes || '—';
+                        tableCell.querySelector('.notes-input').value = newNotes;
+                    }
+                } else {
+                    var data = await res.json();
+                    alert('Error: ' + (data.error || 'Failed to update notes'));
+                }
+            } catch(err) {
+                alert('Network error: ' + err.message);
+            }
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Save';
         });
     });
 

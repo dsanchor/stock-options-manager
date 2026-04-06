@@ -298,6 +298,26 @@ class CosmosDBService:
         doc["updated_at"] = datetime.utcnow().isoformat() + "Z"
         return self.container.replace_item(item=doc["id"], body=doc)
 
+    def update_position_notes(self, symbol: str, position_id: str,
+                              notes: str) -> dict:
+        """Update the notes field on a position."""
+        doc = self.get_symbol(symbol)
+        if doc is None:
+            raise ValueError(f"Symbol {symbol} not found")
+
+        found = False
+        for pos in doc.get("positions", []):
+            if pos["position_id"] == position_id:
+                pos["notes"] = notes
+                found = True
+                break
+
+        if not found:
+            raise ValueError(f"Position {position_id} not found")
+
+        doc["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        return self.container.replace_item(item=doc["id"], body=doc)
+
     def delete_position(self, symbol: str, position_id: str) -> dict:
         """Remove a position and all linked activities/alerts from a symbol."""
         doc = self.get_symbol(symbol)

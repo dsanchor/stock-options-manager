@@ -619,6 +619,27 @@ async def api_close_position(request: Request, symbol: str, position_id: str):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.patch("/api/symbols/{symbol}/positions/{position_id}/notes")
+async def api_update_position_notes(request: Request, symbol: str,
+                                    position_id: str):
+    """Update notes on a position."""
+    try:
+        cosmos = _get_cosmos(request)
+        body = await request.json()
+        notes = body.get("notes", "")
+        if not isinstance(notes, str):
+            return JSONResponse({"error": "notes must be a string"},
+                                status_code=400)
+        doc = cosmos.update_position_notes(symbol.upper(), position_id, notes)
+        return JSONResponse(_clean_doc(doc))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.delete("/api/symbols/{symbol}/positions/{position_id}")
 async def api_delete_position(request: Request, symbol: str, position_id: str):
     try:

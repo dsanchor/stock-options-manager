@@ -329,3 +329,17 @@ When displaying time-series data with multiple types (alerts, activities, events
 - `.squad/orchestration-log/2026-04-06T14-10-basher-anti403.md` (test deliverable)
 - `.squad/log/2026-04-06T14-10-anti403-implementation.md` (session summary)
 - `.squad/decisions/decisions.md` → "Anti-403 Implementation (4 Phases)"
+
+### Position Notes Editing (2026-07-12)
+**Status:** ✅ Completed
+
+**Files:**
+- `src/cosmos_db.py` — Added `update_position_notes()` method (follows `close_position` pattern: find-by-id, mutate, replace_item)
+- `web/app.py` — Added `PATCH /api/symbols/{symbol}/positions/{position_id}/notes` endpoint (follows close/delete error-handling pattern)
+- `web/templates/symbol_detail.html` — Inline-editable notes in both table cell and detail panel, with cross-sync between them
+
+**Patterns used:**
+- Position lookup: iterate `doc["positions"]` array, match on `position_id`, mutate in-place, `replace_item`
+- API error handling: ValueError→404, RuntimeError→503, Exception→500
+- UI inline edit: click-to-show textarea + Save/Cancel buttons, `e.stopPropagation()` to avoid row toggle
+- Notes exclusion added to expandable row click handler to prevent accidental toggling
