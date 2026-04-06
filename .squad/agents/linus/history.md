@@ -1197,3 +1197,28 @@ Changed alert detection from whitelist (checking specific activities like SELL, 
   - `scripts/fix_alert_flags.py`
   - `scripts/README_fix_alert_flags.md`
 - **Note**: Users can run `python scripts/fix_alert_flags.py` to update any existing SKIPPED activities in CosmosDB
+
+### TradingView 403 Resilience Analysis (2025-01-24)
+- **Issue**: Persistent 403 errors from TradingView blacklisting session after accessing "hot" symbols
+- **Root Cause Identified**:
+  - Single persistent `requests.Session()` used throughout fetcher lifetime (line 749)
+  - Global `has_403` flag poisons ALL subsequent symbols, even unrelated ones (lines 805, 821, 1252)
+  - No per-symbol isolation — one bad symbol kills entire batch
+  - TradingView fingerprints: session cookies, IP+UA combo, request velocity, missing natural navigation
+- **Current Agent Pattern**: All agents iterate symbols sequentially with shared fetcher (covered_call_agent.py:44-50)
+- **Proposed Solution** (4-phase implementation):
+  1. **Per-symbol 403 tracking**: Replace global `has_403` with `_banned_symbols: set[str]` + `_symbol_403_count: dict`
+  2. **Session rotation**: Create fresh session after N requests (configurable, default 8) + warmup flow (homepage → SPY → target)
+  3. **Graduated cooldown**: First 403 → 30s + session reset, second → 2min, third → blacklist symbol
+  4. **Symbol randomization**: Shuffle symbol list in agents to avoid predictable patterns
+- **Key Architectural Changes**:
+  - Lazy session creation with `_ensure_session()` method
+  - Warmup sequence (`_warmup_session()`) to mimic human browsing (homepage, then SPY, then target)
+  - Per-symbol ban check (`_is_symbol_banned()`) before fetch
+  - Session-level request counter to trigger rotation
+  - Enhanced rate limiting config: 2-4s for regular, 5-10s for options chain
+- **Config Additions**: `tradingview.max_requests_per_session`, `warmup_enabled`, `symbol_cooldown_after_403`, `max_403_per_symbol`, `symbol_ban_duration`
+- **Expected Outcomes**: Resilience (one bad symbol won't poison batch), lower 403 rate (session rotation looks human), graceful degradation (per-symbol failures), improved stealth
+- **Files Analyzed**: `src/tv_data_fetcher.py` (lines 730-1324), agent files (covered_call_agent.py, cash_secured_put_agent.py, monitor agents), config.yaml
+- **Decision Document**: `.squad/decisions/inbox/linus-anti403-implementation.md` — comprehensive proposal with pseudocode
+- **Key Pattern**: Session isolation is critical for scraper resilience — never let one resource failure poison unrelated resources

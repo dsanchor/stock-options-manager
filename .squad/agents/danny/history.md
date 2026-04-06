@@ -199,3 +199,65 @@
 5. Smoke test: Trigger one agent run, verify new ID format
 6. Delete backup after 7 days
 
+### 2026-04-01: TradingView Anti-403 Architecture (PROPOSED)
+
+**Context:** User (dsanchor) experiencing persistent 403 errors from TradingView, particularly on previously-banned symbols. Hypothesis: TradingView blacklists client config (cookies/session fingerprint) when accessing certain "hot" resources.
+
+**Root Cause Analysis:**
+- Single `requests.Session()` per agent type reused across all symbols (20-50 per agent)
+- TradingView builds client fingerprint from cookie accumulation
+- Global `has_403` flag taints entire agent run when one symbol fails
+- Predictable symbol processing order (CosmosDB query result, deterministic)
+- No session rotation or recovery after 403
+
+**Architecture Decision: Per-Symbol Session Isolation + Graduated Recovery**
+
+**Key Changes:**
+1. **Per-symbol sessions** — Create fresh `requests.Session()` for each symbol, discard after use
+2. **Remove global `has_403`** — Replace with per-symbol error tracking in `fetch_all()` return dict
+3. **Graduated cooldown** — On 403: exponential backoff (5s → 15s → 45s) + session refresh, retry 3x
+4. **Symbol randomization** — Shuffle symbol order before processing (configurable)
+5. **Optional warm-up** — Visit TradingView homepage before fetching data (establishes "organic" cookies)
+
+**Implementation Strategy:**
+- **Phase 1 (High Priority):** Move `async with create_fetcher()` inside symbol loop (per-symbol sessions), remove `self.has_403`
+- **Phase 2 (High Priority):** Replace `_check_403()` with `_fetch_with_403_recovery()` (exponential backoff + session refresh)
+- **Phase 3 (Medium Priority):** Add `random.shuffle(symbols)` in agent wrappers
+- **Phase 4 (Low Priority):** Add `_warmup()` method (homepage visit, configurable)
+
+**Config Changes:**
+```yaml
+tradingview:
+  warmup_enabled: false  # Visit homepage before data fetch
+  max_403_retries: 3
+  retry_delays: [5, 15, 45]  # Exponential backoff (seconds)
+  randomize_symbols: true
+```
+
+**Files Impacted:**
+- `src/tv_data_fetcher.py` — Remove `has_403`, add `_fetch_with_403_recovery()`, return error dict
+- `src/covered_call_agent.py`, `cash_secured_put_agent.py`, `open_call_monitor_agent.py`, `open_put_monitor_agent.py` — Move fetcher creation inside symbol loop, add shuffle
+- `src/agent_runner.py` — Check `data.get("error_403")` instead of `fetcher.has_403`
+- `config.yaml` — Add new tradingview config section
+
+**Success Metrics:**
+- Before: 20-30% 403 rate, cascading failures across symbols
+- Target: <5% 403 rate, isolated failures (one 403 doesn't taint others)
+
+**Risk Assessment:**
+- Session overhead: ~50ms × 50 symbols = 2.5s (negligible vs 5-15s network I/O per symbol)
+- Retry overhead: 3 retries × 45s × 10% failure = ~11min for 50 symbols (acceptable for 4h cron)
+- IP-based blocking: If problem persists, user needs proxy rotation (out of scope)
+
+**Alternatives Rejected:**
+- Proxy rotation (requires external infrastructure)
+- Playwright for all resources (10x slower)
+- Per-resource session rotation (too granular, triggers rate-limiting)
+
+**Status:** Architecture proposed in `.squad/decisions/inbox/danny-anti403-strategy.md` — awaiting user (dsanchor) review and approval
+
+**Team Assignment:**
+- **Rusty:** Implementation (Phases 1–4)
+- **Basher:** Testing (403 simulation, retry verification, symbol randomization check)
+- **Linus:** No action required (agent instructions unchanged)
+
