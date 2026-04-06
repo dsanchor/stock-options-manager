@@ -327,12 +327,8 @@ async def api_update_symbol(request: Request, symbol: str):
         doc["updated_at"] = datetime.utcnow().isoformat() + "Z"
         updated = cosmos.container.replace_item(item=doc["id"], body=doc)
 
-        # Cascade-delete activities & alerts when a watchlist agent is toggled OFF
-        sym = symbol.upper()
-        if "covered_call" in body and not bool(body["covered_call"]):
-            cosmos.delete_activities_by_agent_type(sym, "covered_call")
-        if "cash_secured_put" in body and not bool(body["cash_secured_put"]):
-            cosmos.delete_activities_by_agent_type(sym, "cash_secured_put")
+        # Activities are kept when watchlist agents are toggled OFF.
+        # CosmosDB TTL (30 days) handles cleanup automatically.
 
         return JSONResponse(_clean_doc(updated))
     except RuntimeError as e:
@@ -416,8 +412,8 @@ async def api_add_position(request: Request, symbol: str):
 @app.post("/api/symbols/{symbol}/positions/from-activity/{activity_id}")
 async def api_add_position_from_activity(request: Request, symbol: str,
                                          activity_id: str):
-    """Create a position from an existing activity, disable watchlist, and
-    cascade-delete related activities/alerts."""
+    """Create a position from an existing activity and disable watchlist.
+    Activities are preserved (CosmosDB TTL handles cleanup)."""
     try:
         cosmos = _get_cosmos(request)
         activity = cosmos.get_activity_by_id(activity_id)
@@ -467,8 +463,6 @@ async def api_add_position_from_activity(request: Request, symbol: str,
             sym_doc["watchlist"][agent_type] = False
             sym_doc["updated_at"] = datetime.utcnow().isoformat() + "Z"
             cosmos.container.replace_item(item=sym_doc["id"], body=sym_doc)
-            # Cascade-delete activities/alerts for this agent type
-            cosmos.delete_activities_by_agent_type(symbol.upper(), agent_type)
 
         return JSONResponse(_clean_doc(doc), status_code=201)
     except ValueError as e:
