@@ -731,24 +731,33 @@ class TradingViewFetcher:
     """Hybrid fetcher: BS4 + scanner API for 4 resources, Playwright for options.
     
     Implements anti-bot detection measures:
-    - Session management with persistent cookies
+    - Per-symbol session isolation (fresh session per fetch_all call)
+    - Graduated 403 recovery with exponential backoff + session refresh
     - User-Agent rotation
     - Request timing randomization
-    - Realistic browser headers
+    - Optional homepage warm-up for organic cookies
     """
 
-    def __init__(self, request_delay_range: tuple = (1.0, 3.0)):
+    def __init__(self, request_delay_range: tuple = (1.0, 3.0),
+                 max_403_retries: int = 3,
+                 retry_delays: list = None,
+                 warmup_enabled: bool = False):
         """Initialize fetcher with anti-bot measures.
         
         Args:
-            request_delay_range: (min, max) seconds to wait between requests (default: 1-3s)
+            request_delay_range: (min, max) seconds to wait between requests
+            max_403_retries: Max 403 retry attempts with session refresh
+            retry_delays: Backoff delays in seconds between retries
+            warmup_enabled: Visit homepage before fetching to establish cookies
         """
         self._playwright = None
         self._browser = None
-        self.has_403 = False
-        self._session = _requests.Session()  # Persistent session for cookies
+        self._session = _requests.Session()
         self._request_delay_range = request_delay_range
         self._last_request_time = 0
+        self._max_403_retries = max_403_retries
+        self._403_retry_delays = retry_delays or [5, 15, 45]
+        self._warmup_enabled = warmup_enabled
         
         # Set initial headers for session
         self._session.headers.update(_get_random_headers())
@@ -796,29 +805,74 @@ class TradingViewFetcher:
                 ],
             )
 
-    # Retry delays in seconds for transient fetch failures
+    # Retry delays in seconds for transient fetch failures (non-403)
     _RETRY_DELAYS = (5, 10)
 
-    def _check_403(self, resp, full_symbol: str) -> None:
-        """Flag and raise immediately on HTTP 403 (rate-limit / block)."""
-        if resp.status_code == 403:
-            self.has_403 = True
-            logger.error(
-                "TradingView returned 403 for %s — fetcher flagged, "
-                "agents will skip execution.", full_symbol,
-            )
-            resp.raise_for_status()
+    def _refresh_session(self):
+        """Close old session and create a new one with fresh random headers."""
+        self._session.close()
+        self._session = _requests.Session()
+        self._session.headers.update(_get_random_headers())
+        logger.info("Session refreshed with new headers")
 
-    async def _with_retry(self, fetch_coro_factory, label: str) -> str:
-        """Call a fetch coroutine, retrying up to 2 times on error.
+    async def _handle_403(self, resp, full_symbol: str, resource: str) -> str:
+        """Graduated 403 recovery: backoff + session refresh between retries.
+        
+        Returns the successful response text, or raises HTTPError after
+        all retries are exhausted.
+        """
+        url = resp.url
+        for attempt in range(self._max_403_retries):
+            delay_idx = min(attempt, len(self._403_retry_delays) - 1)
+            delay = self._403_retry_delays[delay_idx]
+            logger.warning(
+                "403 on %s for %s — retry %d/%d in %ds with session refresh",
+                resource, full_symbol, attempt + 1, self._max_403_retries, delay,
+            )
+            await asyncio.sleep(delay)
+            self._refresh_session()
+
+            try:
+                headers = _get_random_headers()
+                headers["Referer"] = "https://www.tradingview.com/"
+                retry_resp = self._session.get(url, headers=headers, timeout=15)
+                if retry_resp.status_code != 403:
+                    retry_resp.raise_for_status()
+                    logger.info("403 recovered for %s on attempt %d", full_symbol, attempt + 1)
+                    return retry_resp.text
+            except Exception as e:
+                logger.warning("403 retry %d failed for %s: %s", attempt + 1, full_symbol, e)
+
+        logger.error(
+            "All %d 403 retries exhausted for %s (%s)",
+            self._max_403_retries, full_symbol, resource,
+        )
+        resp.raise_for_status()
+
+    async def _warmup(self):
+        """Visit TradingView homepage to establish organic cookies."""
+        try:
+            headers = _get_random_headers()
+            self._session.get(
+                "https://www.tradingview.com/",
+                headers=headers,
+                timeout=15,
+            )
+            await asyncio.sleep(random.uniform(1.0, 2.5))
+            logger.info("Homepage warm-up completed")
+        except Exception as e:
+            logger.warning("Homepage warm-up failed (non-fatal): %s", e)
+
+    async def _with_retry(self, fetch_coro_factory, label: str, _has_403: dict = None) -> str:
+        """Call a fetch coroutine, retrying up to 2 times on non-403 errors.
 
         ``fetch_coro_factory`` is a no-arg callable that returns a new
         awaitable each time (needed because coroutines are single-use).
-        Does NOT retry if a 403 has been detected (pointless to retry blocks).
+        Skips retries if a 403 has already been detected for this symbol.
         """
         last_error = None
         for attempt in range(1 + len(self._RETRY_DELAYS)):
-            if self.has_403:
+            if _has_403 and _has_403.get("blocked"):
                 return last_error or "[ERROR: TradingView 403 Forbidden — skipped]"
             try:
                 result = await fetch_coro_factory()
@@ -830,7 +884,7 @@ class TradingViewFetcher:
                 logger.warning(
                     "%s attempt %d failed: %s", label, attempt + 1, e,
                 )
-                if self.has_403:
+                if _has_403 and _has_403.get("blocked"):
                     return last_error
 
             if attempt < len(self._RETRY_DELAYS):
@@ -859,9 +913,12 @@ class TradingViewFetcher:
             headers["Referer"] = "https://www.tradingview.com/"
             
             resp = self._session.get(url, headers=headers, timeout=15)
-            self._check_403(resp, full_symbol)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, "html.parser")
+            if resp.status_code == 403:
+                resp_text = await self._handle_403(resp, full_symbol, "overview")
+                soup = BeautifulSoup(resp_text, "html.parser")
+            else:
+                resp.raise_for_status()
+                soup = BeautifulSoup(resp.text, "html.parser")
 
             data = _overview_try_html(soup)
             if data:
@@ -906,9 +963,12 @@ class TradingViewFetcher:
             headers["Referer"] = f"https://www.tradingview.com/symbols/{full_symbol}/"
             
             resp = self._session.get(url, headers=headers, timeout=15)
-            self._check_403(resp, full_symbol)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, "html.parser")
+            if resp.status_code == 403:
+                resp_text = await self._handle_403(resp, full_symbol, "technicals")
+                soup = BeautifulSoup(resp_text, "html.parser")
+            else:
+                resp.raise_for_status()
+                soup = BeautifulSoup(resp.text, "html.parser")
 
             data = _technicals_try_html(soup)
             if data:
@@ -967,9 +1027,12 @@ class TradingViewFetcher:
             headers["Referer"] = f"https://www.tradingview.com/symbols/{full_symbol}/technicals/"
             
             resp = self._session.get(url, headers=headers, timeout=15)
-            self._check_403(resp, full_symbol)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, "html.parser")
+            if resp.status_code == 403:
+                resp_text = await self._handle_403(resp, full_symbol, "forecast")
+                soup = BeautifulSoup(resp_text, "html.parser")
+            else:
+                resp.raise_for_status()
+                soup = BeautifulSoup(resp.text, "html.parser")
 
             # Try scanner API first for structured data
             data = None
@@ -1028,9 +1091,12 @@ class TradingViewFetcher:
             headers["Referer"] = f"https://www.tradingview.com/symbols/{full_symbol}/forecast/"
             
             resp = self._session.get(url, headers=headers, timeout=15)
-            self._check_403(resp, full_symbol)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, "html.parser")
+            if resp.status_code == 403:
+                resp_text = await self._handle_403(resp, full_symbol, "dividends")
+                soup = BeautifulSoup(resp_text, "html.parser")
+            else:
+                resp.raise_for_status()
+                soup = BeautifulSoup(resp.text, "html.parser")
 
             # Try scanner API first for structured data
             data = None
@@ -1234,9 +1300,10 @@ class TradingViewFetcher:
     async def fetch_all(self, symbol: str) -> dict:
         """Fetch all data for a symbol.
 
-        Returns dict with keys: overview, technicals, forecast, dividends, options_chain.
+        Returns dict with keys: overview, technicals, forecast, dividends,
+        options_chain, and tv_403 (bool indicating if 403 was unrecoverable).
         Timing stats are stored in ``self.last_fetch_stats``.
-        Sets ``self.has_403`` if any fetch returns HTTP 403.
+        403 state is local to this call — no instance-level side effects.
         """
         # Convert NYSE-MO → NYSE:MO for TradingView URLs
         full_symbol = symbol.replace("-", ":")
@@ -1244,16 +1311,29 @@ class TradingViewFetcher:
         logger.info("Pre-fetching TradingView data for %s", symbol)
 
         self.last_fetch_stats: dict[str, dict] = {}
-        self.has_403 = False
+        # Local 403 state — mutable dict so inner functions can update it
+        _has_403 = {"blocked": False}
         _skip_placeholder = "[SKIPPED: TradingView 403 — fetch aborted]"
+
+        # Optional homepage warm-up
+        if self._warmup_enabled:
+            await self._warmup()
 
         # Helper that wraps a single fetch with timing
         async def _timed_fetch(resource: str, factory, label: str) -> str:
-            if self.has_403:
+            if _has_403["blocked"]:
                 logger.warning("Skipping %s — TradingView 403 already detected", label)
                 return _skip_placeholder
             start = time.time()
-            result = await self._with_retry(factory, label)
+            try:
+                result = await self._with_retry(factory, label, _has_403)
+            except HTTPError as e:
+                if e.response is not None and e.response.status_code == 403:
+                    _has_403["blocked"] = True
+                    logger.error("Unrecoverable 403 on %s for %s", resource, full_symbol)
+                    result = f"[ERROR: TradingView 403 Forbidden on {resource}]"
+                else:
+                    raise
             duration = time.time() - start
             self.last_fetch_stats[resource] = {
                 "duration": round(duration, 2),
@@ -1302,22 +1382,28 @@ class TradingViewFetcher:
             "forecast": forecast,
             "dividends": dividends,
             "options_chain": options_chain,
+            "tv_403": _has_403["blocked"],
         }
 
 
 def create_fetcher(config=None):
-    """Factory function to create TradingViewFetcher with config-based delays.
+    """Factory function to create TradingViewFetcher with config-based settings.
     
     Args:
-        config: Optional Config object. If None, uses default delays.
+        config: Optional Config object. If None, uses defaults.
         
     Returns:
-        TradingViewFetcher instance with configured request delays.
+        TradingViewFetcher instance with configured anti-403 settings.
     """
     if config is None:
         return TradingViewFetcher()
     
-    delay_min = config.tradingview_request_delay_min
-    delay_max = config.tradingview_request_delay_max
-    
-    return TradingViewFetcher(request_delay_range=(delay_min, delay_max))
+    return TradingViewFetcher(
+        request_delay_range=(
+            config.tradingview_request_delay_min,
+            config.tradingview_request_delay_max,
+        ),
+        max_403_retries=config.tradingview_max_403_retries,
+        retry_delays=config.tradingview_retry_delays,
+        warmup_enabled=config.tradingview_warmup_enabled,
+    )

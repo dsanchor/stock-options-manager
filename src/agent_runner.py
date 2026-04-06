@@ -252,7 +252,7 @@ class AgentRunner:
             data = await fetcher.fetch_all(full_symbol)
 
             # ── 403 guard: skip agent if TradingView blocked us ───────
-            if getattr(fetcher, "has_403", False):
+            if data.get("tv_403", False):
                 logger.warning(
                     "TradingView 403 detected for %s — skipping agent analysis",
                     full_symbol,
@@ -473,7 +473,7 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
             data = await fetcher.fetch_all(full_symbol)
 
             # ── 403 guard: skip agent if TradingView blocked us ───────
-            if getattr(fetcher, "has_403", False):
+            if data.get("tv_403", False):
                 logger.warning(
                     "TradingView 403 detected for %s — skipping position monitor",
                     full_symbol,

@@ -2,6 +2,7 @@ from .agent_runner import AgentRunner
 from .cosmos_db import CosmosDBService
 from .context import ContextProvider
 from .tv_cash_secured_put_instructions import TV_CASH_SECURED_PUT_INSTRUCTIONS
+import random
 
 
 async def run_cash_secured_put_analysis(config, runner: AgentRunner,
@@ -35,14 +36,16 @@ async def run_cash_secured_put_analysis(config, runner: AgentRunner,
         if not csp_symbols:
             print("No symbols enabled for cash-secured put — skipping")
             return
+        if getattr(config, 'tradingview_randomize_symbols', True):
+            random.shuffle(csp_symbols)
 
     symbol_names = [s["symbol"] for s in csp_symbols]
     print(f"Analyzing {len(csp_symbols)} symbols: {', '.join(symbol_names)}")
 
     from .tv_data_fetcher import create_fetcher
 
-    async with create_fetcher(config) as fetcher:
-        for sym_doc in csp_symbols:
+    for sym_doc in csp_symbols:
+        async with create_fetcher(config) as fetcher:
             await runner.run_symbol_agent(
                 name="CashSecuredPutAgent",
                 instructions=TV_CASH_SECURED_PUT_INSTRUCTIONS,

@@ -2,6 +2,7 @@ from .agent_runner import AgentRunner
 from .cosmos_db import CosmosDBService
 from .context import ContextProvider
 from .tv_covered_call_instructions import TV_COVERED_CALL_INSTRUCTIONS
+import random
 
 
 async def run_covered_call_analysis(config, runner: AgentRunner,
@@ -35,14 +36,16 @@ async def run_covered_call_analysis(config, runner: AgentRunner,
         if not cc_symbols:
             print("No symbols enabled for covered call — skipping")
             return
+        if getattr(config, 'tradingview_randomize_symbols', True):
+            random.shuffle(cc_symbols)
 
     symbol_names = [s["symbol"] for s in cc_symbols]
     print(f"Analyzing {len(cc_symbols)} symbols: {', '.join(symbol_names)}")
 
     from .tv_data_fetcher import create_fetcher
 
-    async with create_fetcher(config) as fetcher:
-        for sym_doc in cc_symbols:
+    for sym_doc in cc_symbols:
+        async with create_fetcher(config) as fetcher:
             await runner.run_symbol_agent(
                 name="CoveredCallAgent",
                 instructions=TV_COVERED_CALL_INSTRUCTIONS,

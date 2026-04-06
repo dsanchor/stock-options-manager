@@ -35,3 +35,7 @@ tradingview:
   request_delay_min: 1.0   # Minimum seconds between requests (default: 1.0)
   request_delay_max: 3.0   # Maximum seconds between requests (default: 3.0)
   # Note: Actual delay is randomized within this range to simulate human behavior
+  warmup_enabled: false      # Visit TradingView homepage before fetching to establish cookies
+  max_403_retries: 3         # Max retry attempts on 403 with session refresh + backoff
+  retry_delays: [5, 15, 45]  # Backoff delays in seconds between 403 retries
+  randomize_symbols: true    # Shuffle symbol order to vary access patterns

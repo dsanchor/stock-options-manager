@@ -1573,7 +1573,7 @@ async def fetch_symbol_data(request: Request):
         async with create_fetcher(config) as fetcher:
             data = await fetcher.fetch_all(full_symbol)
             
-            if fetcher.has_403:
+            if data.get("tv_403", False):
                 return JSONResponse(
                     {"error": "TradingView returned 403 (rate limit or block). Please try again later."},
                     status_code=403

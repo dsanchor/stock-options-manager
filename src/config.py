@@ -151,3 +151,23 @@ class Config:
     def tradingview_request_delay_max(self) -> float:
         """Maximum seconds between TradingView requests (default: 3.0)."""
         return float(self.config.get('tradingview', {}).get('request_delay_max', 3.0))
+
+    @property
+    def tradingview_warmup_enabled(self) -> bool:
+        """Visit TradingView homepage before fetching to establish cookies (default: False)."""
+        return bool(self.config.get('tradingview', {}).get('warmup_enabled', False))
+
+    @property
+    def tradingview_max_403_retries(self) -> int:
+        """Max retry attempts on 403 with session refresh + backoff (default: 3)."""
+        return int(self.config.get('tradingview', {}).get('max_403_retries', 3))
+
+    @property
+    def tradingview_retry_delays(self) -> list:
+        """Backoff delays in seconds between 403 retries (default: [5, 15, 45])."""
+        return list(self.config.get('tradingview', {}).get('retry_delays', [5, 15, 45]))
+
+    @property
+    def tradingview_randomize_symbols(self) -> bool:
+        """Shuffle symbol order to vary access patterns (default: True)."""
+        return bool(self.config.get('tradingview', {}).get('randomize_symbols', True))

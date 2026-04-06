@@ -249,3 +249,21 @@ Users couldn't tell chronological order between alerts and activities when split
 **Pattern for future work:**
 When displaying time-series data with multiple types (alerts, activities, events), prefer single unified chronological view with type filters over separate cards. Users scan top-to-bottom for recency; splitting forces mental timline reconstruction.
 
+### Anti-403 Architecture (2026-07-11)
+**Status:** ✅ Implemented (all 4 phases)
+
+**Key Architecture Decisions:**
+- **Per-symbol session isolation:** Each symbol gets its own `create_fetcher()` context. This prevents one symbol's 403 from tainting others. The fetcher is now inside the symbol loop, not wrapping it.
+- **Monitor agents scope fetcher per-symbol, not per-position:** Multiple positions for the same symbol share one fetcher since they hit the same TradingView pages.
+- **403 state is local to `fetch_all()`, not instance-level:** Uses a mutable `_has_403` dict instead of `self.has_403`. The result dict includes `tv_403: bool` so callers check data, not fetcher state.
+- **Graduated 403 recovery:** `_handle_403()` does exponential backoff (5s→15s→45s) with session refresh between retries. Only after all retries exhausted does it mark the symbol as blocked.
+- **Symbol randomization:** `random.shuffle()` in all 4 agent files, guarded by `config.tradingview_randomize_symbols`, only on multi-symbol runs.
+- **Homepage warm-up:** Optional `_warmup()` visits homepage for organic cookies. Defaults to off.
+
+**Key File Paths:**
+- `src/tv_data_fetcher.py` — `_handle_403()`, `_warmup()`, `_refresh_session()`, updated `fetch_all()`, `create_fetcher()`
+- `src/config.py` — 4 new properties: `tradingview_warmup_enabled`, `tradingview_max_403_retries`, `tradingview_retry_delays`, `tradingview_randomize_symbols`
+- `config.yaml` — `tradingview:` section expanded with 4 new keys
+- All 4 agent files — per-symbol fetcher + randomization
+- `src/agent_runner.py` + `web/app.py` — switched from `fetcher.has_403` to `data.get("tv_403")`
+

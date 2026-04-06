@@ -1,6 +1,7 @@
 from .agent_runner import AgentRunner
 from .cosmos_db import CosmosDBService
 from .context import ContextProvider
+import random
 
 
 async def run_open_put_monitor(config, runner: AgentRunner,
@@ -41,14 +42,16 @@ async def run_open_put_monitor(config, runner: AgentRunner,
         if not put_symbols:
             print("No active put positions — skipping OpenPutMonitor")
             return
+        if getattr(config, 'tradingview_randomize_symbols', True):
+            random.shuffle(put_symbols)
 
     total = sum(len(s["_active_positions"]) for s in put_symbols)
     print(f"Monitoring {total} open put position(s)")
 
     from .tv_data_fetcher import create_fetcher
 
-    async with create_fetcher(config) as fetcher:
-        for sym_doc in put_symbols:
+    for sym_doc in put_symbols:
+        async with create_fetcher(config) as fetcher:
             for pos in sym_doc["_active_positions"]:
                 await runner.run_position_monitor(
                     name="OpenPutMonitor",
