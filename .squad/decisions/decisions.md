@@ -1046,3 +1046,254 @@ Added a **mandatory Decision Summary Table** to the quick analysis chat instruct
 - May add "confidence score" based on gate alignment
 - Could add "similar historical setups" if we build a pattern library
 - Consider visual formatting enhancements (color coding for gate status)
+
+---
+
+## Anti-403 Strategy: TradingView Data Fetcher Resilience
+
+**Date:** 2026-04-06  
+**Authors:** Danny (Lead), Linus (Quant Dev)  
+**Status:** Proposed (Pending User Approval)  
+**Impact:** Core data fetching — resilience, success rate, error isolation
+
+### Problem Statement
+
+TradingView is detecting and blacklisting scraping sessions with persistent 403 errors (current rate: 20–30% of symbols). Root causes:
+
+1. **Single session reused across all symbols** — One `requests.Session()` per agent type, 20–50 symbols per run. Cookies accumulate; TradingView builds client fingerprint.
+2. **Sticky global 403 flag** — Once `has_403 = True`, ALL subsequent symbols skipped (cascading failure).
+3. **Predictable access pattern** — Symbols processed in deterministic order (CosmosDB query result). TradingView sees exact same sequence every 4 hours.
+4. **No session rotation after 403** — Tainted session continues until agent run completes.
+5. **Sequential resource fetching** — Each symbol fetches 5 resources with same session/cookies.
+
+**User Hypothesis (dsanchor):** TradingView blacklists client config (cookies/session fingerprint) when accessing "hot" resources/symbols. Once banned, session is permanently tainted.
+
+### Convergent Solution: Per-Symbol Session Isolation + Graduated Recovery
+
+Both Danny and Linus independently proposed converging strategy (4 phases, prioritized):
+
+#### Phase 1: Per-Symbol Session Lifecycle (HIGH PRIORITY)
+
+**Change:** Move session creation inside symbol loop instead of reusing one session.
+
+```python
+# OLD: One session for all symbols
+async with create_fetcher(config) as fetcher:
+    for sym_doc in cc_symbols:
+        await runner.run_symbol_agent(..., fetcher=fetcher)
+
+# NEW: Fresh session per symbol
+for sym_doc in cc_symbols:
+    async with create_fetcher(config) as fetcher:
+        await runner.run_symbol_agent(..., fetcher=fetcher)
+```
+
+**Rationale:**
+- Each symbol gets clean slate — no cookie contamination
+- TradingView sees individual "users" instead of scraper hitting 50 symbols
+- Minimal code change — just move `async with` inside loop
+
+**Implementation:**
+- Refactor 4 agent wrappers: `covered_call_agent.py`, `cash_secured_put_agent.py`, `open_call_monitor_agent.py`, `open_put_monitor_agent.py`
+- Remove `self.has_403` from `TradingViewFetcher.__init__()`
+- Replace with per-fetch error details in result dict: `{"error_403": "message"}` instead of side-effect flag
+- Update `agent_runner.py` to check `data.get("error_403")` instead of `fetcher.has_403`
+
+#### Phase 2: Graduated Cooldown with Fresh Session Retry (HIGH PRIORITY)
+
+**Change:** Replace single 403 check with exponential backoff + session refresh.
+
+```python
+async def _fetch_with_403_recovery(self, url: str, full_symbol: str, resource: str):
+    """Fetch with exponential backoff + session refresh on 403."""
+    delays = [5, 15, 45]  # seconds
+    for attempt in range(len(delays) + 1):
+        try:
+            resp = self._session.get(url, headers=_get_random_headers(), timeout=15)
+            if resp.status_code == 403:
+                if attempt < len(delays):
+                    delay = delays[attempt]
+                    logger.warning("403 for %s %s — cooling %ds, refreshing session", 
+                                   resource, full_symbol, delay)
+                    await asyncio.sleep(delay)
+                    self._session.close()
+                    self._session = _requests.Session()  # Fresh session
+                    self._session.headers.update(_get_random_headers())
+                    continue
+                else:
+                    logger.error("403 for %s %s — all retries exhausted", resource, full_symbol)
+                    return resp, True  # Fatal
+            resp.raise_for_status()
+            return resp, False  # Success
+        except Exception as e:
+            if attempt == len(delays):
+                raise
+            logger.warning("Error for %s %s: %s — retrying", resource, full_symbol, e)
+            await asyncio.sleep(delays[attempt])
+```
+
+**Rationale:**
+- First 403 might be transient rate-limiting → retry after cooldown
+- Fresh session after each 403 prevents cookie taint accumulation
+- Exponential backoff (5s → 15s → 45s) gives TradingView time to "forget" bad session
+- After 3 attempts, mark symbol failed but don't taint other symbols (isolated failure)
+
+**Configuration:**
+```yaml
+tradingview:
+  max_403_retries: 3
+  retry_delays: [5, 15, 45]  # Exponential backoff (seconds)
+```
+
+#### Phase 3: Symbol Order Randomization (MEDIUM PRIORITY)
+
+**Change:** Shuffle symbol list before processing.
+
+```python
+import random
+cc_symbols = cosmos.get_covered_call_symbols()
+random.shuffle(cc_symbols)  # NEW: Randomize access order
+```
+
+**Rationale:**
+- Breaks predictable scraping patterns
+- If TradingView tracks "user A always accesses AAPL → MSFT → TSLA", randomization makes us look like different users
+- Minimal overhead, high impact
+
+**Configuration:**
+```yaml
+tradingview:
+  randomize_symbols: true  # (default: true)
+```
+
+#### Phase 4: Homepage Warm-Up (LOW PRIORITY, OPTIONAL)
+
+**Change:** Visit TradingView homepage to establish "organic" cookies before fetching resources.
+
+```python
+async def _warmup(self):
+    """Visit TradingView homepage to establish organic cookies."""
+    if not self._warmup_done:
+        try:
+            self._session.get("https://www.tradingview.com/", 
+                            headers=_get_random_headers(), timeout=10)
+            self._warmup_done = True
+            logger.debug("Homepage warm-up completed")
+        except Exception as e:
+            logger.warning("Homepage warm-up failed: %s", e)
+```
+
+**Rationale:**
+- Mimics organic browsing (user lands on homepage first)
+- Establishes baseline cookies before hitting data endpoints
+- Configurable (conservative by default)
+- Low cost (~500ms per symbol)
+
+**Configuration:**
+```yaml
+tradingview:
+  warmup_enabled: false  # (default: false, enable if needed)
+```
+
+### Expected Outcomes
+
+**Before Implementation:**
+- 403 error rate: ~20–30% of symbols
+- Persistent 403s on "hot" symbols cascade to entire batch
+- Global `has_403` flag taints entire run
+
+**After Phase 1–2 (MVP):**
+- 403 error rate: <5% of symbols
+- No multi-symbol cascading failures (one 403 isolated to that symbol)
+- Individual symbols may still get 403 after retries, but it doesn't taint others
+
+**After Phase 3–4 (Optional Enhancements):**
+- Further 403 reduction if TradingView detects by IP (unlikely, but phases provide flexibility)
+- More human-like access patterns (randomization + warm-up)
+
+### Risk Assessment
+
+| Risk | Likelihood | Mitigation |
+|------|------------|-----------|
+| Session creation overhead | Medium | ~50ms per session, negligible vs. 5–15s network I/O per symbol |
+| IP-based blocking persists | Low | Monitor 403 rates; if problem persists, user deploys with proxy rotation (out of scope v1) |
+| Exponential backoff increases runtime | Medium | Worst case 3 retries × 45s per symbol; for 50 symbols with 10% failure rate, adds ~11 min total (acceptable for 4-hour cron) |
+| Randomization breaks determinism | Low | Already configurable; keep default true (high value) |
+
+### Configuration Changes Summary
+
+**New `config.yaml` section (Phase 1–4):**
+```yaml
+tradingview:
+  request_delay_min: 1.0         # Existing
+  request_delay_max: 3.0         # Existing
+  
+  # NEW: Anti-403 settings
+  warmup_enabled: false          # Phase 4: Visit homepage before fetching
+  max_403_retries: 3             # Phase 2: Retry attempts on 403
+  retry_delays: [5, 15, 45]      # Phase 2: Exponential backoff (seconds)
+  randomize_symbols: true        # Phase 3: Shuffle symbol order
+```
+
+**Defaults:** Conservative (warmup off, randomize on)
+
+### Implementation Checklist
+
+- [ ] Phase 1: Core Session Isolation (Rusty)
+  - [ ] Refactor 4 agent wrappers — move `async with create_fetcher()` inside symbol loop
+  - [ ] Remove `self.has_403` from fetcher
+  - [ ] Update `fetch_all()` to return `{"error_403": "message"}` in result dict
+  - [ ] Update `agent_runner.py` to check `data.get("error_403")`
+  
+- [ ] Phase 2: Graduated Recovery (Rusty)
+  - [ ] Replace `_check_403()` with `_fetch_with_403_recovery()` implementing exponential backoff + session refresh
+  - [ ] Update all `self._session.get()` calls to use new recovery method
+  - [ ] Add config: `max_403_retries`, `retry_delays`
+  
+- [ ] Phase 3: Symbol Randomization (Rusty)
+  - [ ] Add `random.shuffle(cc_symbols)` in all 4 agent wrappers after `cosmos.get_*_symbols()`
+  - [ ] Add config: `randomize_symbols` (default: true)
+  
+- [ ] Phase 4: Optional Warm-Up (Rusty)
+  - [ ] Add `_warmup()` method to `TradingViewFetcher`
+  - [ ] Call `await self._warmup()` at start of `fetch_all()` if enabled
+  - [ ] Add config: `warmup_enabled` (default: false)
+  
+- [ ] Testing (Basher)
+  - [ ] Verify each symbol gets fresh session
+  - [ ] Simulate 403 (firewall block); verify retry + recovery
+  - [ ] Verify symbol order randomized when enabled
+  - [ ] Monitor 403 rates before/after deployment
+
+### Alternatives Considered (and Rejected)
+
+| Alternative | Why Rejected |
+|-------------|-------------|
+| Proxy rotation | Requires external infrastructure. If IP-based blocking persists, user can deploy to multiple VMs later. |
+| Playwright for all resources | 10x slower (~15s vs ~1s per resource); would increase runtime from ~5min to ~40min for 50 symbols. Only justified for options chain (requires browser API interception). |
+| Per-resource session rotation | Too granular (5 resources × 50 symbols = 250 sessions likely triggers rate-limiting). Per-symbol isolation is sweet spot. |
+| TradingView API keys | TradingView doesn't offer public API for retail users. |
+
+### Approval & Next Steps
+
+**Decision:** Pending user (dsanchor) review and approval.
+
+**If Approved:**
+1. Rusty implements Phase 1–2 (core changes)
+2. Basher validates with real TradingView access
+3. Monitor 403 rates for 1 week post-deployment
+4. Deploy Phase 3–4 if additional improvement needed
+
+**Alignment with Team Proposals:**
+
+Danny's "Per-Symbol Session Isolation" proposal prioritizes simpler per-symbol lifecycle (always fresh session per symbol). Linus's "TV Fetcher 403-Resilience Analysis" proposes hybrid with request-count thresholds.
+
+**Resolution:** Both converge on core strategy. Danny's simpler approach preferred for MVP implementation; Linus's threshold optimization can be Phase 5 enhancement if needed.
+
+### Related Files
+
+- `.squad/decisions/inbox/danny-anti403-strategy.md` (detailed Danny proposal)
+- `.squad/decisions/inbox/linus-anti403-implementation.md` (detailed Linus proposal)
+- `.squad/orchestration-log/2026-04-06T14-00-danny-antibot.md` (Danny task log)
+- `.squad/orchestration-log/2026-04-06T14-00-linus-antibot.md` (Linus task log)
+- `.squad/log/2026-04-06T14-00-anti403-strategy.md` (Session summary)
