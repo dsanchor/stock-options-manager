@@ -1541,6 +1541,95 @@ async def trigger_agent(request: Request, agent_type: str):
     return JSONResponse({"status": "triggered", "agent_type": agent_type, "symbol": symbol})
 
 
+# ---------------------------------------------------------------------------
+# Full analysis — sequential execution of all 4 agents
+# ---------------------------------------------------------------------------
+
+_FULL_ANALYSIS_AGENT_ORDER = [
+    "covered_call", "cash_secured_put", "open_call_monitor", "open_put_monitor"
+]
+
+
+def _default_full_analysis_status() -> dict:
+    return {"running": False, "current": None, "completed": [], "total": 4, "errors": []}
+
+
+def _run_all_agents_sequentially(scheduler, status: dict):
+    """Run all 4 agent types sequentially in a single thread."""
+    import asyncio
+    from src.covered_call_agent import run_covered_call_analysis
+    from src.cash_secured_put_agent import run_cash_secured_put_analysis
+    from src.open_call_monitor_agent import run_open_call_monitor
+    from src.open_put_monitor_agent import run_open_put_monitor
+
+    funcs = {
+        "covered_call": run_covered_call_analysis,
+        "cash_secured_put": run_cash_secured_put_analysis,
+        "open_call_monitor": run_open_call_monitor,
+        "open_put_monitor": run_open_put_monitor,
+    }
+
+    for agent_type in _FULL_ANALYSIS_AGENT_ORDER:
+        status["current"] = agent_type
+        try:
+            asyncio.run(funcs[agent_type](
+                scheduler.config, scheduler.runner,
+                scheduler.cosmos, scheduler.context_provider,
+            ))
+            status["completed"].append(agent_type)
+        except Exception as e:
+            logger.error("Full analysis error running %s: %s", agent_type, e)
+            status["errors"].append({"agent": agent_type, "error": str(e)})
+            status["completed"].append(agent_type)
+
+    status["running"] = False
+    status["current"] = None
+
+    # Auto-reset status after 30 seconds
+    def _reset():
+        import time
+        time.sleep(30)
+        status.clear()
+        status.update(_default_full_analysis_status())
+
+    threading.Thread(target=_reset, daemon=True).start()
+
+
+@app.post("/api/trigger-all")
+async def trigger_all_agents(request: Request):
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if scheduler is None or scheduler.config is None:
+        return JSONResponse(
+            {"error": "Scheduler not running — cannot trigger agents"},
+            status_code=503)
+
+    status = getattr(request.app.state, "_full_analysis_status", None)
+    if status and status.get("running"):
+        return JSONResponse(
+            {"error": "Full analysis already running", "status": status},
+            status_code=409)
+
+    status = _default_full_analysis_status()
+    status["running"] = True
+    request.app.state._full_analysis_status = status
+
+    thread = threading.Thread(
+        target=_run_all_agents_sequentially,
+        args=(scheduler, status),
+        daemon=True,
+    )
+    thread.start()
+    return JSONResponse({"status": "started"})
+
+
+@app.get("/api/trigger-all/status")
+async def trigger_all_status(request: Request):
+    status = getattr(request.app.state, "_full_analysis_status", None)
+    if status is None:
+        return JSONResponse(_default_full_analysis_status())
+    return JSONResponse(dict(status))
+
+
 # ===========================================================================
 # Chat
 # ===========================================================================

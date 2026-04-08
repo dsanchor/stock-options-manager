@@ -419,3 +419,10 @@ When adding inline actions to table rows with clickable row handlers, always use
 **Technical:** Posts to `/api/trigger/{agent_type}` with `{"symbol": "..."}` body. Uses `e.stopPropagation()` to prevent row navigation conflicts.
 
 **Ready for:** QA validation, production integration testing.
+
+## Learnings
+
+### Sequential Full Analysis Pattern (2026-07)
+The "Run Full Analysis" button now uses `POST /api/trigger-all` which runs all 4 agents sequentially in a single background thread. Progress is stored in `app.state._full_analysis_status` and polled via `GET /api/trigger-all/status`. The status dict auto-resets 30s after completion. The frontend disables all individual trigger buttons during a full run to prevent conflicts. This replaces the old pattern of firing 4 parallel `/api/trigger/{type}` calls from the frontend.
+
+**Files:** `web/app.py` (endpoints + worker), `web/static/app.js` (polling UI)

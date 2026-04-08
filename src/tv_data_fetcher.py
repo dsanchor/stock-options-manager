@@ -931,6 +931,15 @@ class TradingViewFetcher:
                 if result and not result.startswith("[ERROR:"):
                     return result
                 last_error = result
+            except HTTPError as e:
+                # 403s are already retried by _handle_403; re-raise so
+                # _timed_fetch can track the failure properly.
+                if e.response is not None and e.response.status_code == 403:
+                    raise
+                last_error = f"[ERROR: {e}]"
+                logger.warning(
+                    "%s attempt %d failed: %s", label, attempt + 1, e,
+                )
             except Exception as e:
                 last_error = f"[ERROR: {e}]"
                 logger.warning(
@@ -997,6 +1006,8 @@ class TradingViewFetcher:
                 result["fundamentals"] = data["fundamentals"]
             return json.dumps(result)
 
+        except HTTPError:
+            raise  # Let _timed_fetch handle 403s
         except Exception as e:
             logger.error("Failed to fetch overview for %s: %s", full_symbol, e)
             return json.dumps({"title": "STOCK OVERVIEW", "symbol": full_symbol,
@@ -1062,6 +1073,8 @@ class TradingViewFetcher:
                 result["pro_symbol"] = data["pro_symbol"]
             return json.dumps(result)
 
+        except HTTPError:
+            raise  # Let _timed_fetch handle 403s
         except Exception as e:
             logger.error("Failed to fetch technicals for %s: %s", full_symbol, e)
             return json.dumps({"title": "STOCK TECHNICALS", "symbol": full_symbol,
@@ -1127,6 +1140,8 @@ class TradingViewFetcher:
                 result["pro_symbol"] = data["pro_symbol"]
             return json.dumps(result)
 
+        except HTTPError:
+            raise  # Let _timed_fetch handle 403s
         except Exception as e:
             logger.error("Failed to fetch forecast for %s: %s", full_symbol, e)
             return json.dumps({"title": "STOCK FORECAST", "symbol": full_symbol,
@@ -1188,6 +1203,8 @@ class TradingViewFetcher:
                 result["pro_symbol"] = data["pro_symbol"]
             return json.dumps(result)
 
+        except HTTPError:
+            raise  # Let _timed_fetch handle 403s
         except Exception as e:
             logger.error("Failed to fetch dividends for %s: %s", full_symbol, e)
             return json.dumps({"title": "STOCK DIVIDENDS", "symbol": full_symbol,

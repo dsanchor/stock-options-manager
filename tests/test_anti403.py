@@ -559,8 +559,8 @@ class TestFetchAllIntegration:
 
     @pytest.mark.asyncio
     async def test_fetch_all_403_returns_errors_in_resources(self):
-        """When all 403 retries are exhausted, each resource should contain
-        error information in its result string."""
+        """When all 403 retries are exhausted, _timed_fetch catches the
+        HTTPError, marks the resource as failed, and sets tv_403=True."""
         from src.tv_data_fetcher import TradingViewFetcher
 
         fetcher = TradingViewFetcher(
@@ -580,14 +580,21 @@ class TestFetchAllIntegration:
              patch("asyncio.sleep", side_effect=_noop_sleep):
             result = await fetcher.fetch_all("NASDAQ-AAPL")
 
-        # Each BS4 resource that hit 403 should have error in its JSON result
-        # NOTE: _handle_403 raises HTTPError → caught by fetch_overview's
-        # try/except → returned as JSON with "error" key. The _timed_fetch
-        # HTTPError path (which sets _has_403["blocked"]) is currently
-        # unreachable because individual fetch methods catch the error first.
-        # This is worth flagging to Rusty for Phase 2 completion.
+        # HTTPError(403) now propagates to _timed_fetch which sets
+        # the "No valid response" fallback and tracks the failure.
         for resource in ["overview", "technicals", "forecast", "dividends"]:
             val = result[resource]
             assert isinstance(val, str), f"{resource} should be a string"
-            assert "error" in val.lower(), \
-                f"{resource} should contain error info after 403 exhaustion"
+            assert "no valid response" in val.lower(), \
+                f"{resource} should contain fallback text after 403 exhaustion"
+
+        # tv_403 flag and resources list must be set
+        assert result["tv_403"] is True, "tv_403 should be True when 403s occurred"
+        assert set(result["tv_403_resources"]) == {
+            "overview", "technicals", "forecast", "dividends"
+        }, "All 4 BS4 resources should be in tv_403_resources"
+
+        # Fetch stats should record errors
+        for resource in ["overview", "technicals", "forecast", "dividends"]:
+            assert fetcher.last_fetch_stats[resource]["error"] is True, \
+                f"{resource} fetch stats should have error=True"

@@ -93,52 +93,86 @@ document.addEventListener('DOMContentLoaded', function() {
     // ── Run Full Analysis button ──
     var runFullBtn = document.getElementById('run-full-analysis');
     if (runFullBtn) {
+        var _fullAnalysisOrigText = runFullBtn.textContent;
+
+        function _setIndividualButtons(disabled) {
+            document.querySelectorAll('.btn-trigger[data-agent]').forEach(function(b) {
+                b.disabled = disabled;
+            });
+            document.querySelectorAll('.btn-trigger-row[data-agent]').forEach(function(b) {
+                b.disabled = disabled;
+            });
+        }
+
+        function _pollFullAnalysis() {
+            fetch('/api/trigger-all/status')
+                .then(function(res) { return res.json(); })
+                .then(function(s) {
+                    if (s.running) {
+                        var done = s.completed ? s.completed.length : 0;
+                        var label = s.current || '…';
+                        runFullBtn.textContent = '⏳ Running ' + (done + 1) + '/' + s.total + ': ' + label + '…';
+                        setTimeout(_pollFullAnalysis, 4000);
+                    } else {
+                        var completed = s.completed ? s.completed.length : 0;
+                        var errors = s.errors ? s.errors.length : 0;
+                        if (errors > 0) {
+                            runFullBtn.textContent = '⚠ Done (' + (completed - errors) + '/' + s.total + ', ' + errors + ' error' + (errors > 1 ? 's' : '') + ')';
+                            runFullBtn.classList.remove('running');
+                            runFullBtn.classList.add('error');
+                        } else {
+                            runFullBtn.textContent = '✓ Complete (' + completed + '/' + s.total + ')';
+                            runFullBtn.classList.remove('running');
+                            runFullBtn.classList.add('done');
+                        }
+                        setTimeout(function() {
+                            runFullBtn.textContent = _fullAnalysisOrigText;
+                            runFullBtn.disabled = false;
+                            runFullBtn.classList.remove('running', 'done', 'error');
+                            _setIndividualButtons(false);
+                        }, 5000);
+                    }
+                })
+                .catch(function() {
+                    setTimeout(_pollFullAnalysis, 5000);
+                });
+        }
+
         runFullBtn.addEventListener('click', function(e) {
             e.stopPropagation();
-            var agents = ['covered_call', 'cash_secured_put', 'open_call_monitor', 'open_put_monitor'];
-            var originalText = runFullBtn.textContent;
-            
             runFullBtn.disabled = true;
-            runFullBtn.textContent = '⏳ Running...';
+            runFullBtn.textContent = '⏳ Starting…';
             runFullBtn.classList.add('running');
-            
-            var success = 0;
-            var failed = 0;
-            
-            // Sequential execution using promise chain
-            agents.reduce(function(promise, agentType, index) {
-                return promise.then(function() {
-                    runFullBtn.textContent = '⏳ Running... (' + (index + 1) + '/' + agents.length + ')';
-                    return fetch('/api/trigger/' + agentType, { method: 'POST' })
-                        .then(function(resp) {
-                            if (resp.ok) {
-                                success++;
-                            } else {
-                                failed++;
-                            }
-                        })
-                        .catch(function() {
-                            failed++;
-                        });
+            _setIndividualButtons(true);
+
+            fetch('/api/trigger-all', { method: 'POST' })
+                .then(function(res) { return res.json(); })
+                .then(function(data) {
+                    if (data.status === 'started') {
+                        setTimeout(_pollFullAnalysis, 3000);
+                    } else {
+                        runFullBtn.textContent = '✗ ' + (data.error || 'Error');
+                        runFullBtn.classList.remove('running');
+                        runFullBtn.classList.add('error');
+                        setTimeout(function() {
+                            runFullBtn.textContent = _fullAnalysisOrigText;
+                            runFullBtn.disabled = false;
+                            runFullBtn.classList.remove('error');
+                            _setIndividualButtons(false);
+                        }, 4000);
+                    }
+                })
+                .catch(function() {
+                    runFullBtn.textContent = '✗ Network error';
+                    runFullBtn.classList.remove('running');
+                    runFullBtn.classList.add('error');
+                    setTimeout(function() {
+                        runFullBtn.textContent = _fullAnalysisOrigText;
+                        runFullBtn.disabled = false;
+                        runFullBtn.classList.remove('error');
+                        _setIndividualButtons(false);
+                    }, 4000);
                 });
-            }, Promise.resolve())
-            .then(function() {
-                runFullBtn.textContent = '✓ Complete (' + success + '/' + agents.length + ')';
-                runFullBtn.classList.remove('running');
-                runFullBtn.classList.add('done');
-            })
-            .catch(function() {
-                runFullBtn.textContent = '✗ Error';
-                runFullBtn.classList.remove('running');
-                runFullBtn.classList.add('error');
-            })
-            .finally(function() {
-                setTimeout(function() {
-                    runFullBtn.textContent = originalText;
-                    runFullBtn.disabled = false;
-                    runFullBtn.classList.remove('running', 'done', 'error');
-                }, 3000);
-            });
         });
     }
 });
