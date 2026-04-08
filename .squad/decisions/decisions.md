@@ -1351,3 +1351,31 @@ Implemented Danny's 4-phase anti-403 architecture to make TradingView data fetch
 - `.squad/orchestration-log/2026-04-06T14-10-rusty-anti403.md` (Rusty task log)
 - `.squad/orchestration-log/2026-04-06T14-10-basher-anti403.md` (Basher task log)
 - `.squad/log/2026-04-06T14-10-anti403-implementation.md` (Session summary)
+
+---
+
+## User Directive: Activity Retention on Watchlist Disable
+**Date:** 2026-04-06  
+**Author:** dsanchor (via Copilot)  
+**Status:** Guideline for future work  
+**Impact:** Feature implementation — position/watchlist management
+
+When calls or puts watching are disabled, or a position is opened from an alert, **disable watching only** — do NOT delete activities. Activities have a 30-day TTL via CosmosDB, so database bloat is not a risk. This preserves audit trail and operational history for debugging and analysis.
+
+---
+
+## Error Count Metric Addition
+**Date:** 2026-04-08  
+**Author:** Rusty (Agent Dev)  
+**Status:** ✅ Implemented  
+**Impact:** Dashboard — runtime telemetry visibility
+
+Added error_count tracking to TradingView fetch runtime statistics. Errors tracked across 1-day, 7-day, and 30-day windows. Dashboard updated with "Errors" column using conditional formatting (green ≤5, red >5).
+
+**Files Modified:**
+- `src/cosmos_db.py` — Error count aggregation logic
+- `web/templates/settings_runtime.html` — Error column UI
+
+**Benefits:**
+- Operator visibility into fetch reliability trends
+- Early detection of systematic issues via dashboard color coding

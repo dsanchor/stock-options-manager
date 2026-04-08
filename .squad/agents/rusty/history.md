@@ -343,3 +343,36 @@ When displaying time-series data with multiple types (alerts, activities, events
 - API error handling: ValueError→404, RuntimeError→503, Exception→500
 - UI inline edit: click-to-show textarea + Save/Cancel buttons, `e.stopPropagation()` to avoid row toggle
 - Notes exclusion added to expandable row click handler to prevent accidental toggling
+
+## Learnings
+
+### Error Count Metric for TradingView Fetch Stats (2026-07-13)
+**Context:** Added error tracking to runtime telemetry UI. Error flag already exists in CosmosDB telemetry docs (written by `agent_runner.py`).
+
+**Changes made:**
+- `src/cosmos_db.py` — `get_telemetry_stats()`:
+  - Added `"error_count": 0` to `_empty_tv_buckets()` initialization
+  - In aggregation loop, read `doc.get("error", False)` and increment `b["error_count"]` when True
+  - Included `"error_count"` in final TV stats dict output
+- `web/templates/settings_runtime.html`:
+  - Added "Errors" column to TradingView Fetch Stats table
+  - Display format: `today_errors / 7d_errors / 30d_errors` (e.g., "0 / 2 / 5")
+  - Red color (#e74c3c) when any errors present, green (#27ae60) when all zero
+
+**Pattern:** Telemetry metric aggregation follows bucket→accumulate→compute pattern. New metrics require initialization in `_empty_*_buckets()`, accumulation in doc loop, and inclusion in final stats dict.
+
+### Error Count Metric Addition (2026-04-08T12:55:00Z)
+**Status:** ✅ Completed  
+**Timestamp:** 2026-04-08T12:55:00Z  
+**Scope:** Spawn manifest execution (1 task)
+
+**Task:** Add error count metric to TradingView fetch runtime stats
+
+**Files:**
+- `src/cosmos_db.py` — Error count aggregation and telemetry tracking
+- `web/templates/settings_runtime.html` — Dashboard UI for error metrics
+
+**Summary:**
+Extended `_aggregate_runtime_stats()` method to track error counts across daily, 7-day, and 30-day windows. Telemetry buckets now include `error_count` field alongside response_time and success_count. Dashboard "Errors" column displays today/7d/30d counts with conditional color coding (green ≤5, red >5) for at-a-glance operator visibility into fetch reliability.
+
+**Pattern:** Consistent with existing telemetry patterns (response_time, success_count). Error aggregation follows same bucket strategy.
