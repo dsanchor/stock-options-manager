@@ -3,7 +3,8 @@
 // ── Clickable table rows ──
 document.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('.clickable-row[data-href]').forEach(function(row) {
-        row.addEventListener('click', function() {
+        row.addEventListener('click', function(e) {
+            if (e.target.closest('.btn-trigger-row')) return;
             window.location.href = this.dataset.href;
         });
     });
