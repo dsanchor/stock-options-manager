@@ -165,7 +165,7 @@ class Config:
     @property
     def tradingview_retry_delays(self) -> list:
         """Backoff delays in seconds between 403 retries (default: [5, 15, 45])."""
-        return list(self.config.get('tradingview', {}).get('retry_delays', [5, 15, 45]))
+        return list(self.config.get('tradingview', {}).get('retry_delays', [10, 30, 90]))
 
     @property
     def tradingview_randomize_symbols(self) -> bool:

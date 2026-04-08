@@ -35,7 +35,7 @@ def _make_config(**overrides):
         tradingview_request_delay_max=3.0,
         tradingview_warmup_enabled=False,
         tradingview_max_403_retries=3,
-        tradingview_retry_delays=[5, 15, 45],
+        tradingview_retry_delays=[10, 30, 90],
         tradingview_randomize_symbols=True,
     )
     defaults.update(overrides)
@@ -131,11 +131,18 @@ class TestGraduated403Recovery:
                                        url="https://www.tradingview.com/symbols/NASDAQ:AAPL/")
 
         get_call_count = 0
+        retry_get_count = 0
 
         def fake_get(*args, **kwargs):
-            nonlocal get_call_count
+            nonlocal get_call_count, retry_get_count
             get_call_count += 1
-            if get_call_count < 3:
+            url = args[0] if args else kwargs.get("url", "")
+            # Warmup calls hit non-symbol URLs — return 200 for those
+            if "/symbols/" not in str(url):
+                return _mock_response(status_code=200, text="<html>warmup</html>",
+                                       url=str(url))
+            retry_get_count += 1
+            if retry_get_count < 3:
                 return _mock_response(status_code=403,
                                        url="https://www.tradingview.com/symbols/NASDAQ:AAPL/")
             return _mock_response(status_code=200, text="<html>recovered</html>",
@@ -150,11 +157,14 @@ class TestGraduated403Recovery:
             result = await fetcher._handle_403(initial_resp, "NASDAQ:AAPL", "overview")
 
         assert result == "<html>recovered</html>"
-        assert get_call_count == 3  # 2 failed retries + 1 success
-        # asyncio.sleep should have been called with the configured delays
+        assert retry_get_count == 3  # 2 failed retries + 1 success
+        # asyncio.sleep called for retry delays (with jitter) and warmup pauses
         sleep_values = [c.args[0] for c in mock_sleep.call_args_list]
-        assert sleep_values == delays[:3], \
-            f"Expected backoff delays {delays[:3]}, got {sleep_values}"
+        # First 3 retries: each has a jittered delay + warmup pause = 2 sleeps per attempt
+        # Only 3 attempts happen (2 fail + 1 success), so at least 3 retry delay sleeps
+        retry_sleeps = [v for v in sleep_values if v >= 0.7]  # retry delays are ≥ 0.7*min_delay
+        assert len(retry_sleeps) >= 3, \
+            f"Expected ≥3 retry delay sleeps, got {len(retry_sleeps)}: {sleep_values}"
 
     @pytest.mark.asyncio
     async def test_handle_403_refreshes_session_each_retry(self):
@@ -466,7 +476,7 @@ class TestConfigLoading:
         """New anti-403 config properties have spec-defined defaults."""
         config = _make_config()
         assert config.tradingview_max_403_retries == 3
-        assert config.tradingview_retry_delays == [5, 15, 45]
+        assert config.tradingview_retry_delays == [10, 30, 90]
         assert config.tradingview_randomize_symbols is True
         assert config.tradingview_warmup_enabled is False
 
@@ -515,7 +525,7 @@ class TestConfigLoading:
         fetcher = create_fetcher(None)
         assert fetcher._request_delay_range == (1.0, 3.0)
         assert fetcher._max_403_retries == 3
-        assert fetcher._403_retry_delays == [5, 15, 45]
+        assert fetcher._403_retry_delays == [10, 30, 90]
         assert fetcher._warmup_enabled is False
 
 

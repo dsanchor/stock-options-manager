@@ -29,18 +29,44 @@ logger = logging.getLogger(__name__)
 # ======================================================================
 
 _USER_AGENTS = [
-    # Chrome on Windows 11
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    # Chrome on Windows 11 (recent versions)
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
     # Chrome on macOS
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-    # Edge on Windows
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
-    # Firefox on Windows
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+    # Edge on Windows (recent)
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36 Edg/137.0.0.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36 Edg/136.0.0.0",
+    # Firefox on Windows (recent)
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:139.0) Gecko/20100101 Firefox/139.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:138.0) Gecko/20100101 Firefox/138.0",
+    # Firefox on macOS
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:139.0) Gecko/20100101 Firefox/139.0",
     # Safari on macOS
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Safari/605.1.15",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15",
+]
+
+_ACCEPT_LANGUAGES = [
+    "en-US,en;q=0.9",
+    "en-US,en;q=0.9,es;q=0.8",
+    "en-GB,en;q=0.9,en-US;q=0.8",
+    "en-US,en;q=0.9,fr;q=0.8",
+    "en-US,en;q=0.9,de;q=0.8",
+    "en,en-US;q=0.9",
+]
+
+# Pages visited during warmup to simulate organic browsing
+_WARMUP_PATHS = [
+    "/",
+    "/markets/",
+    "/markets/stocks-usa/",
+    "/screener/",
+    "/chart/",
 ]
 
 def _get_random_headers() -> dict:
@@ -49,7 +75,7 @@ def _get_random_headers() -> dict:
     headers = {
         "User-Agent": ua,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Language": random.choice(_ACCEPT_LANGUAGES),
         "Accept-Encoding": "gzip, deflate, br, zstd",
         "Connection": "keep-alive",
         "Upgrade-Insecure-Requests": "1",
@@ -60,13 +86,21 @@ def _get_random_headers() -> dict:
         "Cache-Control": "max-age=0",
     }
     
-    # Add Chrome-specific headers for Chrome UAs
-    if "Chrome" in ua and "Edg" not in ua:
-        # Extract Chrome version from UA
-        chrome_version = "131"
+    # Randomly add DNT header (~40% of users)
+    if random.random() < 0.4:
+        headers["DNT"] = "1"
+    
+    # Browser-specific headers
+    if "Chrome" in ua:
+        chrome_version = "137"
         if "Chrome/" in ua:
             chrome_version = ua.split("Chrome/")[1].split(".")[0]
-        headers["sec-ch-ua"] = f'"Chromium";v="{chrome_version}", "Google Chrome";v="{chrome_version}", "Not(A:Brand";v="99"'
+        
+        if "Edg" in ua:
+            edge_version = ua.split("Edg/")[1].split(".")[0]
+            headers["sec-ch-ua"] = f'"Microsoft Edge";v="{edge_version}", "Chromium";v="{chrome_version}", "Not?A_Brand";v="99"'
+        else:
+            headers["sec-ch-ua"] = f'"Chromium";v="{chrome_version}", "Google Chrome";v="{chrome_version}", "Not?A_Brand";v="99"'
         headers["sec-ch-ua-mobile"] = "?0"
         headers["sec-ch-ua-platform"] = '"Windows"' if "Windows" in ua else '"macOS"'
     
@@ -756,7 +790,7 @@ class TradingViewFetcher:
         self._request_delay_range = request_delay_range
         self._last_request_time = 0
         self._max_403_retries = max_403_retries
-        self._403_retry_delays = retry_delays or [5, 15, 45]
+        self._403_retry_delays = retry_delays or [10, 30, 90]
         self._warmup_enabled = warmup_enabled
         
         # Set initial headers for session
@@ -816,7 +850,7 @@ class TradingViewFetcher:
         logger.info("Session refreshed with new headers")
 
     async def _handle_403(self, resp, full_symbol: str, resource: str) -> str:
-        """Graduated 403 recovery: backoff + session refresh between retries.
+        """Graduated 403 recovery: jittered backoff + session refresh + warmup.
         
         Returns the successful response text, or raises HTTPError after
         all retries are exhausted.
@@ -824,17 +858,35 @@ class TradingViewFetcher:
         url = resp.url
         for attempt in range(self._max_403_retries):
             delay_idx = min(attempt, len(self._403_retry_delays) - 1)
-            delay = self._403_retry_delays[delay_idx]
+            base_delay = self._403_retry_delays[delay_idx]
+            # Add ±30% jitter so retries aren't predictable
+            delay = base_delay * random.uniform(0.7, 1.3)
             logger.warning(
-                "403 on %s for %s — retry %d/%d in %ds with session refresh",
+                "403 on %s for %s — retry %d/%d in %.0fs with session refresh + warmup",
                 resource, full_symbol, attempt + 1, self._max_403_retries, delay,
             )
             await asyncio.sleep(delay)
             self._refresh_session()
 
+            # Warmup: visit a random TradingView page to establish cookies
+            try:
+                warmup_path = random.choice(_WARMUP_PATHS)
+                warmup_headers = _get_random_headers()
+                self._session.get(
+                    f"https://www.tradingview.com{warmup_path}",
+                    headers=warmup_headers,
+                    timeout=15,
+                )
+                await asyncio.sleep(random.uniform(1.0, 3.0))
+                logger.debug("403 retry warmup via %s completed", warmup_path)
+            except Exception:
+                logger.debug("403 retry warmup failed (non-fatal)")
+
             try:
                 headers = _get_random_headers()
-                headers["Referer"] = "https://www.tradingview.com/"
+                # Vary Sec-Fetch-Site to look like internal navigation
+                headers["Sec-Fetch-Site"] = "same-origin"
+                headers["Referer"] = f"https://www.tradingview.com{random.choice(_WARMUP_PATHS)}"
                 retry_resp = self._session.get(url, headers=headers, timeout=15)
                 if retry_resp.status_code != 403:
                     retry_resp.raise_for_status()
@@ -850,16 +902,19 @@ class TradingViewFetcher:
         resp.raise_for_status()
 
     async def _warmup(self):
-        """Visit TradingView homepage to establish organic cookies."""
+        """Visit random TradingView pages to establish organic cookies."""
         try:
-            headers = _get_random_headers()
-            self._session.get(
-                "https://www.tradingview.com/",
-                headers=headers,
-                timeout=15,
-            )
-            await asyncio.sleep(random.uniform(1.0, 2.5))
-            logger.info("Homepage warm-up completed")
+            # Visit 1-2 random pages for a more organic browsing pattern
+            pages = random.sample(_WARMUP_PATHS, k=min(2, len(_WARMUP_PATHS)))
+            for path in pages:
+                headers = _get_random_headers()
+                self._session.get(
+                    f"https://www.tradingview.com{path}",
+                    headers=headers,
+                    timeout=15,
+                )
+                await asyncio.sleep(random.uniform(1.0, 3.0))
+            logger.info("Homepage warm-up completed (%d pages)", len(pages))
         except Exception as e:
             logger.warning("Homepage warm-up failed (non-fatal): %s", e)
 
@@ -903,9 +958,9 @@ class TradingViewFetcher:
             # Apply rate limiting before request
             self._apply_rate_limiting()
             
-            # Refresh headers with new random User-Agent for variety
             headers = _get_random_headers()
             headers["Referer"] = "https://www.tradingview.com/"
+            headers["Sec-Fetch-Site"] = "same-origin"
             
             resp = self._session.get(url, headers=headers, timeout=15)
             if resp.status_code == 403:
@@ -956,6 +1011,7 @@ class TradingViewFetcher:
             
             headers = _get_random_headers()
             headers["Referer"] = f"https://www.tradingview.com/symbols/{full_symbol}/"
+            headers["Sec-Fetch-Site"] = "same-origin"
             
             resp = self._session.get(url, headers=headers, timeout=15)
             if resp.status_code == 403:
@@ -1020,6 +1076,7 @@ class TradingViewFetcher:
             
             headers = _get_random_headers()
             headers["Referer"] = f"https://www.tradingview.com/symbols/{full_symbol}/technicals/"
+            headers["Sec-Fetch-Site"] = "same-origin"
             
             resp = self._session.get(url, headers=headers, timeout=15)
             if resp.status_code == 403:
@@ -1084,6 +1141,7 @@ class TradingViewFetcher:
             
             headers = _get_random_headers()
             headers["Referer"] = f"https://www.tradingview.com/symbols/{full_symbol}/forecast/"
+            headers["Sec-Fetch-Site"] = "same-origin"
             
             resp = self._session.get(url, headers=headers, timeout=15)
             if resp.status_code == 403:
