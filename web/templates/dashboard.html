@@ -32,15 +32,6 @@
         <div class="summary-value">{{ position_count }}</div>
         <div class="summary-label">Open Positions</div>
     </div>
-    <div class="summary-card tv-health-card">
-        {% if tv_health.is_healthy %}
-        <div class="summary-value"><span class="health-dot health-green">●</span></div>
-        <div class="summary-label">Trading View</div>
-        {% else %}
-        <div class="summary-value"><span class="health-dot health-red">●</span></div>
-        <div class="summary-label">Trading View</div>
-        {% endif %}
-    </div>
 </div>
 
 <!-- Scheduler info -->
@@ -137,6 +128,9 @@
             <div class="activity-time">{{ item.timestamp[:19] }}</div>
             {% if item.is_alert %}
             <span class="alert-indicator" title="Alert">📢</span>
+            {% endif %}
+            {% if item.data_error %}
+            <span class="data-error-indicator" title="Partial data — some TradingView resources returned 403">⚠️</span>
             {% endif %}
             <span class="badge badge-{{ item.activity | lower if item.activity else 'info' }}">{{ item.activity or "N/A" }}</span>
             <span class="activity-agent">{{ item._agent_label }}</span>

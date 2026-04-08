@@ -868,12 +868,9 @@ class TradingViewFetcher:
 
         ``fetch_coro_factory`` is a no-arg callable that returns a new
         awaitable each time (needed because coroutines are single-use).
-        Skips retries if a 403 has already been detected for this symbol.
         """
         last_error = None
         for attempt in range(1 + len(self._RETRY_DELAYS)):
-            if _has_403 and _has_403.get("blocked"):
-                return last_error or "[ERROR: TradingView 403 Forbidden — skipped]"
             try:
                 result = await fetch_coro_factory()
                 if result and not result.startswith("[ERROR:"):
@@ -884,8 +881,6 @@ class TradingViewFetcher:
                 logger.warning(
                     "%s attempt %d failed: %s", label, attempt + 1, e,
                 )
-                if _has_403 and _has_403.get("blocked"):
-                    return last_error
 
             if attempt < len(self._RETRY_DELAYS):
                 delay = self._RETRY_DELAYS[attempt]
@@ -1301,9 +1296,11 @@ class TradingViewFetcher:
         """Fetch all data for a symbol.
 
         Returns dict with keys: overview, technicals, forecast, dividends,
-        options_chain, and tv_403 (bool indicating if 403 was unrecoverable).
+        options_chain, tv_403 (bool — True if ANY resource got 403), and
+        tv_403_resources (list of resource names that got 403).
+        Each resource is fetched independently — a 403 on one does NOT
+        block the others.
         Timing stats are stored in ``self.last_fetch_stats``.
-        403 state is local to this call — no instance-level side effects.
         """
         # Convert NYSE-MO → NYSE:MO for TradingView URLs
         full_symbol = symbol.replace("-", ":")
@@ -1311,9 +1308,8 @@ class TradingViewFetcher:
         logger.info("Pre-fetching TradingView data for %s", symbol)
 
         self.last_fetch_stats: dict[str, dict] = {}
-        # Local 403 state — mutable dict so inner functions can update it
-        _has_403 = {"blocked": False}
-        _skip_placeholder = "[SKIPPED: TradingView 403 — fetch aborted]"
+        # Track which individual resources hit unrecoverable 403
+        _failed_resources: list[str] = []
 
         # Optional homepage warm-up
         if self._warmup_enabled:
@@ -1321,23 +1317,23 @@ class TradingViewFetcher:
 
         # Helper that wraps a single fetch with timing
         async def _timed_fetch(resource: str, factory, label: str) -> str:
-            if _has_403["blocked"]:
-                logger.warning("Skipping %s — TradingView 403 already detected", label)
-                return _skip_placeholder
+            has_error = False
             start = time.time()
             try:
-                result = await self._with_retry(factory, label, _has_403)
+                result = await self._with_retry(factory, label)
             except HTTPError as e:
                 if e.response is not None and e.response.status_code == 403:
-                    _has_403["blocked"] = True
+                    _failed_resources.append(resource)
                     logger.error("Unrecoverable 403 on %s for %s", resource, full_symbol)
-                    result = f"[ERROR: TradingView 403 Forbidden on {resource}]"
+                    result = f"No valid response for {resource} resource"
+                    has_error = True
                 else:
                     raise
             duration = time.time() - start
             self.last_fetch_stats[resource] = {
                 "duration": round(duration, 2),
                 "size": len(result),
+                "error": has_error,
             }
             return result
 
@@ -1382,7 +1378,8 @@ class TradingViewFetcher:
             "forecast": forecast,
             "dividends": dividends,
             "options_chain": options_chain,
-            "tv_403": _has_403["blocked"],
+            "tv_403": len(_failed_resources) > 0,
+            "tv_403_resources": _failed_resources,
         }
 
 

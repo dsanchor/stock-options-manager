@@ -543,7 +543,7 @@ class TestFetchAllIntegration:
             result = await fetcher.fetch_all("NASDAQ-AAPL")
 
         expected_keys = {"overview", "technicals", "forecast", "dividends",
-                         "options_chain", "tv_403"}
+                         "options_chain", "tv_403", "tv_403_resources"}
         assert set(result.keys()) == expected_keys, \
             f"fetch_all must return all resource keys, got {set(result.keys())}"
 

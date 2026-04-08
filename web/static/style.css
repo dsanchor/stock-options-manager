@@ -146,11 +146,8 @@ code { font-family: var(--font-mono); background: var(--bg-input); padding: 2px 
 }
 .summary-label { color: var(--text-muted); font-size: 0.8rem; margin-top: 0.25rem; }
 
-/* Health status indicator */
-.health-dot { font-size: 2.4rem; line-height: 1; }
-.health-green { color: #22c55e; }
-.health-red { color: #ef4444; }
-.tv-health-card .summary-label { font-weight: 600; }
+/* Data error indicator in activity feed */
+.data-error-indicator { cursor: help; margin-right: 0.15rem; }
 
 /* ── Scheduler bar ── */
 .scheduler-bar {

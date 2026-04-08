@@ -404,6 +404,9 @@
                         {% if d.is_alert %}
                         <span class="alert-indicator" title="Alert">📢</span>
                         {% endif %}
+                        {% if d.data_error %}
+                        <span class="data-error-indicator" title="Partial data — some TradingView resources returned 403">⚠️</span>
+                        {% endif %}
                         <span class="badge badge-{{ (d.activity | default('UNKNOWN', true)) | lower }}">{{ d.activity | default("—", true) }}</span>
                     </td>
                     <td class="mono">

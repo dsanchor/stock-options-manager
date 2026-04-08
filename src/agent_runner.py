@@ -251,32 +251,15 @@ class AgentRunner:
             # Pre-fetch all TradingView data
             data = await fetcher.fetch_all(full_symbol)
 
-            # ── 403 guard: skip agent if TradingView blocked us ───────
-            if data.get("tv_403", False):
+            # Track partial 403 errors — analysis continues with available data
+            has_data_error = data.get("tv_403", False)
+            if has_data_error:
+                failed = data.get("tv_403_resources", [])
                 logger.warning(
-                    "TradingView 403 detected for %s — skipping agent analysis",
-                    full_symbol,
+                    "TradingView 403 on %s for %s — continuing with partial data",
+                    failed, full_symbol,
                 )
-                print(f"⛔ TradingView 403 for {full_symbol} — agent skipped")
-                cosmos.update_tv_health(is_healthy=False, error="403 Forbidden")
-                cosmos.write_activity(
-                    symbol=symbol,
-                    agent_type=agent_type,
-                    activity_data={
-                        "symbol": symbol,
-                        "exchange": exchange,
-                        "timestamp": analysis_ts,
-                        "is_alert": False,
-                        "activity": "SKIPPED",
-                        "summary": "TradingView returned 403 — agent execution skipped",
-                        "tv_403": True,
-                    },
-                    timestamp=analysis_ts,
-                )
-                return
-
-            # Mark TradingView as healthy on successful fetch
-            cosmos.update_tv_health(is_healthy=True)
+                print(f"⚠️ TradingView 403 on {failed} for {full_symbol} — continuing with partial data")
 
             message = f"""Analyze {symbol} (exchange: {exchange}, full symbol: {full_symbol}).
 
@@ -343,6 +326,10 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
             # Determine if this is an alert (anything NOT wait/hold/do_nothing)
             is_alert = self._is_alert(response_text, json_data)
             activity_payload["is_alert"] = is_alert
+
+            # Flag partial data when any TradingView resource returned 403
+            if has_data_error:
+                activity_payload["data_error"] = True
             
             # If alert, merge alert-enrichment fields into activity payload
             if is_alert:
@@ -408,6 +395,7 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
                     "resource": resource,
                     "duration_seconds": stats["duration"],
                     "response_size_chars": stats["size"],
+                    "error": stats.get("error", False),
                 })
             cosmos.write_telemetry("agent_run", {
                 "symbol": symbol,
@@ -472,35 +460,15 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
 
             data = await fetcher.fetch_all(full_symbol)
 
-            # ── 403 guard: skip agent if TradingView blocked us ───────
-            if data.get("tv_403", False):
+            # Track partial 403 errors — analysis continues with available data
+            has_data_error = data.get("tv_403", False)
+            if has_data_error:
+                failed = data.get("tv_403_resources", [])
                 logger.warning(
-                    "TradingView 403 detected for %s — skipping position monitor",
-                    full_symbol,
+                    "TradingView 403 on %s for %s — continuing with partial data",
+                    failed, full_symbol,
                 )
-                print(f"⛔ TradingView 403 for {full_symbol} — monitor skipped")
-                cosmos.update_tv_health(is_healthy=False, error="403 Forbidden")
-                cosmos.write_activity(
-                    symbol=symbol,
-                    agent_type=agent_type,
-                    activity_data={
-                        "symbol": symbol,
-                        "exchange": exchange,
-                        "current_strike": strike,
-                        "current_expiration": expiration,
-                        "position_id": position_id,
-                        "timestamp": analysis_ts,
-                        "is_alert": False,
-                        "activity": "SKIPPED",
-                        "summary": "TradingView returned 403 — monitor execution skipped",
-                        "tv_403": True,
-                    },
-                    timestamp=analysis_ts,
-                )
-                return
-
-            # Mark TradingView as healthy on successful fetch
-            cosmos.update_tv_health(is_healthy=True)
+                print(f"⚠️ TradingView 403 on {failed} for {full_symbol} — continuing with partial data")
 
             message = f"""Analyze open {position_type} position for {symbol}:
 - Current strike: ${strike}
@@ -584,6 +552,10 @@ Analyze the position risk and output your activity in the required JSON format. 
             # Determine if this is an alert (anything NOT wait/hold/do_nothing)
             is_alert = self._is_alert(response_text, json_data)
             activity_payload["is_alert"] = is_alert
+
+            # Flag partial data when any TradingView resource returned 403
+            if has_data_error:
+                activity_payload["data_error"] = True
             
             # If alert, merge alert-enrichment fields into activity payload
             if is_alert:
@@ -658,6 +630,7 @@ Analyze the position risk and output your activity in the required JSON format. 
                     "resource": resource,
                     "duration_seconds": stats["duration"],
                     "response_size_chars": stats["size"],
+                    "error": stats.get("error", False),
                 })
             cosmos.write_telemetry("agent_run", {
                 "symbol": symbol,
