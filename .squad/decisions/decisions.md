@@ -1379,3 +1379,13 @@ Added error_count tracking to TradingView fetch runtime statistics. Errors track
 **Benefits:**
 - Operator visibility into fetch reliability trends
 - Early detection of systematic issues via dashboard color coding
+
+---
+
+## User Directive: Sequential Analysis
+**Date:** 2026-04-08T15:22Z
+**Author:** dsanchor (via Copilot)
+**Status:** 📋 Captured
+
+When running the full analysis, do not trigger all four agent blocks in parallel. Run each block sequentially — one at a time, waiting for each to complete before starting the next.
+
