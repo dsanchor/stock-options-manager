@@ -376,3 +376,46 @@ When displaying time-series data with multiple types (alerts, activities, events
 Extended `_aggregate_runtime_stats()` method to track error counts across daily, 7-day, and 30-day windows. Telemetry buckets now include `error_count` field alongside response_time and success_count. Dashboard "Errors" column displays today/7d/30d counts with conditional color coding (green ≤5, red >5) for at-a-glance operator visibility into fetch reliability.
 
 **Pattern:** Consistent with existing telemetry patterns (response_time, success_count). Error aggregation follows same bucket strategy.
+
+### Row-Level Play Buttons on Dashboard (2026-04-07)
+**Status:** ✅ Completed  
+**Files:**
+- `web/templates/dashboard.html` — Added play button column to agent tables
+- `web/static/app.js` — Added row-level trigger button event handler
+- `web/static/style.css` — Added `.btn-trigger-row` compact button styling
+
+**Implementation:**
+Added individual "▶" play button to each row in all agent tables on the main dashboard. Allows users to trigger single-symbol analysis without navigating away from the dashboard.
+
+**Key design decisions:**
+- **Column placement:** New empty-header column at far right of each table
+- **Button class:** `.btn-trigger-row` (separate from header `.btn-trigger` to avoid handler conflicts)
+- **Compact styling:** Smaller padding (0.15rem 0.4rem), smaller font (0.7rem), just the ▶ icon
+- **Same color scheme:** Uses `var(--accent-green)` matching header trigger buttons
+- **State transitions:** ▶ → ⏳ (orange, running) → ✓ (blue, done) or ✗ (red, error) → ▶ (reset after 3s)
+- **Event propagation:** `e.stopPropagation()` prevents row click navigation when clicking play button
+- **API integration:** POST to `/api/trigger/{agent_type}` with body `{"symbol": symbol}` (backend already supported this)
+- **Data attributes:** `data-agent="{agent.key}"` and `data-symbol="{row.symbol}"` for routing
+
+**Why this matters:**
+Users previously had to either run ALL symbols for an agent (header button) or navigate to symbol detail page to trigger individual analysis. The row-level play button enables quick spot-check analysis directly from the dashboard — useful for re-analyzing specific positions after market events or checking watchlist symbols without full agent runs.
+
+**Pattern for future work:**
+When adding inline actions to table rows with clickable row handlers, always use `e.stopPropagation()` to prevent navigation and use distinct CSS classes to avoid event handler conflicts.
+
+---
+
+## Latest — Row Play Button Deployment (2026-04-08T13:11Z)
+
+**Status:** ✅ Deployed  
+**Session Log:** `.squad/log/2026-04-08T13-11-play-button.md`  
+**Orchestration Log:** `.squad/orchestration-log/2026-04-08T13-11-rusty.md`
+
+**What:** Play button feature (implemented 2026-04-07) successfully deployed to production dashboard.  
+**Files:** `web/templates/dashboard.html`, `web/static/app.js`, `web/static/style.css`
+
+**Status:** All agent tables now display ▶ button per row. Button styling: compact green (idle) → blue spinner (running) → green checkmark (done) / red X (error) → reset to ▶.
+
+**Technical:** Posts to `/api/trigger/{agent_type}` with `{"symbol": "..."}` body. Uses `e.stopPropagation()` to prevent row navigation conflicts.
+
+**Ready for:** QA validation, production integration testing.
