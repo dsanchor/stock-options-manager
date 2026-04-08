@@ -739,7 +739,7 @@ class CosmosDBService:
         since = cutoffs["30d"]
 
         def _empty_tv_buckets() -> dict:
-            return {k: {"total_duration": 0.0, "total_size": 0, "count": 0}
+            return {k: {"total_duration": 0.0, "total_size": 0, "count": 0, "error_count": 0}
                     for k in cutoffs}
 
         def _empty_ar_buckets() -> dict:
@@ -764,12 +764,15 @@ class CosmosDBService:
                 ts = doc.get("timestamp", "")
                 dur = doc.get("duration_seconds", 0)
                 size = doc.get("response_size_chars", 0)
+                error = doc.get("error", False)
                 for period, cutoff in cutoffs.items():
                     if ts >= cutoff:
                         b = agg[period]
                         b["total_duration"] += dur
                         b["total_size"] += size
                         b["count"] += 1
+                        if error:
+                            b["error_count"] += 1
 
             tv_stats: dict[str, dict] = {}
             for res, periods in tv_agg.items():
@@ -780,6 +783,7 @@ class CosmosDBService:
                         "avg_duration": round(b["total_duration"] / c, 1),
                         "avg_size": round(b["total_size"] / c),
                         "count": b["count"],
+                        "error_count": b["error_count"],
                     }
 
             # ── Agent run stats ───────────────────────────────────────

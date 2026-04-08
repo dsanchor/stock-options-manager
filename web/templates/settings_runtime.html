@@ -65,6 +65,7 @@
                     <th>Today (Avg)</th>
                     <th>7 Days (Avg)</th>
                     <th>30 Days (Avg)</th>
+                    <th>Errors</th>
                 </tr>
             </thead>
             <tbody>
@@ -82,6 +83,18 @@
                         {% endif %}
                     </td>
                     {% endfor %}
+                    <td class="mono">
+                        {% set today_errors = rs.get('today', {}).get('error_count', 0) %}
+                        {% set week_errors = rs.get('7d', {}).get('error_count', 0) %}
+                        {% set month_errors = rs.get('30d', {}).get('error_count', 0) %}
+                        {% if today_errors > 0 or week_errors > 0 or month_errors > 0 %}
+                        <span style="color: #e74c3c;">
+                            {{ today_errors }} / {{ week_errors }} / {{ month_errors }}
+                        </span>
+                        {% else %}
+                        <span style="color: #27ae60;">0 / 0 / 0</span>
+                        {% endif %}
+                    </td>
                 </tr>
                 {% endif %}
                 {% endfor %}
