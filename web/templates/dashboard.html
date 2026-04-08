@@ -67,6 +67,7 @@
                     <th class="num">Delta</th>
                     {% endif %}
                     <th>Flags</th>
+                    <th></th>
                 </tr>
             </thead>
             <tbody>
@@ -94,6 +95,9 @@
                         {% for flag in (row.risk_flags or []) %}
                         <span class="flag">{{ flag }}</span>
                         {% endfor %}
+                    </td>
+                    <td>
+                        <button class="btn-trigger-row" data-agent="{{ agent.key }}" data-symbol="{{ row.symbol }}" title="Run analysis for {{ row.symbol }}">▶</button>
                     </td>
                 </tr>
                 {% endfor %}

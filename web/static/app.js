@@ -46,6 +46,49 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
+    // ── Row-level trigger buttons ──
+    document.querySelectorAll('.btn-trigger-row[data-agent][data-symbol]').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var agentType = btn.dataset.agent;
+            var symbol = btn.dataset.symbol;
+            var origText = btn.textContent;
+            btn.textContent = '⏳';
+            btn.classList.add('running');
+            btn.disabled = true;
+
+            fetch('/api/trigger/' + agentType, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ symbol: symbol })
+            })
+                .then(function(res) { return res.json(); })
+                .then(function(data) {
+                    if (data.status === 'triggered') {
+                        btn.textContent = '✓';
+                        btn.classList.remove('running');
+                        btn.classList.add('done');
+                    } else {
+                        btn.textContent = '✗';
+                        btn.classList.remove('running');
+                        btn.classList.add('error');
+                    }
+                })
+                .catch(function() {
+                    btn.textContent = '✗';
+                    btn.classList.remove('running');
+                    btn.classList.add('error');
+                })
+                .finally(function() {
+                    setTimeout(function() {
+                        btn.textContent = origText;
+                        btn.disabled = false;
+                        btn.classList.remove('running', 'done', 'error');
+                    }, 3000);
+                });
+        });
+    });
+
     // ── Run Full Analysis button ──
     var runFullBtn = document.getElementById('run-full-analysis');
     if (runFullBtn) {
