@@ -665,13 +665,19 @@ class CosmosDBService:
         return {r["symbol"]: r["count"] for r in results}
 
     def get_recent_activities_by_symbol(self, limit_per_symbol: int = 3) -> dict[str, list[dict]]:
-        """Get N most recent activities per symbol (cross-partition query).
+        """Get N most recent activities per agent_type per symbol (cross-partition query).
+        
+        Fetches up to `limit_per_symbol` activities for EACH active agent_type within
+        each symbol. This ensures all agent types (covered_call, cash_secured_put,
+        open_call_monitor, open_put_monitor) are represented in the summary data,
+        even when one type has more recent activity than others.
         
         Args:
-            limit_per_symbol: Number of activities to retrieve per symbol (default: 3)
+            limit_per_symbol: Number of activities to retrieve per agent_type per symbol (default: 3)
         
         Returns:
-            Dictionary mapping symbol -> list of activity documents (newest first)
+            Dictionary mapping symbol -> list of activity documents (newest first).
+            Each symbol may have up to (limit_per_symbol × number_of_active_agent_types) activities.
             Excludes alerts (is_alert=true).
         """
         symbols_query = "SELECT DISTINCT c.symbol FROM c WHERE c.doc_type = 'symbol_config'"
@@ -680,22 +686,37 @@ class CosmosDBService:
             enable_cross_partition_query=True,
         ))
         
+        # Known agent types to query
+        agent_types = ["covered_call", "cash_secured_put", "open_call_monitor", "open_put_monitor"]
+        
         result = {}
         for sym_doc in symbols:
             symbol = sym_doc["symbol"]
-            query = (
-                "SELECT TOP @limit * FROM c "
-                "WHERE c.doc_type = 'activity' "
-                "AND (c.is_alert = false OR NOT IS_DEFINED(c.is_alert)) "
-                "ORDER BY c.timestamp DESC"
-            )
-            activities = list(self.container.query_items(
-                query=query,
-                parameters=[{"name": "@limit", "value": limit_per_symbol}],
-                partition_key=symbol,
-            ))
-            if activities:
-                result[symbol] = activities
+            all_activities = []
+            
+            # Query each agent_type separately to ensure representation
+            for agent_type in agent_types:
+                query = (
+                    "SELECT TOP @limit * FROM c "
+                    "WHERE c.doc_type = 'activity' "
+                    "AND c.agent_type = @agent_type "
+                    "AND (c.is_alert = false OR NOT IS_DEFINED(c.is_alert)) "
+                    "ORDER BY c.timestamp DESC"
+                )
+                activities = list(self.container.query_items(
+                    query=query,
+                    parameters=[
+                        {"name": "@limit", "value": limit_per_symbol},
+                        {"name": "@agent_type", "value": agent_type}
+                    ],
+                    partition_key=symbol,
+                ))
+                all_activities.extend(activities)
+            
+            # Sort merged results by timestamp (newest first) and store if non-empty
+            if all_activities:
+                all_activities.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+                result[symbol] = all_activities
         
         return result
 
