@@ -1994,3 +1994,152 @@ When displaying time-series data with multiple types (alerts, activities, events
 
 ---
 
+### 22. Summary Agent Multi-Agent-Type Data Fix
+
+**Date:** 2026-04-10  
+**Author:** Linus (Quant Dev)  
+**Status:** ✅ Implemented  
+**Impact:** Data layer, summary agent accuracy
+
+#### Problem Statement
+
+The daily portfolio summary agent was generating incomplete summaries when a symbol had multiple agent types active (e.g., both `covered_call` and `cash_secured_put` watching enabled, or watching + monitor agents for open positions).
+
+**Symptom**: Summary would only include activities from the most active agent_type, omitting the other(s) entirely.
+
+**Root cause**: `CosmosDBClient.get_recent_activities_by_symbol()` (line 667) used `TOP @limit` on a single query filtering only by `doc_type = 'activity'`, without considering `agent_type`. This returned the N most recent activities **overall**, not N per agent_type.
+
+**Example failure scenario**:
+- Symbol: AAPL
+- Activities: 10 recent `covered_call` decisions, 2 recent `cash_secured_put` decisions
+- Query: `TOP 3` activities for AAPL
+- Result: 3 `covered_call` activities, 0 `cash_secured_put` activities
+- Summary agent sees only covered call data, generates incomplete summary
+
+#### Decision
+
+Changed `get_recent_activities_by_symbol()` to fetch `limit_per_symbol` activities **per agent_type per symbol**, then merge and sort by timestamp DESC.
+
+#### Implementation Details
+
+**Query Strategy**:
+1. Fetch list of all symbols (unchanged)
+2. For each symbol, iterate over all 4 agent_types: `covered_call`, `cash_secured_put`, `open_call_monitor`, `open_put_monitor`
+3. For each agent_type, query `TOP @limit` activities filtering by both `doc_type = 'activity'` AND `agent_type = @agent_type`
+4. Merge all agent_type results into a single list per symbol
+5. Sort merged list by timestamp DESC (newest first)
+6. Return `dict[str, list[dict]]` as before
+
+**Return Type**: Unchanged — `dict[str, list[dict]]` (symbol → list of activities)
+
+**Activity Count Per Symbol**: Now up to `limit_per_symbol × 4` (was exactly `limit_per_symbol`)
+
+**Backward Compatibility**: Maintained — callers receive the same data structure, just with more complete data
+
+#### Code Changes
+
+**File**: `src/cosmos_db.py`, lines 667-700
+
+**Docstring Updated**: Clarified that `limit_per_symbol` is now **per agent_type**, and total activities returned may be up to `limit_per_symbol × number_of_active_agent_types`.
+
+#### Verification
+
+**Caller Compatibility**:
+- `src/agent_runner.py:683` — `run_summary_agent()` calls `get_recent_activities_by_symbol()`, passes results to summary agent as JSON. More activities = more complete summaries. ✅ Compatible
+- `web/app.py` — Does NOT call this method. ✅ No impact
+
+#### Rationale
+
+**Why per-agent-type querying?**
+- Ensures all active strategies are represented in summaries, regardless of activity frequency
+- Prevents high-activity agent types from crowding out low-activity ones
+- Aligns with user expectation: "summarize all my positions/watching" means ALL, not just the most active
+
+**Why hardcode the 4 agent_types?**
+- These are the only 4 agent types in the system (covered_call, cash_secured_put, open_call_monitor, open_put_monitor)
+- If empty, the query returns 0 results for that agent_type — no harm, just skipped
+- Future agent types can be added to the list when they exist
+
+**Why not increase `limit_per_symbol` instead?**
+- Doesn't solve skew problem — if one agent_type is 10× more active, it still dominates
+- Per-agent-type ensures representation even with massive activity imbalances
+
+#### Trade-offs
+
+**Pros**:
+- ✅ Complete data for summary agent — all agent types represented
+- ✅ Backward compatible — same return type, same callers
+- ✅ Simple implementation — just iterate 4 agent_types, merge results
+
+**Cons**:
+- ❌ More CosmosDB queries (4 per symbol instead of 1)
+- ❌ Potentially more activities returned per symbol (up to 4× limit_per_symbol)
+- ❌ Slightly higher RU consumption (4 partition queries per symbol)
+
+**Mitigation**:
+- Summary agent runs once per day — query cost is negligible
+- Increased data volume improves summary quality (worth the cost)
+- If performance becomes an issue, can optimize with parallel queries or caching
+
+---
+
+### 23. Sequential Full Analysis via /api/trigger-all
+
+**Date:** 2026-04-10  
+**Author:** Rusty (Agent Dev)  
+**Status:** ✅ Implemented  
+**Impact:** Backend API, Frontend UI
+
+#### Context
+
+The "Run Full Analysis" button previously fired 4 separate `/api/trigger/{agent_type}` calls. Each spawned an independent background thread, so all 4 agents ran in parallel — causing resource contention and unpredictable execution order.
+
+#### Decision
+
+Added a dedicated `POST /api/trigger-all` endpoint that runs all 4 agents **sequentially in a single thread**. Progress is tracked via a shared status dict on `app.state._full_analysis_status` and exposed via `GET /api/trigger-all/status`. The frontend polls this status endpoint every 4 seconds and updates the button text with real-time progress (`"⏳ Running 2/4: cash_secured_put…"`).
+
+#### Implementation Details
+
+**Agent Execution Order**: covered_call → cash_secured_put → open_call_monitor → open_put_monitor
+
+**Error Handling**: If one agent errors, the next still runs (errors are logged but not blocking)
+
+**Concurrency Control**: 409 Conflict returned if a full analysis is already running
+
+**Status Lifecycle**:
+- Status auto-resets 30 seconds after completion
+- All individual "Run Analysis" and per-row trigger buttons are disabled during a full run
+
+**Backward Compatibility**: Existing `/api/trigger/{agent_type}` endpoints unchanged (still fire-and-forget)
+
+#### Files Changed
+
+- `web/app.py` — new `/api/trigger-all` and `/api/trigger-all/status` endpoints + `_run_all_agents_sequentially()` worker
+- `web/static/app.js` — replaced chained fetch calls with single trigger + polling
+
+#### Rationale
+
+**Sequential execution prevents:**
+- Resource contention on shared database
+- Race conditions on position state
+- Unpredictable execution timing
+
+**Status polling improves UX:**
+- Users know agents are running (not silent)
+- Real-time feedback on progress (which agent, what number)
+- Prevents multiple overlapping full runs
+
+**Backward Compatibility preserved:**
+- Individual trigger endpoints still available for per-agent runs
+- Users can still run agents independently if needed
+
+#### Pattern for Future Work
+
+When running multiple sequential background tasks:
+- Track state in `app.state` with locks to prevent overlapping executions
+- Expose status via separate status endpoint (not just response)
+- Poll status on frontend with reasonable interval (4-10 seconds)
+- Display real-time progress (task N of M, current task name)
+
+---
+

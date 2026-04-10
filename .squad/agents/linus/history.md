@@ -1222,3 +1222,25 @@ Changed alert detection from whitelist (checking specific activities like SELL, 
 - **Files Analyzed**: `src/tv_data_fetcher.py` (lines 730-1324), agent files (covered_call_agent.py, cash_secured_put_agent.py, monitor agents), config.yaml
 - **Decision Document**: `.squad/decisions/inbox/linus-anti403-implementation.md` — comprehensive proposal with pseudocode
 - **Key Pattern**: Session isolation is critical for scraper resilience — never let one resource failure poison unrelated resources
+
+### Summary Agent Multi-Agent-Type Bug Fix (2026-MM-DD)
+
+**Problem**: `CosmosDBClient.get_recent_activities_by_symbol()` fetched only N most recent activities **overall** per symbol, not N per agent_type. This caused symbols with both put and call watching to have incomplete summary data — only the most active agent_type would be represented, while the other would be omitted entirely.
+
+**Root Cause**: Original implementation in `src/cosmos_db.py:667` used `TOP @limit` on a single query filtering only by `doc_type = 'activity'`, without considering `agent_type`. If a symbol had 10 recent `covered_call` activities and 2 recent `cash_secured_put` activities, only the `covered_call` activities would be returned when `limit_per_symbol=3`.
+
+**Fix Implemented**:
+- Changed `get_recent_activities_by_symbol()` to iterate over all four agent_types (`covered_call`, `cash_secured_put`, `open_call_monitor`, `open_put_monitor`) and query each separately with `TOP @limit` per agent_type
+- Merged results from all agent_types and sorted by timestamp DESC (newest first) before returning
+- Updated docstring to clarify: fetches `limit_per_symbol` activities **per agent_type**, so total activities per symbol may be up to `limit_per_symbol × 4`
+- Maintained return type `dict[str, list[dict]]` for backward compatibility with existing callers
+
+**Impact**:
+- Summary agent (`run_summary_agent` in `agent_runner.py:683`) now receives complete activity history for all active agent types
+- Ensures symbols with both put and call watching (or both watch + monitor agents) have all agent types represented in daily summaries
+- No breaking changes — callers just receive more complete data
+
+**Files Modified**:
+- `src/cosmos_db.py` — `get_recent_activities_by_symbol()` method (lines 667-700)
+
+**Key Learning**: When aggregating multi-dimensional data (symbol × agent_type), ensure per-dimension limits to avoid skewing toward the most active dimension. Cross-partition queries with `TOP` need careful filtering to guarantee representation across all dimensions.
