@@ -131,7 +131,7 @@
 <!-- Full activity JSON -->
 <div class="card">
     <details>
-        <summary style="cursor:pointer; padding:1rem; font-weight:600; color:var(--text-muted, #aaa);">Raw JSON</summary>
+        <summary style="cursor:pointer; padding:1rem; font-weight:600; color:var(--text-muted, #8d969e);">Raw JSON</summary>
         <pre class="json-block">{{ activity | json_pretty }}</pre>
     </details>
 </div>
@@ -147,10 +147,10 @@
         msgEl.style.display = 'block';
         if (type === 'error') {
             msgEl.style.background = 'rgba(255,80,80,0.15)';
-            msgEl.style.color = '#ff6b6b';
+            msgEl.style.color = '#e23b4a';
         } else {
             msgEl.style.background = 'rgba(80,255,120,0.15)';
-            msgEl.style.color = '#50ff78';
+            msgEl.style.color = '#00a87e';
         }
         msgEl.textContent = text;
     }

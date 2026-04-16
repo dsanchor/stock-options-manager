@@ -431,3 +431,12 @@ The "Run Full Analysis" button now uses `POST /api/trigger-all` which runs all 4
 Added agent type dropdown filters to both the dashboard Recent Activity section and the symbol detail Recent Activities table. The dropdowns are dynamically populated from the rendered items' `data-agent-type` attributes, using the human-friendly agent labels as display text and the agent_type key as the value. Filters compose with the existing time range and symbol filters via `applyDashboardFilters()` and `applyTableFilter()`. The `applyTableFilter` function gained an optional `agentFilterId` parameter (backward-compatible). Pattern: use a `Map` keyed by agent_type to deduplicate options, extract display labels from DOM elements (`.activity-agent` span on dashboard, second `<td>` on symbol detail).
 
 **Files:** `web/templates/dashboard.html`, `web/templates/symbol_detail.html`, `web/static/app.js`
+
+### Agent Filter Bug Fix — _agent_key pattern (2026-07)
+**Bug:** Agent name filter did nothing on dashboard or symbol detail pages. The `data-agent-type` HTML attributes were rendering from `{{ item.agent_type }}` which could produce empty strings with Cosmos dict-like objects.
+
+**Fix:** Introduced explicit `_agent_key = str(d.get("agent_type", ""))` in both route handlers (`app.py` dashboard ~line 932, symbol_detail ~line 991). Templates now use `{{ item._agent_key | default('', true) }}` instead of `{{ item.agent_type }}`. JS comparisons add `.trim()` for robustness.
+
+**Pattern:** When passing Cosmos document fields to Jinja2 `data-` attributes, always extract to an explicit string field in the route handler rather than relying on Jinja2 attribute access on dict-like objects.
+
+**Files:** `web/app.py`, `web/templates/dashboard.html`, `web/templates/symbol_detail.html`, `web/static/app.js`

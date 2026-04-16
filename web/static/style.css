@@ -1,19 +1,22 @@
-/* ── Stock Options Manager Dashboard — Dark Trading Theme ── */
+/* ── Stock Options Manager — Revolut-Inspired Design System ── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
-    --bg:          #0f0f1a;
-    --bg-card:     #1a1a2e;
-    --bg-input:    #16213e;
-    --bg-hover:    #22224a;
-    --border:      #2a2a4a;
-    --text:        #e0e0f0;
-    --text-muted:  #8888aa;
-    --accent-blue: #4a9eff;
-    --accent-green:#22c55e;
-    --accent-red:  #ef4444;
-    --accent-orange:#f59e0b;
+    --bg:          #191c1f;
+    --bg-card:     #222228;
+    --bg-input:    #2d2d35;
+    --bg-hover:    #2d2d35;
+    --border:      #2d2d35;
+    --text:        #ffffff;
+    --text-muted:  #8d969e;
+    --accent-blue: #494fdf;
+    --accent-green:#00a87e;
+    --accent-red:  #e23b4a;
+    --accent-orange:#ec7e00;
     --accent-purple:#a78bfa;
-    --radius:      8px;
+    --radius:      12px;
+    --radius-card: 20px;
+    --radius-pill: 9999px;
     --font-mono:   'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
 }
 
@@ -21,15 +24,22 @@
 
 html { font-size: 15px; }
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background: var(--bg);
     color: var(--text);
     min-height: 100vh;
+    letter-spacing: 0.01em;
 }
 
 a { color: var(--accent-blue); text-decoration: none; }
 a:hover { text-decoration: underline; }
 code { font-family: var(--font-mono); background: var(--bg-input); padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: 'Inter', sans-serif;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+}
 
 /* ── Navigation ── */
 .topnav {
@@ -44,14 +54,15 @@ code { font-family: var(--font-mono); background: var(--bg-input); padding: 2px 
     z-index: 100;
 }
 .nav-brand {
-    font-weight: 700;
+    font-weight: 500;
     font-size: 1.1rem;
+    letter-spacing: -0.02em;
     white-space: nowrap;
 }
 .nav-links { display: flex; gap: 1rem; }
 .nav-links a {
     padding: 0.4rem 0.8rem;
-    border-radius: var(--radius);
+    border-radius: var(--radius-pill);
     color: var(--text-muted);
     transition: all 0.2s;
 }
@@ -69,7 +80,7 @@ code { font-family: var(--font-mono); background: var(--bg-input); padding: 2px 
 .nav-dropdown-trigger {
     display: inline-block;
     padding: 0.4rem 0.8rem;
-    border-radius: var(--radius);
+    border-radius: var(--radius-pill);
     color: var(--text-muted);
     cursor: pointer;
     transition: all 0.2s;
@@ -89,7 +100,6 @@ code { font-family: var(--font-mono); background: var(--bg-input); padding: 2px 
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
     margin-top: 0.25rem;
     z-index: 1000;
 }
@@ -134,13 +144,13 @@ code { font-family: var(--font-mono); background: var(--bg-input); padding: 2px 
 .summary-card {
     background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-card);
     padding: 1rem;
     text-align: center;
 }
 .summary-value {
     font-size: 2rem;
-    font-weight: 700;
+    font-weight: 500;
     font-family: var(--font-mono);
     color: var(--accent-blue);
 }
@@ -159,7 +169,7 @@ code { font-family: var(--font-mono); background: var(--bg-input); padding: 2px 
     padding: 0.75rem 1rem;
     background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-card);
     margin-bottom: 1.5rem;
     font-size: 0.85rem;
     color: var(--text-muted);
@@ -171,7 +181,7 @@ code { font-family: var(--font-mono); background: var(--bg-input); padding: 2px 
 .card {
     background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-card);
     margin-bottom: 1.5rem;
     overflow: hidden;
 }
@@ -182,9 +192,9 @@ code { font-family: var(--font-mono); background: var(--bg-input); padding: 2px 
     padding: 1rem 1.25rem;
     border-bottom: 1px solid var(--border);
 }
-.card-header h2 { font-size: 1.1rem; font-weight: 600; }
+.card-header h2 { font-size: 1.1rem; font-weight: 500; }
 
-/* ── Filter controls ──────────────────────────────────────────────── */
+/* ── Filter controls ── */
 .filter-group {
     display: flex;
     align-items: center;
@@ -194,7 +204,7 @@ code { font-family: var(--font-mono); background: var(--bg-input); padding: 2px 
     display: flex;
     gap: 2px;
     background: var(--bg-input);
-    border-radius: 6px;
+    border-radius: var(--radius-pill);
     padding: 2px;
 }
 .filter-pills .pill {
@@ -205,20 +215,20 @@ code { font-family: var(--font-mono); background: var(--bg-input); padding: 2px 
     font-size: 0.75rem;
     font-weight: 500;
     cursor: pointer;
-    border-radius: 4px;
+    border-radius: var(--radius-pill);
     transition: all 0.15s;
 }
 .filter-pills .pill:hover {
     color: var(--text);
 }
 .filter-pills .pill.active {
-    background: var(--accent);
+    background: var(--accent-blue);
     color: white;
 }
 .filter-select {
     padding: 0.2rem 0.5rem;
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius-pill);
     background: var(--bg-card);
     color: var(--text);
     font-size: 0.75rem;
@@ -229,7 +239,7 @@ code { font-family: var(--font-mono); background: var(--bg-input); padding: 2px 
     font-size: 0.75rem;
     background: var(--bg-input);
     padding: 0.2rem 0.6rem;
-    border-radius: 12px;
+    border-radius: var(--radius-pill);
     color: var(--text-muted);
 }
 
@@ -240,6 +250,7 @@ thead th {
     text-align: left;
     padding: 0.6rem 1rem;
     font-size: 0.75rem;
+    font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--text-muted);
@@ -260,7 +271,7 @@ tbody td.num { text-align: right; font-family: var(--font-mono); }
 .badge {
     display: inline-block;
     padding: 0.15rem 0.6rem;
-    border-radius: 4px;
+    border-radius: var(--radius-pill);
     font-size: 0.75rem;
     font-weight: 600;
     text-transform: uppercase;
@@ -269,24 +280,24 @@ tbody td.num { text-align: right; font-family: var(--font-mono); }
 /* Activity badges — non-WAIT actions get light orange */
 .badge-sell, .badge-close,
 .badge-roll, .badge-roll_up, .badge-roll_down, .badge-roll_out,
-.badge-roll_up_and_out, .badge-roll_down_and_out { background: rgba(245,158,11,0.2); color: var(--accent-orange); }
-/* WAIT/HOLD stay green */
-.badge-wait, .badge-hold { background: rgba(34,197,94,0.2); color: var(--accent-green); }
+.badge-roll_up_and_out, .badge-roll_down_and_out { background: rgba(236,126,0,0.2); color: var(--accent-orange); }
+/* WAIT/HOLD stay teal */
+.badge-wait, .badge-hold { background: rgba(0,168,126,0.2); color: var(--accent-green); }
 /* Info (N/A) stays blue */
-.badge-info { background: rgba(74,158,255,0.2); color: var(--accent-blue); }
-.badge-waiting { background: rgba(255,193,7,0.15); color: #ffc107; font-size: 0.75rem; }
+.badge-info { background: rgba(73,79,223,0.2); color: var(--accent-blue); }
+.badge-waiting { background: rgba(236,126,0,0.15); color: var(--accent-orange); font-size: 0.75rem; }
 
-.badge-risk-low { background: rgba(34,197,94,0.2); color: var(--accent-green); }
-.badge-risk-medium, .badge-risk-moderate { background: rgba(245,158,11,0.2); color: var(--accent-orange); }
-.badge-risk-high { background: rgba(239,68,68,0.2); color: var(--accent-red); }
-.badge-risk-critical { background: rgba(239,68,68,0.35); color: #ff6b6b; }
+.badge-risk-low { background: rgba(0,168,126,0.2); color: var(--accent-green); }
+.badge-risk-medium, .badge-risk-moderate { background: rgba(236,126,0,0.2); color: var(--accent-orange); }
+.badge-risk-high { background: rgba(226,59,74,0.2); color: var(--accent-red); }
+.badge-risk-critical { background: rgba(226,59,74,0.35); color: #ff6b6b; }
 
 /* Moneyness badges */
-.badge-moneyness-itm { background: rgba(239,68,68,0.2); color: var(--accent-red); }
-.badge-moneyness-otm { background: rgba(34,197,94,0.2); color: var(--accent-green); }
-.badge-moneyness-atm { background: rgba(245,158,11,0.2); color: var(--accent-orange); }
-.badge-moneyness-deep-itm { background: rgba(239,68,68,0.35); color: #ff6b6b; }
-.badge-moneyness-deep-otm { background: rgba(34,197,94,0.35); color: #4ade80; }
+.badge-moneyness-itm { background: rgba(226,59,74,0.2); color: var(--accent-red); }
+.badge-moneyness-otm { background: rgba(0,168,126,0.2); color: var(--accent-green); }
+.badge-moneyness-atm { background: rgba(236,126,0,0.2); color: var(--accent-orange); }
+.badge-moneyness-deep-itm { background: rgba(226,59,74,0.35); color: #ff6b6b; }
+.badge-moneyness-deep-otm { background: rgba(0,168,126,0.35); color: #34d399; }
 
 /* Metric values (DTE, delta, IV, premium) */
 .metric-value { font-family: var(--font-mono); font-size: 0.85rem; }
@@ -300,7 +311,7 @@ tbody td.num { text-align: right; font-family: var(--font-mono); }
     display: inline-block;
     padding: 0.1rem 0.4rem;
     background: var(--bg-input);
-    border-radius: 3px;
+    border-radius: var(--radius-pill);
     font-size: 0.7rem;
     color: var(--text-muted);
     margin: 1px 2px;
@@ -341,6 +352,7 @@ tbody td.num { text-align: right; font-family: var(--font-mono); }
 }
 .detail-label {
     font-size: 0.7rem;
+    font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--text-muted);
@@ -351,10 +363,10 @@ tbody td.num { text-align: right; font-family: var(--font-mono); }
 .alert-banner {
     margin-top: 0.5rem;
     padding: 0.4rem 0.8rem;
-    background: rgba(255, 193, 7, 0.12);
-    border: 1px solid rgba(255, 193, 7, 0.3);
-    border-radius: 6px;
-    color: #ffc107;
+    background: rgba(236, 126, 0, 0.12);
+    border: 1px solid rgba(236, 126, 0, 0.3);
+    border-radius: var(--radius);
+    color: var(--accent-orange);
     font-size: 0.9rem;
     display: inline-block;
 }
@@ -411,16 +423,17 @@ textarea:focus { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
 }
 
 .btn {
-    padding: 0.5rem 1.5rem;
+    padding: 14px 32px;
     border: none;
-    border-radius: var(--radius);
+    border-radius: var(--radius-pill);
     font-size: 0.9rem;
-    font-weight: 600;
+    font-weight: 500;
     cursor: pointer;
     transition: all 0.2s;
+    font-family: 'Inter', sans-serif;
 }
 .btn-primary { background: var(--accent-blue); color: #fff; }
-.btn-primary:hover { background: #3a8fee; }
+.btn-primary:hover { background: #3d43c9; }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .alert {
@@ -429,8 +442,8 @@ textarea:focus { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
     margin-bottom: 1rem;
     font-size: 0.9rem;
 }
-.alert-success { background: rgba(34,197,94,0.15); border: 1px solid rgba(34,197,94,0.3); color: var(--accent-green); }
-.alert-error { background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3); color: var(--accent-red); }
+.alert-success { background: rgba(0,168,126,0.15); border: 1px solid rgba(0,168,126,0.3); color: var(--accent-green); }
+.alert-error { background: rgba(226,59,74,0.15); border: 1px solid rgba(226,59,74,0.3); color: var(--accent-red); }
 
 /* ── Chat ── */
 .chat-card { display: flex; flex-direction: column; height: calc(100vh - 180px); min-height: 400px; }
@@ -455,7 +468,7 @@ textarea:focus { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
 .chat-bubble.markdown-body h1,
 .chat-bubble.markdown-body h2,
 .chat-bubble.markdown-body h3,
-.chat-bubble.markdown-body h4 { margin: 0.5em 0 0.25em; font-weight: 600; }
+.chat-bubble.markdown-body h4 { margin: 0.5em 0 0.25em; font-weight: 500; }
 .chat-bubble.markdown-body h1 { font-size: 1.15em; }
 .chat-bubble.markdown-body h2 { font-size: 1.05em; }
 .chat-bubble.markdown-body h3 { font-size: 1em; }
@@ -504,7 +517,7 @@ textarea:focus { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
 }
 .chat-bubble.markdown-body th {
     background: rgba(0,0,0,0.2);
-    font-weight: 600;
+    font-weight: 500;
 }
 
 .chat-bubble.markdown-body blockquote {
@@ -515,7 +528,7 @@ textarea:focus { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
 }
 
 .chat-bubble.markdown-body a { color: var(--accent-blue); text-decoration: underline; }
-.chat-bubble.markdown-body a:hover { color: #6ab4ff; }
+.chat-bubble.markdown-body a:hover { color: #6b70ff; }
 
 .chat-bubble.markdown-body hr {
     border: none;
@@ -537,9 +550,10 @@ textarea:focus { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
     padding: 0.6rem 1rem;
     background: var(--bg);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-pill);
     color: var(--text);
     font-size: 0.9rem;
+    font-family: 'Inter', sans-serif;
 }
 .chat-input-row input:focus { outline: none; border-color: var(--accent-blue); }
 
@@ -571,21 +585,22 @@ textarea:focus { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
 .btn-trigger {
     padding: 0.25rem 0.65rem;
     border: 1px solid var(--accent-green);
-    border-radius: var(--radius);
+    border-radius: var(--radius-pill);
     background: transparent;
     color: var(--accent-green);
     font-size: 0.75rem;
-    font-weight: 600;
+    font-weight: 500;
     cursor: pointer;
     transition: all 0.2s;
     white-space: nowrap;
+    font-family: 'Inter', sans-serif;
 }
-.btn-trigger:hover { background: rgba(34,197,94,0.15); }
+.btn-trigger:hover { background: rgba(0,168,126,0.15); }
 .btn-trigger.btn-trigger-blue {
     border-color: var(--accent-blue);
     color: var(--accent-blue);
 }
-.btn-trigger.btn-trigger-blue:hover { background: rgba(74,158,255,0.15); }
+.btn-trigger.btn-trigger-blue:hover { background: rgba(73,79,223,0.15); }
 .btn-trigger.running {
     color: var(--accent-orange);
     border-color: var(--accent-orange);
@@ -600,24 +615,24 @@ textarea:focus { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
     border-color: var(--accent-red);
 }
 
-/* ── Row-level trigger button (compact, same green as .btn-trigger) ── */
+/* ── Row-level trigger button ── */
 .btn-trigger-row {
     appearance: none;
     -webkit-appearance: none;
     padding: 0.2rem 0.5rem;
     border: 1px solid var(--accent-green);
-    border-radius: var(--radius);
+    border-radius: var(--radius-pill);
     background: transparent;
     color: var(--accent-green);
     font-size: 0.75rem;
-    font-weight: 600;
+    font-weight: 500;
     cursor: pointer;
     transition: all 0.2s;
     white-space: nowrap;
     line-height: 1;
-    font-family: inherit;
+    font-family: 'Inter', sans-serif;
 }
-.btn-trigger-row:hover { background: rgba(34,197,94,0.15); }
+.btn-trigger-row:hover { background: rgba(0,168,126,0.15); }
 .btn-trigger-row.running {
     color: var(--accent-orange);
     border-color: var(--accent-orange);
@@ -647,6 +662,7 @@ textarea:focus { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
     color: var(--text);
     font-size: 0.85rem;
     border-radius: var(--radius);
+    font-family: 'Inter', sans-serif;
 }
 .input-field:focus { outline: none; border-color: var(--accent-blue); }
 select.input-field { cursor: pointer; }
@@ -695,19 +711,20 @@ input:checked + .slider::before { transform: translateX(16px); background: #fff;
 .btn-sm {
     padding: 0.2rem 0.5rem;
     font-size: 0.75rem;
-    font-weight: 600;
+    font-weight: 500;
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius-pill);
     background: transparent;
     color: var(--accent-blue);
     cursor: pointer;
     transition: all 0.2s;
     text-decoration: none;
     display: inline-block;
+    font-family: 'Inter', sans-serif;
 }
 .btn-sm:hover { background: var(--bg-hover); text-decoration: none; }
 .btn-sm.btn-danger { color: var(--accent-red); border-color: var(--accent-red); }
-.btn-sm.btn-danger:hover { background: rgba(239,68,68,0.15); }
+.btn-sm.btn-danger:hover { background: rgba(226,59,74,0.15); }
 
 .row-muted { opacity: 0.5; }
 
@@ -718,7 +735,7 @@ input:checked + .slider::before { transform: translateX(16px); background: #fff;
 }
 .form-section h3 {
     font-size: 0.85rem;
-    font-weight: 600;
+    font-weight: 500;
     color: var(--text-muted);
     margin-bottom: 0.5rem;
 }

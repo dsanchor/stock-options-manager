@@ -51,7 +51,7 @@
         {% if cosmos_error %}
         <div class="detail-field" style="grid-column: 1 / -1;">
             <div class="detail-label">Error</div>
-            <div class="detail-value mono" style="color: var(--red, #e06c75);">{{ cosmos_error }}</div>
+            <div class="detail-value mono" style="color: var(--accent-red, #e23b4a);">{{ cosmos_error }}</div>
         </div>
         {% endif %}
     </div>
@@ -113,14 +113,14 @@
                 var r = data.resources[key];
                 if (!r) continue;
                 var hasError = r.text && r.text.startsWith('[ERROR');
-                html += '<div style="background:var(--card-bg,#1e1e2e); border:1px solid var(--border,#333); border-radius:8px; padding:1rem; margin-bottom:1rem;">'
+                html += '<div style="background:var(--bg-card, #222228); border:1px solid var(--border, #2d2d35); border-radius:8px; padding:1rem; margin-bottom:1rem;">'
                     + '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">'
                     + '<strong>' + labels[key] + '</strong>'
                     + '<span class="mono" style="font-size:0.8rem; opacity:0.6;">'
                     + formatSize(r.size) + ' chars · ' + r.duration_seconds.toFixed(1) + 's'
-                    + (hasError ? ' · <span style="color:var(--red,#e06c75);">ERROR</span>' : '')
+                    + (hasError ? ' · <span style="color:var(--accent-red, #e23b4a);">ERROR</span>' : '')
                     + '</span></div>'
-                    + '<pre style="background:var(--bg,#111); border:1px solid var(--border,#333); border-radius:4px; padding:0.75rem; max-height:350px; overflow:auto; white-space:pre-wrap; word-break:break-word; font-size:0.78rem; line-height:1.35; margin:0;">'
+                    + '<pre style="background:var(--bg,#111); border:1px solid var(--border, #2d2d35); border-radius:4px; padding:0.75rem; max-height:350px; overflow:auto; white-space:pre-wrap; word-break:break-word; font-size:0.78rem; line-height:1.35; margin:0;">'
                     + escapeHtml(r.text) + '</pre></div>';
             }
             results.innerHTML = html;

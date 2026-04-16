@@ -45,7 +45,7 @@
         </table>
     </div>
     {% else %}
-    <div style="padding: 0.75rem 1.25rem; color: var(--text-muted, #888);">
+    <div style="padding: 0.75rem 1.25rem; color: var(--text-muted, #8d969e);">
         No agent run data yet. Stats will appear after agent runs.
     </div>
     {% endif %}
@@ -88,11 +88,11 @@
                         {% set week_errors = rs.get('7d', {}).get('error_count', 0) %}
                         {% set month_errors = rs.get('30d', {}).get('error_count', 0) %}
                         {% if today_errors > 0 or week_errors > 0 or month_errors > 0 %}
-                        <span style="color: #e74c3c;">
+                        <span style="color: #e23b4a;">
                             {{ today_errors }} / {{ week_errors }} / {{ month_errors }}
                         </span>
                         {% else %}
-                        <span style="color: #27ae60;">0 / 0 / 0</span>
+                        <span style="color: #00a87e;">0 / 0 / 0</span>
                         {% endif %}
                     </td>
                 </tr>
@@ -102,7 +102,7 @@
         </table>
     </div>
     {% else %}
-    <div style="padding: 0.75rem 1.25rem; color: var(--text-muted, #888);">
+    <div style="padding: 0.75rem 1.25rem; color: var(--text-muted, #8d969e);">
         No fetch data yet. Stats will appear after data fetches.
     </div>
     {% endif %}
