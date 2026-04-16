@@ -862,6 +862,7 @@ async def dashboard(request: Request):
         "last_run": "", "last_run_iso": "", "next_run": next_run, "next_run_iso": next_run_iso,
         "cron_expr": cron_expr, "scheduler_timezone": scheduler_tz_str,
         "symbol_count": 0, "position_count": 0, "activity": [],
+        "agent_types": AGENT_TYPES,
     }
     if cosmos is None:
         error_detail = getattr(request.app.state, "cosmos_error", "unknown")
@@ -946,6 +947,7 @@ async def dashboard(request: Request):
         "symbol_count": symbol_count,
         "position_count": position_count,
         "activity": activity,
+        "agent_types": AGENT_TYPES,
     })
 
 
@@ -1052,6 +1054,7 @@ async def symbol_detail_page(request: Request, symbol: str):
         "activities": activities,
         "alerts": alerts,
         "latest_sell_alerts": latest_sell_alerts,
+        "agent_types": AGENT_TYPES,
     })
 
 

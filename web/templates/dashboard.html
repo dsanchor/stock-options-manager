@@ -126,6 +126,9 @@
             </select>
             <select id="activity-agent-filter" class="filter-select">
                 <option value="">All Agents</option>
+                {% for key, meta in agent_types.items() %}
+                <option value="{{ key }}">{{ meta.label }}</option>
+                {% endfor %}
             </select>
         </div>
     </div>

@@ -379,6 +379,9 @@
             </div>
             <select id="sym-activity-agent-filter" class="filter-select">
                 <option value="">All Agents</option>
+                {% for key, meta in agent_types.items() %}
+                <option value="{{ key }}">{{ meta.label }}</option>
+                {% endfor %}
             </select>
             <span class="card-badge">{{ activities | length }}</span>
         </div>

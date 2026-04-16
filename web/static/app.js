@@ -259,43 +259,15 @@ if (symFilter) {
     symFilter.addEventListener('change', applyDashboardFilters);
 }
 
-// Populate agent type filter on dashboard
+// Agent type filter on dashboard (options rendered server-side)
 const dashAgentFilter = document.getElementById('activity-agent-filter');
 if (dashAgentFilter) {
-    const agents = new Map();
-    document.querySelectorAll('.activity-feed .activity-item').forEach(item => {
-        const key = item.dataset.agentType;
-        if (key) {
-            const label = item.querySelector('.activity-agent');
-            if (label && !agents.has(key)) agents.set(key, label.textContent.trim());
-        }
-    });
-    Array.from(agents.entries()).sort((a, b) => a[1].localeCompare(b[1])).forEach(([key, label]) => {
-        const opt = document.createElement('option');
-        opt.value = key;
-        opt.textContent = label;
-        dashAgentFilter.appendChild(opt);
-    });
     dashAgentFilter.addEventListener('change', applyDashboardFilters);
 }
 
-// Populate agent type filter on symbol detail
+// Agent type filter on symbol detail (options rendered server-side)
 const symAgentFilter = document.getElementById('sym-activity-agent-filter');
 if (symAgentFilter) {
-    const agents = new Map();
-    document.querySelectorAll('#activities-table tbody tr').forEach(row => {
-        const key = row.dataset.agentType;
-        if (key && !agents.has(key)) {
-            const agentCell = row.querySelectorAll('td')[1];
-            if (agentCell) agents.set(key, agentCell.textContent.trim());
-        }
-    });
-    Array.from(agents.entries()).sort((a, b) => a[1].localeCompare(b[1])).forEach(([key, label]) => {
-        const opt = document.createElement('option');
-        opt.value = key;
-        opt.textContent = label;
-        symAgentFilter.appendChild(opt);
-    });
     symAgentFilter.addEventListener('change', function() {
         applyTableFilter('sym-activity-time-filter', '#activities-table', 'sym-activity-agent-filter');
     });
