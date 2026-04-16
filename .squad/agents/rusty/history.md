@@ -426,3 +426,8 @@ When adding inline actions to table rows with clickable row handlers, always use
 The "Run Full Analysis" button now uses `POST /api/trigger-all` which runs all 4 agents sequentially in a single background thread. Progress is stored in `app.state._full_analysis_status` and polled via `GET /api/trigger-all/status`. The status dict auto-resets 30s after completion. The frontend disables all individual trigger buttons during a full run to prevent conflicts. This replaces the old pattern of firing 4 parallel `/api/trigger/{type}` calls from the frontend.
 
 **Files:** `web/app.py` (endpoints + worker), `web/static/app.js` (polling UI)
+
+### Agent Type Filter for Dashboard & Symbol Detail (2026-07)
+Added agent type dropdown filters to both the dashboard Recent Activity section and the symbol detail Recent Activities table. The dropdowns are dynamically populated from the rendered items' `data-agent-type` attributes, using the human-friendly agent labels as display text and the agent_type key as the value. Filters compose with the existing time range and symbol filters via `applyDashboardFilters()` and `applyTableFilter()`. The `applyTableFilter` function gained an optional `agentFilterId` parameter (backward-compatible). Pattern: use a `Map` keyed by agent_type to deduplicate options, extract display labels from DOM elements (`.activity-agent` span on dashboard, second `<td>` on symbol detail).
+
+**Files:** `web/templates/dashboard.html`, `web/templates/symbol_detail.html`, `web/static/app.js`

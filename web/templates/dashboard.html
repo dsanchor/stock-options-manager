@@ -124,11 +124,14 @@
             <select id="activity-symbol-filter" class="filter-select">
                 <option value="">All Symbols</option>
             </select>
+            <select id="activity-agent-filter" class="filter-select">
+                <option value="">All Agents</option>
+            </select>
         </div>
     </div>
     <div class="activity-feed">
         {% for item in activity %}
-        <div class="activity-item clickable-row" data-timestamp="{{ item.timestamp[:19] }}" data-symbol="{{ item.symbol }}" data-activity-id="{{ item.id }}" data-href="/activities/{{ item.id }}">
+        <div class="activity-item clickable-row" data-timestamp="{{ item.timestamp[:19] }}" data-symbol="{{ item.symbol }}" data-agent-type="{{ item.agent_type }}" data-activity-id="{{ item.id }}" data-href="/activities/{{ item.id }}">
             <div class="activity-time">{{ item.timestamp[:19] }}</div>
             {% if item.is_alert %}
             <span class="alert-indicator" title="Alert">📢</span>

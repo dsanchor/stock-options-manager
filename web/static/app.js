@@ -190,27 +190,36 @@ function applyDashboardFilters() {
     const days = activePill ? parseInt(activePill.dataset.range, 10) : 7;
     const symbolSelect = document.getElementById('activity-symbol-filter');
     const selectedSymbol = symbolSelect ? symbolSelect.value : '';
+    const agentSelect = document.getElementById('activity-agent-filter');
+    const selectedAgent = agentSelect ? agentSelect.value : '';
     const cutoff = cutoffDate(days);
     
     document.querySelectorAll('.activity-feed .activity-item').forEach(item => {
         const ts = new Date(item.dataset.timestamp);
         const sym = item.dataset.symbol || '';
+        const agent = item.dataset.agentType || '';
         const timeOk = ts >= cutoff;
         const symOk = !selectedSymbol || sym === selectedSymbol;
-        item.style.display = (timeOk && symOk) ? '' : 'none';
+        const agentOk = !selectedAgent || agent === selectedAgent;
+        item.style.display = (timeOk && symOk && agentOk) ? '' : 'none';
     });
 }
 
-function applyTableFilter(pillContainerId, tableSelector) {
+function applyTableFilter(pillContainerId, tableSelector, agentFilterId) {
     const activePill = document.querySelector('#' + pillContainerId + ' .pill.active');
     const days = activePill ? parseInt(activePill.dataset.range, 10) : 7;
     const cutoff = cutoffDate(days);
+    const agentSelect = agentFilterId ? document.getElementById(agentFilterId) : null;
+    const selectedAgent = agentSelect ? agentSelect.value : '';
     let visible = 0;
     
     document.querySelectorAll(tableSelector + ' tbody tr').forEach(row => {
         if (row.classList.contains('pos-detail-row')) return;
         const ts = new Date(row.dataset.timestamp);
-        const show = ts >= cutoff;
+        const agent = row.dataset.agentType || '';
+        const timeOk = ts >= cutoff;
+        const agentOk = !selectedAgent || agent === selectedAgent;
+        const show = timeOk && agentOk;
         row.style.display = show ? '' : 'none';
         if (show) visible++;
     });
@@ -229,7 +238,7 @@ document.querySelectorAll('.filter-pills').forEach(container => {
             if (container.id === 'activity-time-filter') {
                 applyDashboardFilters();
             } else if (container.id === 'sym-activity-time-filter') {
-                applyTableFilter('sym-activity-time-filter', '#activities-table');
+                applyTableFilter('sym-activity-time-filter', '#activities-table', 'sym-activity-agent-filter');
             }
         });
     });
@@ -250,9 +259,51 @@ if (symFilter) {
     symFilter.addEventListener('change', applyDashboardFilters);
 }
 
+// Populate agent type filter on dashboard
+const dashAgentFilter = document.getElementById('activity-agent-filter');
+if (dashAgentFilter) {
+    const agents = new Map();
+    document.querySelectorAll('.activity-feed .activity-item').forEach(item => {
+        const key = item.dataset.agentType;
+        if (key) {
+            const label = item.querySelector('.activity-agent');
+            if (label && !agents.has(key)) agents.set(key, label.textContent.trim());
+        }
+    });
+    Array.from(agents.entries()).sort((a, b) => a[1].localeCompare(b[1])).forEach(([key, label]) => {
+        const opt = document.createElement('option');
+        opt.value = key;
+        opt.textContent = label;
+        dashAgentFilter.appendChild(opt);
+    });
+    dashAgentFilter.addEventListener('change', applyDashboardFilters);
+}
+
+// Populate agent type filter on symbol detail
+const symAgentFilter = document.getElementById('sym-activity-agent-filter');
+if (symAgentFilter) {
+    const agents = new Map();
+    document.querySelectorAll('#activities-table tbody tr').forEach(row => {
+        const key = row.dataset.agentType;
+        if (key && !agents.has(key)) {
+            const agentCell = row.querySelectorAll('td')[1];
+            if (agentCell) agents.set(key, agentCell.textContent.trim());
+        }
+    });
+    Array.from(agents.entries()).sort((a, b) => a[1].localeCompare(b[1])).forEach(([key, label]) => {
+        const opt = document.createElement('option');
+        opt.value = key;
+        opt.textContent = label;
+        symAgentFilter.appendChild(opt);
+    });
+    symAgentFilter.addEventListener('change', function() {
+        applyTableFilter('sym-activity-time-filter', '#activities-table', 'sym-activity-agent-filter');
+    });
+}
+
 if (document.getElementById('activity-time-filter')) {
     applyDashboardFilters();
 }
 if (document.getElementById('sym-activity-time-filter')) {
-    applyTableFilter('sym-activity-time-filter', '#activities-table');
+    applyTableFilter('sym-activity-time-filter', '#activities-table', 'sym-activity-agent-filter');
 }
