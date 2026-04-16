@@ -289,7 +289,7 @@ The gate has already determined the earnings-driven action for this position. Ap
 - **ROLL_UP_AND_OUT**: Higher strike + later expiration
   - When: Stock rallied, want to reset at higher strike with more time for better premium
 - **CLOSE**: Buy back the put, do NOT re-sell
-  - When: Fundamental thesis changed (you no longer want to own the stock), or stock has dropped so far ITM that rolling isn't cost-effective
+  - When: Fundamental thesis changed (you no longer want to own the stock), or stock has dropped so far ITM that rolling isn't cost-effective (only after premium-first roll policy has been exhausted)
 
 ### Profit Optimization (ROLL_UP for more premium)
 
@@ -338,6 +338,61 @@ When recommending a roll, suggest specific new strike and expiration:
 - **New expiration**: Target 30-45 DTE from today for optimal theta
 - **Estimated roll cost**: Approximate net debit/credit of the roll (buy back current, sell new)
 
+### Premium-First Roll Policy (MANDATORY)
+
+**Before recommending ANY roll**, you MUST calculate roll economics using the options chain data (Section 4). This policy enforces a strict hierarchy that prioritizes income generation and caps defensive roll costs.
+
+**Roll Economics Calculation:**
+- **Buyback cost**: ASK price of the current option (what you pay to close)
+- **New premium**: BID price of the roll target option (what you collect on the new option)
+- **Net credit/debit**: New premium minus buyback cost
+  - Positive = net credit (you collect money)
+  - Negative = net debit (you pay money)
+
+**Three-Tier Hierarchy:**
+
+**Tier 1 — PREFERRED: Net Credit ≥ $1.00**
+- Roll generates income of at least $1.00 per share ($100 per contract)
+- Approved automatically — this is the ideal outcome
+- Proceed with the roll recommendation
+
+**Tier 2 — ACCEPTABLE (Ultra-Defensive): Net Debit ≤ $20.00**
+- Roll costs money, but paying ≤$20.00 per share ($2,000 per contract) is acceptable insurance to avoid assignment on a position you want to keep
+- This is a defensive maneuver when the stock has moved significantly against you
+- MUST add `"ultra_defensive_roll"` to `risk_flags`
+- Include detailed justification in the `reason` field explaining why paying this debit is warranted
+
+**Tier 3 — REJECTED: Net Debit > $20.00**
+- Do NOT recommend this roll
+- The cost is too high — position has deteriorated beyond reasonable roll economics
+- Execute the Roll Search Algorithm (below) to find alternatives
+- If no viable alternative exists → recommend CLOSE
+
+**Roll Search Algorithm:**
+
+When your initial roll candidate fails the net credit test (Tier 1) or exceeds the $20 debit threshold (Tier 2), systematically search for better alternatives in this order:
+
+1. **Same new strike, +1 week further expiration**: Keep the strike, try the next weekly expiration (more time = more premium)
+2. **-1 strike increment lower, same expiration**: Move the strike down by $1-$2.50 (puts roll down for safety), keep expiration
+3. **-1 strike lower AND +1 week further**: Combine both — lower strike and more time
+4. **If all candidates fail → CLOSE**: No viable roll exists that meets the net credit or ultra-defensive thresholds
+
+Track how many candidates you evaluated in `roll_economics.candidates_evaluated`.
+
+**ALWAYS show the math in the `reason` field:**
+- "Buyback cost: $X.XX (ask at current $XX strike, MMM DD exp)"
+- "New premium: $Y.YY (bid at new $YY strike, MMM DD exp)"
+- "Net credit/debit: +$Z.ZZ" or "Net debit: -$Z.ZZ"
+- "Roll tier: Tier 1 (net credit)" or "Tier 2 (ultra-defensive, debit within $20 threshold)" or "Tier 3 (rejected, no viable roll found)"
+
+**CLOSE Activity Updated Logic:**
+
+Recommend CLOSE only when:
+1. **Fundamental thesis has changed** (existing rule — you no longer want to own the underlying), OR
+2. **No viable roll exists**: After executing the Roll Search Algorithm, no candidate meets the ≥$1.00 net credit threshold AND no ultra-defensive roll (≤$20.00 debit) is acceptable
+
+When recommending CLOSE due to #2, set `roll_economics.roll_tier = "no_viable_roll"` and add `"no_viable_roll"` to `risk_flags`.
+
 ## INTERPRETING PREVIOUS ACTIVITY LOG
 
 You will receive previous monitor activities. Use them to:
@@ -358,6 +413,8 @@ Use consistent risk flag names. Key flags for open put monitors:
 - `breakdown_momentum`, `support_break` (technical)
 - `fundamental_deterioration`, `analyst_downgrade` (fundamental)
 - `profit_optimization` (optimization rolls)
+- `ultra_defensive_roll` (roll with net debit ≤$20, acceptable insurance cost)
+- `no_viable_roll` (no roll candidate meets premium-first policy thresholds)
 
 **Earnings flag definitions:**
 - `earnings_before_expiry`: Position expiration is AFTER earnings date (legacy flag, equivalent to `earnings_within_dte`)
@@ -385,6 +442,13 @@ Use consistent risk flag names. Key flags for open put monitors:
   "new_strike": null,
   "new_expiration": null,
   "estimated_roll_cost": null,
+  "roll_economics": {
+    "buyback_cost": 2.50,
+    "new_premium": 3.80,
+    "net_credit": 1.30,
+    "roll_tier": "credit or ultra_defensive or no_viable_roll",
+    "candidates_evaluated": 4
+  },
   "reason": "brief justification",
   "confidence": "high, medium, or low",
   "risk_flags": [],
@@ -462,7 +526,14 @@ ROLL activity:
   "new_strike": 195,
   "new_expiration": "2026-05-22",
   "estimated_roll_cost": -0.30,
-  "reason": "Stock broke below $200 strike on sector weakness. |Delta| 0.58, earnings in 3 weeks and expiration is AFTER earnings (earnings_within_dte). Per MANDATORY EARNINGS GATE: earnings 15-30 days away with expiration after earnings → ROLL recommended. Roll down to $195 (below S2 support) and out to May to clear the earnings date.",
+  "roll_economics": {
+    "buyback_cost": 4.10,
+    "new_premium": 5.25,
+    "net_credit": 1.15,
+    "roll_tier": "credit",
+    "candidates_evaluated": 1
+  },
+  "reason": "Stock broke below $200 strike on sector weakness. |Delta| 0.58, earnings in 3 weeks and expiration is AFTER earnings (earnings_within_dte). Per MANDATORY EARNINGS GATE: earnings 15-30 days away with expiration after earnings → ROLL recommended. Roll economics: Buyback cost $4.10 (ask at $200 Apr 24), new premium $5.25 (bid at $195 May 22), net credit +$1.15 — Tier 1 (preferred). Roll down to $195 (below S2 support) and out to May to clear the earnings date.",
   "confidence": "high",
   "risk_flags": ["approaching_itm", "earnings_approaching", "earnings_within_dte", "high_delta"],
   "earnings_analysis": {
@@ -495,7 +566,14 @@ Profit optimization ROLL_UP activity:
   "new_strike": 220,
   "new_expiration": "2026-04-24",
   "estimated_roll_cost": 0.70,
-  "reason": "Current put is deep OTM (14.3% above strike), |delta| 0.08 — nearly worthless. All indicators unanimous: oscillators Buy, MAs Buy, no earnings before expiry, analyst consensus Buy, IV low and stable. Rolling up to $220 (3.7% below price, |delta| ~0.25) collects meaningful premium while maintaining safe OTM margin. All 9 profit-optimization conditions met.",
+  "roll_economics": {
+    "buyback_cost": 0.20,
+    "new_premium": 0.90,
+    "net_credit": 0.70,
+    "roll_tier": "credit",
+    "candidates_evaluated": 1
+  },
+  "reason": "Current put is deep OTM (14.3% above strike), |delta| 0.08 — nearly worthless. All indicators unanimous: oscillators Buy, MAs Buy, no earnings before expiry, analyst consensus Buy, IV low and stable. Roll economics: Buyback cost $0.20 (ask at $200), new premium $0.90 (bid at $220), net credit +$0.70. Rolling up to $220 (3.7% below price, |delta| ~0.25) collects meaningful premium while maintaining safe OTM margin. All 9 profit-optimization conditions met.",
   "confidence": "high",
   "risk_flags": ["profit_optimization"],
   "earnings_analysis": {
