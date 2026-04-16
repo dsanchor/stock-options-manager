@@ -197,10 +197,10 @@ function applyDashboardFilters() {
     document.querySelectorAll('.activity-feed .activity-item').forEach(item => {
         const ts = new Date(item.dataset.timestamp);
         const sym = item.dataset.symbol || '';
-        const agent = item.dataset.agentType || '';
+        const agent = (item.dataset.agentType || '').trim();
         const timeOk = ts >= cutoff;
         const symOk = !selectedSymbol || sym === selectedSymbol;
-        const agentOk = !selectedAgent || agent === selectedAgent;
+        const agentOk = !selectedAgent || agent === selectedAgent.trim();
         item.style.display = (timeOk && symOk && agentOk) ? '' : 'none';
     });
 }
@@ -216,9 +216,9 @@ function applyTableFilter(pillContainerId, tableSelector, agentFilterId) {
     document.querySelectorAll(tableSelector + ' tbody tr').forEach(row => {
         if (row.classList.contains('pos-detail-row')) return;
         const ts = new Date(row.dataset.timestamp);
-        const agent = row.dataset.agentType || '';
+        const agent = (row.dataset.agentType || '').trim();
         const timeOk = ts >= cutoff;
-        const agentOk = !selectedAgent || agent === selectedAgent;
+        const agentOk = !selectedAgent || agent === selectedAgent.trim();
         const show = timeOk && agentOk;
         row.style.display = show ? '' : 'none';
         if (show) visible++;

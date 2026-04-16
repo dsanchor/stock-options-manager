@@ -929,7 +929,8 @@ async def dashboard(request: Request):
 
     activity = []
     for d in all_activities[:100]:
-        agent_key = d.get("agent_type", "")
+        agent_key = str(d.get("agent_type", ""))
+        d["_agent_key"] = agent_key
         d["_agent_label"] = AGENT_TYPES.get(agent_key, {}).get(
             "label", agent_key)
         activity.append(d)
@@ -989,6 +990,7 @@ async def symbol_detail_page(request: Request, symbol: str):
         acts = cosmos.get_recent_activities(
             symbol.upper(), agent_type, max_entries=50)
         for d in acts:
+            d["_agent_key"] = str(d.get("agent_type", ""))
             d["_agent_label"] = meta["label"]
         activities.extend(acts)
         
@@ -996,6 +998,7 @@ async def symbol_detail_page(request: Request, symbol: str):
         alts = cosmos.get_recent_alerts(
             symbol.upper(), agent_type, max_entries=30)
         for s in alts:
+            s["_agent_key"] = str(s.get("agent_type", ""))
             s["_agent_label"] = meta["label"]
         activities.extend(alts)
     

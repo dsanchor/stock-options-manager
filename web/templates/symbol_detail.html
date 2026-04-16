@@ -403,7 +403,7 @@
             </thead>
             <tbody>
                 {% for d in activities %}
-                <tr class="clickable-row" data-href="/activities/{{ d.id }}" data-timestamp="{{ d.timestamp[:19] }}" data-agent-type="{{ d.agent_type }}" data-is-alert="{{ 'true' if d.is_alert else 'false' }}">
+                <tr class="clickable-row" data-href="/activities/{{ d.id }}" data-timestamp="{{ d.timestamp[:19] }}" data-agent-type="{{ d._agent_key | default('', true) }}" data-is-alert="{{ 'true' if d.is_alert else 'false' }}">
                     <td class="mono">{{ d.timestamp[:19] }}</td>
                     <td>{{ d._agent_label }}</td>
                     <td>
