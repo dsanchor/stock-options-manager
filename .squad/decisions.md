@@ -2143,3 +2143,44 @@ When running multiple sequential background tasks:
 
 ---
 
+### 24. Agent Type Filter — Dynamic Population from DOM
+
+**Date:** 2026-04-16  
+**Author:** Rusty (Agent Dev)  
+**Status:** ✅ Implemented  
+**Impact:** Dashboard and Symbol Detail UX
+
+#### Context
+
+Dashboard Recent Activity and symbol detail Recent Activities sections needed agent type filtering. Options could be passed server-side or built client-side.
+
+#### Decision
+
+Populate the agent type dropdown options dynamically from the DOM (same pattern as the symbol filter) rather than injecting them from the server. This avoids coupling the JS to the Python `AGENT_TYPES` dict and means any new agent type automatically appears once it has activity items.
+
+#### Implementation
+
+**Files Modified:**
+- `web/static/app.js` — Filter logic + dynamic population from data-agent-type attributes (~80 lines)
+- `web/templates/dashboard.html` — Added `#activity-agent-filter` select + `data-agent-type` attribute
+- `web/templates/symbol_detail.html` — Added `#sym-activity-agent-filter` select + `data-agent-type` attribute
+
+**Pattern:**
+1. Activity/alert rows include `data-agent-type` attribute with the agent type value
+2. Filter dropdown dynamically collects unique agent types from visible rows on page load
+3. JavaScript filtering hides/shows rows based on selected filter value
+4. "All" option shows everything; each agent type shows only that agent's activities
+
+#### Trade-off
+
+If an agent type has zero recent activity, it won't appear in the dropdown. This is acceptable since filtering an absent type would yield no results anyway.
+
+#### Rationale
+
+- **DRY:** Don't duplicate agent type list in Python + JavaScript
+- **Automatic:** New agent types appear in filter as soon as they generate activities
+- **Consistent:** Uses same DOM-scanning pattern as symbol filter
+- **No Server Changes:** Frontend-only implementation
+
+---
+
