@@ -192,34 +192,42 @@ function applyDashboardFilters() {
     const selectedSymbol = symbolSelect ? symbolSelect.value : '';
     const agentSelect = document.getElementById('activity-agent-filter');
     const selectedAgent = agentSelect ? agentSelect.value : '';
+    const confSelect = document.getElementById('activity-confidence-filter');
+    const selectedConf = confSelect ? confSelect.value : '';
     const cutoff = cutoffDate(days);
     
     document.querySelectorAll('.activity-feed .activity-item').forEach(item => {
         const ts = new Date(item.dataset.timestamp);
         const sym = item.dataset.symbol || '';
         const agent = (item.dataset.agentType || '').trim();
+        const conf = (item.dataset.confidence || '').trim();
         const timeOk = ts >= cutoff;
         const symOk = !selectedSymbol || sym === selectedSymbol;
         const agentOk = !selectedAgent || agent === selectedAgent.trim();
-        item.style.display = (timeOk && symOk && agentOk) ? '' : 'none';
+        const confOk = !selectedConf || conf === selectedConf;
+        item.style.display = (timeOk && symOk && agentOk && confOk) ? '' : 'none';
     });
 }
 
-function applyTableFilter(pillContainerId, tableSelector, agentFilterId) {
+function applyTableFilter(pillContainerId, tableSelector, agentFilterId, confFilterId) {
     const activePill = document.querySelector('#' + pillContainerId + ' .pill.active');
     const days = activePill ? parseInt(activePill.dataset.range, 10) : 7;
     const cutoff = cutoffDate(days);
     const agentSelect = agentFilterId ? document.getElementById(agentFilterId) : null;
     const selectedAgent = agentSelect ? agentSelect.value : '';
+    const confSelect = confFilterId ? document.getElementById(confFilterId) : null;
+    const selectedConf = confSelect ? confSelect.value : '';
     let visible = 0;
     
     document.querySelectorAll(tableSelector + ' tbody tr').forEach(row => {
         if (row.classList.contains('pos-detail-row')) return;
         const ts = new Date(row.dataset.timestamp);
         const agent = (row.dataset.agentType || '').trim();
+        const conf = (row.dataset.confidence || '').trim();
         const timeOk = ts >= cutoff;
         const agentOk = !selectedAgent || agent === selectedAgent.trim();
-        const show = timeOk && agentOk;
+        const confOk = !selectedConf || conf === selectedConf;
+        const show = timeOk && agentOk && confOk;
         row.style.display = show ? '' : 'none';
         if (show) visible++;
     });
@@ -238,7 +246,7 @@ document.querySelectorAll('.filter-pills').forEach(container => {
             if (container.id === 'activity-time-filter') {
                 applyDashboardFilters();
             } else if (container.id === 'sym-activity-time-filter') {
-                applyTableFilter('sym-activity-time-filter', '#activities-table', 'sym-activity-agent-filter');
+                applyTableFilter('sym-activity-time-filter', '#activities-table', 'sym-activity-agent-filter', 'sym-activity-confidence-filter');
             }
         });
     });
@@ -269,7 +277,21 @@ if (dashAgentFilter) {
 const symAgentFilter = document.getElementById('sym-activity-agent-filter');
 if (symAgentFilter) {
     symAgentFilter.addEventListener('change', function() {
-        applyTableFilter('sym-activity-time-filter', '#activities-table', 'sym-activity-agent-filter');
+        applyTableFilter('sym-activity-time-filter', '#activities-table', 'sym-activity-agent-filter', 'sym-activity-confidence-filter');
+    });
+}
+
+// Confidence filter on dashboard
+const dashConfFilter = document.getElementById('activity-confidence-filter');
+if (dashConfFilter) {
+    dashConfFilter.addEventListener('change', applyDashboardFilters);
+}
+
+// Confidence filter on symbol detail
+const symConfFilter = document.getElementById('sym-activity-confidence-filter');
+if (symConfFilter) {
+    symConfFilter.addEventListener('change', function() {
+        applyTableFilter('sym-activity-time-filter', '#activities-table', 'sym-activity-agent-filter', 'sym-activity-confidence-filter');
     });
 }
 
@@ -277,5 +299,5 @@ if (document.getElementById('activity-time-filter')) {
     applyDashboardFilters();
 }
 if (document.getElementById('sym-activity-time-filter')) {
-    applyTableFilter('sym-activity-time-filter', '#activities-table', 'sym-activity-agent-filter');
+    applyTableFilter('sym-activity-time-filter', '#activities-table', 'sym-activity-agent-filter', 'sym-activity-confidence-filter');
 }

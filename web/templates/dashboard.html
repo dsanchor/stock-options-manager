@@ -130,11 +130,17 @@
                 <option value="{{ key }}">{{ meta.label }}</option>
                 {% endfor %}
             </select>
+            <select id="activity-confidence-filter" class="filter-select">
+                <option value="">All Confidence</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+            </select>
         </div>
     </div>
     <div class="activity-feed">
         {% for item in activity %}
-        <div class="activity-item clickable-row" data-timestamp="{{ item.timestamp[:19] }}" data-symbol="{{ item.symbol }}" data-agent-type="{{ item._agent_key | default('', true) }}" data-activity-id="{{ item.id }}" data-href="/activities/{{ item.id }}">
+        <div class="activity-item clickable-row" data-timestamp="{{ item.timestamp[:19] }}" data-symbol="{{ item.symbol }}" data-agent-type="{{ item._agent_key | default('', true) }}" data-confidence="{{ item.confidence | default('', true) }}" data-activity-id="{{ item.id }}" data-href="/activities/{{ item.id }}">
             <div class="activity-time">{{ item.timestamp[:19] }}</div>
             {% if item.is_alert %}
             <span class="alert-indicator" title="Alert">📢</span>

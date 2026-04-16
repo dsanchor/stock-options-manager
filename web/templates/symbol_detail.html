@@ -383,6 +383,12 @@
                 <option value="{{ key }}">{{ meta.label }}</option>
                 {% endfor %}
             </select>
+            <select id="sym-activity-confidence-filter" class="filter-select">
+                <option value="">All Confidence</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+            </select>
             <span class="card-badge">{{ activities | length }}</span>
         </div>
     </div>
@@ -403,7 +409,7 @@
             </thead>
             <tbody>
                 {% for d in activities %}
-                <tr class="clickable-row" data-href="/activities/{{ d.id }}" data-timestamp="{{ d.timestamp[:19] }}" data-agent-type="{{ d._agent_key | default('', true) }}" data-is-alert="{{ 'true' if d.is_alert else 'false' }}">
+                <tr class="clickable-row" data-href="/activities/{{ d.id }}" data-timestamp="{{ d.timestamp[:19] }}" data-agent-type="{{ d._agent_key | default('', true) }}" data-confidence="{{ d.confidence | default('', true) }}" data-is-alert="{{ 'true' if d.is_alert else 'false' }}">
                     <td class="mono">{{ d.timestamp[:19] }}</td>
                     <td>{{ d._agent_label }}</td>
                     <td>
