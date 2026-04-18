@@ -1042,13 +1042,12 @@ class TradingViewFetcher:
                 if data:
                     data["source"] = "embedded_json"
                 else:
-                    pro_symbol = _extract_pro_symbol(soup)
-                    if pro_symbol:
-                        sym = _scanner_api_fetch(pro_symbol, _TECHNICALS_SCANNER_COLS, self._session)
-                        if sym:
-                            data = _build_technicals_dict(sym)
-                            data["source"] = "scanner_api"
-                            data["pro_symbol"] = pro_symbol
+                    pro_symbol = _extract_pro_symbol(soup) or full_symbol.replace("-", ":", 1)
+                    sym = _scanner_api_fetch(pro_symbol, _TECHNICALS_SCANNER_COLS, self._session)
+                    if sym:
+                        data = _build_technicals_dict(sym)
+                        data["source"] = "scanner_api"
+                        data["pro_symbol"] = pro_symbol
 
             if data is None:
                 logger.warning("No technicals data found for %s", full_symbol)
@@ -1103,13 +1102,12 @@ class TradingViewFetcher:
 
             # Try scanner API first for structured data
             data = None
-            pro_symbol = _extract_pro_symbol(soup)
-            if pro_symbol:
-                sym = _scanner_api_fetch(pro_symbol, _FORECAST_SCANNER_COLS, self._session)
-                if sym:
-                    data = _build_forecast_dict(sym)
-                    data["source"] = "scanner_api"
-                    data["pro_symbol"] = pro_symbol
+            pro_symbol = _extract_pro_symbol(soup) or full_symbol.replace("-", ":", 1)
+            sym = _scanner_api_fetch(pro_symbol, _FORECAST_SCANNER_COLS, self._session)
+            if sym:
+                data = _build_forecast_dict(sym)
+                data["source"] = "scanner_api"
+                data["pro_symbol"] = pro_symbol
             
             # Fall back to HTML extraction if scanner API failed
             if not data:
@@ -1170,13 +1168,12 @@ class TradingViewFetcher:
 
             # Try scanner API first for structured data
             data = None
-            pro_symbol = _extract_pro_symbol(soup)
-            if pro_symbol:
-                sym = _scanner_api_fetch(pro_symbol, _DIVIDEND_SCANNER_COLS, self._session)
-                if sym:
-                    data = _build_dividend_dict(sym)
-                    data["source"] = "scanner_api"
-                    data["pro_symbol"] = pro_symbol
+            pro_symbol = _extract_pro_symbol(soup) or full_symbol.replace("-", ":", 1)
+            sym = _scanner_api_fetch(pro_symbol, _DIVIDEND_SCANNER_COLS, self._session)
+            if sym:
+                data = _build_dividend_dict(sym)
+                data["source"] = "scanner_api"
+                data["pro_symbol"] = pro_symbol
             
             # Fall back to HTML extraction if scanner API failed
             if not data:
