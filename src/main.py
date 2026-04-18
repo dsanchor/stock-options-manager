@@ -28,6 +28,7 @@ class OptionsAgentScheduler:
         self.context_provider = None
         self._cron_changed = False
         self._summary_cron_changed = False
+        self._options_chain_cron_changed = False
         self._last_config_reload = None
         self._config_reload_interval = 60  # seconds
     
@@ -44,6 +45,13 @@ class OptionsAgentScheduler:
         summary_config['cron'] = new_cron
         self.config.config['summary_agent'] = summary_config
         self._summary_cron_changed = True
+    
+    def reschedule_options_chain(self, new_cron: str):
+        """Update options chain scheduler cron expression. The run loop will pick it up on next iteration."""
+        options_chain_config = self.config.config.get('options_chain_scheduler', {})
+        options_chain_config['cron'] = new_cron
+        self.config.config['options_chain_scheduler'] = options_chain_config
+        self._options_chain_cron_changed = True
     
     def setup(self):
         """Initialize configuration, CosmosDB, and agent runner."""
@@ -97,6 +105,19 @@ class OptionsAgentScheduler:
             print(f"  Cron: {summary_cron}")
             print(f"  Timezone: {self.config.timezone}")
             print(f"  Activity count: {summary_activity_count}")
+        else:
+            print(f"  Status: Disabled in config")
+        
+        # Log options chain scheduler configuration
+        options_chain_config = self.config.config.get('options_chain_scheduler', {})
+        options_chain_enabled = options_chain_config.get('enabled', True)
+        options_chain_cron = options_chain_config.get('cron', '0 * * * *')
+        
+        print(f"\nOptions Chain Scheduler Configuration:")
+        print(f"  Enabled: {options_chain_enabled}")
+        if options_chain_enabled:
+            print(f"  Cron: {options_chain_cron}")
+            print(f"  Timezone: {self.config.timezone}")
         else:
             print(f"  Status: Disabled in config")
     
@@ -161,6 +182,60 @@ class OptionsAgentScheduler:
             activity_count=activity_count
         )
     
+    def run_options_chain_fetch_job(self):
+        """Execute options chain fetch job (bridges async to sync for scheduler)."""
+        asyncio.run(self._run_options_chain_fetch_async())
+    
+    async def _run_options_chain_fetch_async(self):
+        """Fetch options chain data for all symbols and populate cache."""
+        options_chain_config = self.config.config.get('options_chain_scheduler', {})
+        if not options_chain_config.get('enabled', True):
+            print("⏭️  Options chain scheduler disabled in config")
+            return
+        
+        from .tv_data_fetcher import create_fetcher
+        from .tv_cache import get_tv_cache
+        
+        tz = pytz.timezone(self.config.timezone)
+        now_tz = datetime.now(tz)
+        print(f"\n{'~'*70}")
+        print(f"📈 Options Chain Fetcher - Scheduled run at {now_tz.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        print(f"{'~'*70}\n")
+        
+        symbols = self.cosmos.list_symbols()
+        cache = get_tv_cache()
+        
+        print(f"Fetching options chain data for {len(symbols)} symbols...")
+        success_count = 0
+        error_count = 0
+        
+        for sym_doc in symbols:
+            symbol = sym_doc["symbol"]
+            exchange = sym_doc.get("exchange", "NYSE")
+            full_symbol = f"{exchange}:{symbol}"
+            hyphen_symbol = f"{exchange}-{symbol}"
+            
+            try:
+                async with create_fetcher(self.config) as fetcher:
+                    result = await fetcher.fetch_options_chain(full_symbol)
+                    if result and not result.startswith("No valid response"):
+                        cache.set(hyphen_symbol, "options_chain", result, {
+                            "duration": 0, "size": len(result), "error": False, "cached": False,
+                            "source": "scheduled_fetch"
+                        })
+                        success_count += 1
+                        print(f"  ✓ {hyphen_symbol}: {len(result)} chars cached")
+                    else:
+                        error_count += 1
+                        print(f"  ✗ {hyphen_symbol}: no valid data")
+            except Exception as e:
+                error_count += 1
+                print(f"  ✗ {hyphen_symbol}: {str(e)}")
+        
+        print(f"\n{'~'*70}")
+        print(f"Options Chain Fetch Complete: {success_count} success, {error_count} errors")
+        print(f"{'~'*70}\n")
+    
     def signal_handler(self, sig, frame):
         """Handle graceful shutdown on Ctrl+C."""
         print("\n\nShutdown signal received. Stopping scheduler...")
@@ -180,6 +255,7 @@ class OptionsAgentScheduler:
             # Track if we need to update anything
             main_cron_changed = False
             summary_cron_changed = False
+            options_chain_cron_changed = False
             timezone_changed = False
             
             # Check scheduler settings
@@ -218,6 +294,25 @@ class OptionsAgentScheduler:
                     if key in summary_settings:
                         self.config.config['summary_agent'][key] = summary_settings[key]
             
+            # Check options chain scheduler settings
+            options_chain_settings = cosmos_settings.get('options_chain_scheduler', {})
+            new_options_chain_cron = options_chain_settings.get('cron')
+            current_options_chain_cron = self.config.config.get('options_chain_scheduler', {}).get('cron', '0 * * * *')
+            
+            if new_options_chain_cron and new_options_chain_cron != current_options_chain_cron:
+                if 'options_chain_scheduler' not in self.config.config:
+                    self.config.config['options_chain_scheduler'] = {}
+                self.config.config['options_chain_scheduler']['cron'] = new_options_chain_cron
+                options_chain_cron_changed = True
+            
+            # Update other options chain scheduler settings
+            if options_chain_settings:
+                if 'options_chain_scheduler' not in self.config.config:
+                    self.config.config['options_chain_scheduler'] = {}
+                for key in ['enabled']:
+                    if key in options_chain_settings:
+                        self.config.config['options_chain_scheduler'][key] = options_chain_settings[key]
+            
             # Set flags for the main loop to pick up
             if main_cron_changed:
                 self._cron_changed = True
@@ -229,6 +324,10 @@ class OptionsAgentScheduler:
             if summary_cron_changed:
                 self._summary_cron_changed = True
                 print(f"✓ Config reloaded from CosmosDB: summary cron changed to {new_summary_cron}")
+            
+            if options_chain_cron_changed:
+                self._options_chain_cron_changed = True
+                print(f"✓ Config reloaded from CosmosDB: options chain cron changed to {new_options_chain_cron}")
                 
         except Exception as e:
             # Don't crash the scheduler on config reload errors
@@ -261,19 +360,41 @@ class OptionsAgentScheduler:
         summary_next_run = None
         summary_cron = None
         
+        # Initialize options chain scheduler cron (if enabled)
+        options_chain_config = self.config.config.get('options_chain_scheduler', {})
+        options_chain_enabled = options_chain_config.get('enabled', True)
+        options_chain_cron_expr = options_chain_config.get('cron', '0 * * * *')
+        options_chain_next_run = None
+        options_chain_cron = None
+        
         if summary_enabled:
             try:
                 summary_cron = croniter(summary_cron_expr, now_tz)
                 summary_next_run = summary_cron.get_next(datetime)
-                print(f"\nMonitor Agents - Next run: {next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-                print(f"Summary Agent  - Next run: {summary_next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}")
             except (ValueError, KeyError) as e:
                 print(f"⚠️  Invalid summary agent cron expression '{summary_cron_expr}': {e}")
                 print(f"⚠️  Summary agent scheduling disabled")
                 summary_enabled = False
+        
+        if options_chain_enabled:
+            try:
+                options_chain_cron = croniter(options_chain_cron_expr, now_tz)
+                options_chain_next_run = options_chain_cron.get_next(datetime)
+            except (ValueError, KeyError) as e:
+                print(f"⚠️  Invalid options chain cron expression '{options_chain_cron_expr}': {e}")
+                print(f"⚠️  Options chain scheduling disabled")
+                options_chain_enabled = False
+        
+        # Display initial schedule
+        print(f"\nMonitor Agents        - Next run: {next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        if summary_enabled and summary_next_run:
+            print(f"Summary Agent         - Next run: {summary_next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}")
         else:
-            print(f"\nMonitor Agents - Next run: {next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-            print(f"Summary Agent  - Disabled")
+            print(f"Summary Agent         - Disabled")
+        if options_chain_enabled and options_chain_next_run:
+            print(f"Options Chain Fetcher - Next run: {options_chain_next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        else:
+            print(f"Options Chain Fetcher - Disabled")
         
         # Track when we last reloaded config
         self._last_config_reload = time.time()
@@ -314,6 +435,23 @@ class OptionsAgentScheduler:
                 except (ValueError, KeyError) as e:
                     print(f"⚠️  Invalid summary agent cron expression '{summary_cron_expr}': {e}")
                     summary_enabled = False
+            
+            # Check if options chain cron was updated from the web UI
+            if self._options_chain_cron_changed:
+                self._options_chain_cron_changed = False
+                options_chain_config = self.config.config.get('options_chain_scheduler', {})
+                options_chain_cron_expr = options_chain_config.get('cron', '0 * * * *')
+                try:
+                    tz = pytz.timezone(self.config.timezone)
+                    now_tz = datetime.now(tz)
+                    options_chain_cron = croniter(options_chain_cron_expr, now_tz)
+                    options_chain_next_run = options_chain_cron.get_next(datetime)
+                    options_chain_enabled = options_chain_config.get('enabled', True)
+                    print(f"Options chain scheduler cron rescheduled to: {options_chain_cron_expr}")
+                    print(f"Next scheduled run: {options_chain_next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}\n")
+                except (ValueError, KeyError) as e:
+                    print(f"⚠️  Invalid options chain cron expression '{options_chain_cron_expr}': {e}")
+                    options_chain_enabled = False
 
             now_tz = datetime.now(tz)
             
@@ -327,6 +465,13 @@ class OptionsAgentScheduler:
             if summary_enabled and summary_next_run and now_tz >= summary_next_run:
                 self.run_summary_agent_job()
                 summary_next_run = summary_cron.get_next(datetime)
+                print(f"Summary Agent  - Next run: {summary_next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}\n")
+            
+            # Check options chain scheduler
+            if options_chain_enabled and options_chain_next_run and now_tz >= options_chain_next_run:
+                self.run_options_chain_fetch_job()
+                options_chain_next_run = options_chain_cron.get_next(datetime)
+                print(f"Options Chain Fetcher - Next run: {options_chain_next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}\n")
                 print(f"Summary Agent  - Next run: {summary_next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}\n")
             
             time.sleep(1)

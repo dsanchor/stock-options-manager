@@ -171,3 +171,32 @@ class Config:
     def tradingview_randomize_symbols(self) -> bool:
         """Shuffle symbol order to vary access patterns (default: True)."""
         return bool(self.config.get('tradingview', {}).get('randomize_symbols', True))
+
+    # ── Summary Agent ──────────────────────────────────────────────────
+
+    @property
+    def summary_agent_enabled(self) -> bool:
+        """Whether summary agent is enabled (default: True)."""
+        return bool(self.config.get('summary_agent', {}).get('enabled', True))
+
+    @property
+    def summary_agent_cron(self) -> str:
+        """Summary agent cron expression (default: '0 8 * * *')."""
+        return str(self.config.get('summary_agent', {}).get('cron', '0 8 * * *'))
+
+    @property
+    def summary_agent_activity_count(self) -> int:
+        """Number of recent activities per symbol to analyze (default: 3)."""
+        return int(self.config.get('summary_agent', {}).get('activity_count', 3))
+
+    # ── Options Chain Scheduler ────────────────────────────────────────
+
+    @property
+    def options_chain_scheduler_enabled(self) -> bool:
+        """Whether options chain scheduler is enabled (default: True)."""
+        return bool(self.config.get('options_chain_scheduler', {}).get('enabled', True))
+
+    @property
+    def options_chain_scheduler_cron(self) -> str:
+        """Options chain scheduler cron expression (default: '0 * * * *')."""
+        return str(self.config.get('options_chain_scheduler', {}).get('cron', '0 * * * *'))

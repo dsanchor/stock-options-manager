@@ -1277,6 +1277,11 @@ async def settings_config_page(request: Request):
     summary_cron = summary_cfg.get("cron", "0 8 * * *")
     summary_activity_count = summary_cfg.get("activity_count", 3)
     
+    # Options chain scheduler settings
+    options_chain_cfg = config.get("options_chain_scheduler", {})
+    options_chain_enabled = options_chain_cfg.get("enabled", True)
+    options_chain_cron = options_chain_cfg.get("cron", "0 * * * *")
+    
     # Resolve env vars for display
     if telegram_bot_token.startswith("${"):
         telegram_bot_token = _resolve_env(telegram_bot_token)
@@ -1334,6 +1339,19 @@ async def settings_config_page(request: Request):
         except Exception:
             summary_next_run = "Invalid cron"
     
+    # Calculate scheduler times for Options Chain Scheduler
+    options_chain_last_run = ""
+    options_chain_next_run = ""
+    
+    if options_chain_cron:
+        try:
+            now_tz = datetime.now(tz)
+            cron = croniter(options_chain_cron, now_tz)
+            next_run_dt = cron.get_next(datetime)
+            options_chain_next_run = _format_time_dual_tz(next_run_dt, timezone)
+        except Exception:
+            options_chain_next_run = "Invalid cron"
+    
     return templates.TemplateResponse("settings_config.html", {
         "request": request,
         "cron_expr": cron_expr,
@@ -1348,6 +1366,10 @@ async def settings_config_page(request: Request):
         "monitoring_next_run": monitoring_next_run,
         "summary_last_run": summary_last_run,
         "summary_next_run": summary_next_run,
+        "options_chain_enabled": options_chain_enabled,
+        "options_chain_cron": options_chain_cron,
+        "options_chain_last_run": options_chain_last_run,
+        "options_chain_next_run": options_chain_next_run,
     })
 
 
@@ -1443,6 +1465,42 @@ async def settings_config_save(request: Request):
             config["summary_agent"]["activity_count"] = summary_activity_count
             _write_config(config)
             saved.append("Summary agent")
+            
+            # Notify scheduler of change
+            scheduler = getattr(request.app.state, "scheduler", None)
+            if scheduler is not None:
+                scheduler.reschedule_summary(summary_cron)
+        except (ValueError, KeyError):
+            pass
+
+    # Options chain scheduler settings
+    options_chain_enabled = form.get("options_chain_enabled") == "true"
+    options_chain_cron = str(form.get("options_chain_cron", "0 * * * *")).strip()
+    
+    # Validate cron if provided
+    if options_chain_cron:
+        try:
+            croniter(options_chain_cron)
+            # Update CosmosDB first
+            if cosmos:
+                cosmos_settings = _load_settings_from_cosmos(cosmos) or {}
+                cosmos_settings.setdefault("options_chain_scheduler", {})
+                cosmos_settings["options_chain_scheduler"]["enabled"] = options_chain_enabled
+                cosmos_settings["options_chain_scheduler"]["cron"] = options_chain_cron
+                _save_settings_to_cosmos(cosmos, cosmos_settings)
+            
+            # Also update config.yaml for backward compat
+            config = _load_config()
+            config.setdefault("options_chain_scheduler", {})
+            config["options_chain_scheduler"]["enabled"] = options_chain_enabled
+            config["options_chain_scheduler"]["cron"] = options_chain_cron
+            _write_config(config)
+            saved.append("Options chain scheduler")
+            
+            # Notify scheduler of change
+            scheduler = getattr(request.app.state, "scheduler", None)
+            if scheduler is not None:
+                scheduler.reschedule_options_chain(options_chain_cron)
         except (ValueError, KeyError):
             pass
 
@@ -1469,6 +1527,11 @@ async def settings_config_save(request: Request):
     sum_enabled = summary_cfg.get("enabled", True)
     sum_cron = summary_cfg.get("cron", "0 8 * * *")
     sum_activity_count = summary_cfg.get("activity_count", 3)
+    
+    # Options chain scheduler settings
+    options_chain_cfg = config.get("options_chain_scheduler", {})
+    oc_enabled = options_chain_cfg.get("enabled", True)
+    oc_cron = options_chain_cfg.get("cron", "0 * * * *")
 
     return templates.TemplateResponse("settings_config.html", {
         "request": request,
@@ -1481,6 +1544,8 @@ async def settings_config_save(request: Request):
         "summary_enabled": sum_enabled,
         "summary_cron": sum_cron,
         "summary_activity_count": sum_activity_count,
+        "options_chain_enabled": oc_enabled,
+        "options_chain_cron": oc_cron,
     })
 
 

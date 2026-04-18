@@ -30,6 +30,10 @@ summary_agent:
   cron: "0 8 * * *"  # 8 AM daily (America/New_York timezone)
   activity_count: 3  # Latest N activities per symbol
 
+options_chain_scheduler:
+  enabled: true
+  cron: "0 * * * *"  # Every hour
+
 # Anti-bot detection settings for TradingView data fetching
 tradingview:
   request_delay_min: 1.0   # Minimum seconds between requests (default: 1.0)

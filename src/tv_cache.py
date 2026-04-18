@@ -17,10 +17,11 @@ logger = logging.getLogger(__name__)
 
 RESOURCES = ("overview", "technicals", "forecast", "dividends", "options_chain")
 
-# Default TTL per resource (seconds).  Options chains change rapidly;
-# overview / dividends are more stable.
+# Default TTL per resource (seconds).  Options chains are now populated
+# by a scheduled fetcher (every hour), so we give them longer TTL.
+# Overview / dividends are more stable.
 DEFAULT_TTL: dict[str, int] = {
-    "options_chain": 300,     # 5 min
+    "options_chain": 7200,    # 2 hours (scheduler runs hourly)
     "technicals": 600,        # 10 min
     "forecast": 600,          # 10 min
     "overview": 1800,         # 30 min

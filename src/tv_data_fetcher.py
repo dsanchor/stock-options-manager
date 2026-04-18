@@ -1462,13 +1462,41 @@ class TradingViewFetcher:
 
             return result
 
-        options_chain = await _timed_fetch(
-            "options_chain",
-            lambda fs=full_symbol: self.fetch_options_chain(fs),
-            f"options_chain({symbol})",
-        )
-        logger.info("Options chain fetched: %d chars", len(options_chain))
+        # ── Options chain: cache-only (populated by scheduled fetcher) ──
+        # Unlike other resources, options_chain is populated by a scheduled
+        # background job. We prefer cache and only fall back to live fetch
+        # if no cached data exists (not affected by force_refresh).
+        if cache:
+            entry = cache.get(symbol, "options_chain")
+            if entry is not None:
+                _cached_resources.append("options_chain")
+                self.last_fetch_stats["options_chain"] = {
+                    **entry.fetch_stats,
+                    "cached": True,
+                    "cache_age": round(time.time() - entry.timestamp, 1),
+                }
+                options_chain = entry.data
+                logger.info("Options chain: %d chars (source: cache, age: %.1fs)",
+                           len(options_chain), time.time() - entry.timestamp)
+            else:
+                # Fallback: no cached data, fetch live and cache
+                logger.info("Options chain: cache miss, fetching live as fallback")
+                options_chain = await _timed_fetch(
+                    "options_chain",
+                    lambda fs=full_symbol: self.fetch_options_chain(fs),
+                    f"options_chain({symbol})",
+                )
+                logger.info("Options chain: %d chars (source: live fallback)", len(options_chain))
+        else:
+            # No cache provided — fetch live (backward compat)
+            options_chain = await _timed_fetch(
+                "options_chain",
+                lambda fs=full_symbol: self.fetch_options_chain(fs),
+                f"options_chain({symbol})",
+            )
+            logger.info("Options chain: %d chars (source: live, no cache)", len(options_chain))
 
+        # ── Other resources: normal cache behavior ──
         overview = await _timed_fetch(
             "overview",
             lambda fs=full_symbol: self.fetch_overview(fs),

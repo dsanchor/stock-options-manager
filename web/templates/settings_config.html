@@ -119,6 +119,48 @@
                     </div>
                 </div>
             </div>
+            
+            <!-- Options Chain Scheduler Section -->
+            <div style="margin-top:1.5rem;">
+                <h3 style="font-size:0.95rem; font-weight:600; margin:0 0 0.75rem 0; padding-bottom:0.5rem; border-bottom:1px solid var(--border); color:var(--text);">Options Chain Scheduler</h3>
+                
+                <!-- Enable Options Chain Scheduler Checkbox -->
+                <div style="margin-bottom:1rem;">
+                    <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+                        <input type="checkbox" name="options_chain_enabled" value="true" {{ 'checked' if options_chain_enabled }}>
+                        <span style="font-size:0.9rem;">Enable options chain scheduler</span>
+                    </label>
+                    <small style="display:block; margin-top:0.3rem; margin-left:1.5rem; color:var(--text-muted); font-size:0.75rem;">
+                        Periodically fetch and cache options chain data for all symbols. Reduces latency for agents and chat queries.
+                    </small>
+                </div>
+
+                <div style="margin-bottom:0.75rem;">
+                    <label style="display:block; font-size:0.85rem; color:var(--text-muted); margin-bottom:0.3rem;">
+                        Cron Expression
+                        <span style="font-size:0.8rem; color:var(--text-muted); font-weight:normal;" title="When to fetch options chain data (uses main scheduler timezone)">ⓘ</span>
+                    </label>
+                    <input type="text" name="options_chain_cron" value="{{ options_chain_cron }}" placeholder="0 * * * *" spellcheck="false"
+                           style="width:100%; padding:0.6rem 0.8rem; background:var(--bg); border:1px solid var(--border); color:var(--text); font-family:var(--font-mono); font-size:0.85rem; border-radius:var(--radius);">
+                    <small style="display:block; margin-top:0.3rem; color:var(--text-muted); font-size:0.75rem;">Example: <code>0 * * * *</code> = every hour</small>
+                </div>
+                
+                <!-- Last run and Next run displays for Options Chain Scheduler -->
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
+                    <div>
+                        <label style="display:block; font-size:0.85rem; color:var(--text-muted); margin-bottom:0.3rem;">Last Run</label>
+                        <div style="padding:0.5rem 0.8rem; background:var(--bg-input); border:1px solid var(--border); color:var(--text-muted); font-family:var(--font-mono); font-size:0.85rem; border-radius:var(--radius);">
+                            {{ options_chain_last_run or "Never" }}
+                        </div>
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:0.85rem; color:var(--text-muted); margin-bottom:0.3rem;">Next Run</label>
+                        <div style="padding:0.5rem 0.8rem; background:var(--bg-input); border:1px solid var(--border); color:var(--text-muted); font-family:var(--font-mono); font-size:0.85rem; border-radius:var(--radius);">
+                            {{ options_chain_next_run or "N/A" }}
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
