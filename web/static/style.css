@@ -159,10 +159,39 @@ h1, h2, h3, h4, h5, h6 {
     display: flex;
     align-items: center;
     justify-content: center;
+    border-color: var(--accent-blue);
+    border-radius: var(--radius-pill);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.summary-card-action:hover {
+    background: rgba(73,79,223,0.15);
 }
 .summary-card-action .btn-trigger {
     font-size: 0.9rem;
     white-space: nowrap;
+    border: none;
+    background: transparent;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    color: inherit;
+}
+.summary-card-action:has(.btn-trigger.running) {
+    border-color: var(--accent-orange);
+    color: var(--accent-orange);
+}
+.summary-card-action:has(.btn-trigger.running):hover {
+    background: transparent;
+    cursor: default;
+}
+.summary-card-action:has(.btn-trigger.done) {
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+}
+.summary-card-action:has(.btn-trigger.error) {
+    border-color: var(--accent-red);
+    color: var(--accent-red);
 }
 
 /* Data error indicator in activity feed */
