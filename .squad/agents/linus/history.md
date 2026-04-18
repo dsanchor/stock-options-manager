@@ -1244,3 +1244,58 @@ Changed alert detection from whitelist (checking specific activities like SELL, 
 - `src/cosmos_db.py` — `get_recent_activities_by_symbol()` method (lines 667-700)
 
 **Key Learning**: When aggregating multi-dimensional data (symbol × agent_type), ensure per-dimension limits to avoid skewing toward the most active dimension. Cross-partition queries with `TOP` need careful filtering to guarantee representation across all dimensions.
+
+## 2025-01-27 — Premium-First Roll Policy Implementation
+
+**What**: Added mandatory Premium-First Roll Policy section to both monitor instruction files (`tv_open_call_instructions.py` and `tv_open_put_instructions.py`). Enforces economic discipline on all roll recommendations by requiring agents to calculate roll economics before recommending any roll.
+
+**Why**: Previous instructions allowed agents to recommend rolls without calculating actual costs. This created risk of expensive defensive rolls that erode capital without systematic evaluation of alternatives. The new policy forces income-first thinking while allowing defensive rolls up to a $20 debit cap.
+
+**Policy Structure**:
+- **Tier 1 (Preferred)**: Net credit ≥$1.00 — roll generates income, approved automatically
+- **Tier 2 (Acceptable)**: Net debit ≤$20.00 — acceptable insurance cost to avoid assignment, requires `ultra_defensive_roll` risk flag
+- **Tier 3 (Rejected)**: Net debit >$20.00 — do NOT recommend, execute Roll Search Algorithm or CLOSE
+
+**Roll Search Algorithm**: When initial roll candidate fails, systematically search:
+1. Same strike, +1 week expiration
+2. ±1 strike increment (calls roll UP, puts roll DOWN), same expiration
+3. Combined: ±1 strike AND +1 week
+4. If all fail → CLOSE
+
+**New JSON Schema Fields**:
+```json
+"roll_economics": {
+  "buyback_cost": 2.50,      // ASK price of current option
+  "new_premium": 3.80,       // BID price of roll target
+  "net_credit": 1.30,        // new_premium - buyback_cost
+  "roll_tier": "credit",     // or "ultra_defensive" or "no_viable_roll"
+  "candidates_evaluated": 4  // how many roll candidates analyzed
+}
+```
+Set to `null` for WAIT, populated for all ROLL and CLOSE activities.
+
+**New Risk Flags**:
+- `ultra_defensive_roll`: Roll with net debit ≤$20, acceptable insurance cost
+- `no_viable_roll`: No roll candidate meets premium-first policy thresholds
+
+**Updated CLOSE Logic**: Now only recommended when (1) fundamental thesis changed, OR (2) no viable roll exists after executing Roll Search Algorithm. When CLOSE due to #2, set `roll_tier = "no_viable_roll"`.
+
+**Files Modified**:
+- `src/tv_open_call_instructions.py` — Added Premium-First Roll Policy section after Roll Candidate Selection (line ~325), updated CLOSE description, added roll_economics to JSON schema, added new risk flags, updated all ROLL examples to show math
+- `src/tv_open_put_instructions.py` — Same changes, put-specific (rolls DOWN for defensive moves)
+
+**Key Learning**: Agent instruction quality benefits from explicit economic calculations rather than subjective "cost-effective" judgments. Three-tier hierarchy (preferred/acceptable/rejected) provides clear decision boundaries while maintaining flexibility for defensive scenarios. Roll Search Algorithm prevents agents from giving up after first failed candidate — forces systematic evaluation of strike/expiration combinations. Options chain data is already available in Section 4, so calculations are straightforward: buyback cost = ask price of current, new premium = bid price of target.
+
+**Impact**:
+- Monitor agents now calculate and report exact roll economics for every ROLL and CLOSE recommendation
+- Transparent math in reason field allows user verification
+- Systematic search reduces missed opportunities for better roll candidates
+- $1 credit threshold aligns with income-first philosophy of covered call/put strategy
+- $20 debit cap prevents runaway losses while allowing reasonable defensive rolls
+
+**Research Basis**: 
+- Net credit threshold aligns with income generation goal of covered options strategy
+- $20 debit cap based on ~3% of typical $70-$200 strike positions — reasonable insurance cost relative to assignment consequences (forced stock sale at unfavorable price)
+- Roll Search Algorithm derived from common practitioner workflows: time extension first (cheapest), then strike adjustment, then combined
+
+**Future Considerations**: May need to adjust $1 and $20 thresholds based on real-world agent performance. Could add Tier 2.5 for larger accounts or adjust thresholds dynamically based on position size. Profit Optimization sections remain separate logic for OTM positions. Mandatory Earnings Gate remains independent and takes priority over roll economics.

@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
@@ -1085,7 +1086,10 @@ async def fetch_preview_page(request: Request, symbol: str):
 
 @app.get("/api/symbols/{symbol}/fetch-preview")
 async def api_fetch_preview(request: Request, symbol: str):
-    """Fetch raw TradingView data for a symbol and return as JSON."""
+    """Fetch raw TradingView data for a symbol and return as JSON.
+    
+    Always forces a fresh fetch (debug endpoint).
+    """
     try:
         cosmos = _get_cosmos(request)
     except RuntimeError as e:
@@ -1099,11 +1103,14 @@ async def api_fetch_preview(request: Request, symbol: str):
     full_symbol = doc["exchange"] + "-" + doc["symbol"]
 
     from src.tv_data_fetcher import create_fetcher
+    from src.tv_cache import get_tv_cache
     from src.config import Config
     try:
         config = Config()
         async with create_fetcher(config) as fetcher:
-            data = await fetcher.fetch_all(full_symbol)
+            data = await fetcher.fetch_all(full_symbol,
+                                           force_refresh=True,
+                                           cache=get_tv_cache())
             stats = fetcher.last_fetch_stats
     except Exception as e:
         logger.exception("Fetch preview failed for %s", full_symbol)
@@ -1118,13 +1125,53 @@ async def api_fetch_preview(request: Request, symbol: str):
             "size": st.get("size", len(text)),
             "duration_seconds": st.get("duration", 0),
             "error": st.get("error", False),
+            "cached": st.get("cached", False),
         }
 
     return JSONResponse({
         "symbol": full_symbol,
         "resources": resources,
+        "cached_resources": data.get("cached_resources", []),
     })
 
+
+@app.get("/api/cache/status")
+async def cache_status():
+    """Return TradingView cache statistics."""
+    from src.tv_cache import get_tv_cache
+    cache = get_tv_cache()
+    info = cache.stats()
+    # Add per-symbol detail
+    detail = {}
+    for sym in info["symbols"]:
+        entries = cache.get_all(sym)
+        detail[sym] = {
+            res: {
+                "size": entry.fetch_stats.get("size", len(entry.data)),
+                "age_seconds": round(time.time() - entry.timestamp, 1),
+            }
+            for res, entry in entries.items()
+        }
+    info["detail"] = detail
+    return JSONResponse(info)
+
+
+@app.delete("/api/cache")
+async def cache_clear(request: Request):
+    """Clear TradingView cache.  Pass ``{"symbol": "NYSE-MO"}`` to clear
+    a single symbol, or empty body to clear everything."""
+    from src.tv_cache import get_tv_cache
+    cache = get_tv_cache()
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    sym = body.get("symbol")
+    if sym:
+        cache.clear(sym)
+        return JSONResponse({"cleared": sym})
+    cache.clear_all()
+    return JSONResponse({"cleared": "all"})
 
 # ===========================================================================
 # Page Routes — Activity Detail
@@ -1647,11 +1694,16 @@ async def chat_page(request: Request):
 
 @app.post("/api/chat/fetch-symbol")
 async def fetch_symbol_data(request: Request):
-    """Fetch TradingView data for a symbol without saving to database."""
+    """Fetch TradingView data for a symbol without saving to database.
+    
+    Uses cache by default.  Pass ``"refresh": true`` in the JSON body
+    to force a fresh fetch from TradingView.
+    """
     body = await request.json()
     symbol = body.get("symbol", "").strip().upper()
     market = body.get("market", "").strip().upper()
     option_type = body.get("option_type", "").strip().lower()
+    force_refresh = body.get("refresh", False)
     
     if not symbol or not market:
         return JSONResponse(
@@ -1673,11 +1725,14 @@ async def fetch_symbol_data(request: Request):
         import sys
         sys.path.insert(0, str(PROJECT_ROOT / "src"))
         from tv_data_fetcher import create_fetcher
+        from tv_cache import get_tv_cache
         from config import Config
         
         config = Config()
         async with create_fetcher(config) as fetcher:
-            data = await fetcher.fetch_all(full_symbol)
+            data = await fetcher.fetch_all(full_symbol,
+                                           force_refresh=force_refresh,
+                                           cache=get_tv_cache())
             
             if data.get("tv_403", False):
                 return JSONResponse(
@@ -1690,7 +1745,8 @@ async def fetch_symbol_data(request: Request):
                 "market": market,
                 "option_type": option_type,
                 "full_symbol": full_symbol,
-                "data": data
+                "data": data,
+                "cached_resources": data.get("cached_resources", []),
             })
             
     except Exception as e:
@@ -1900,15 +1956,17 @@ async def symbol_chat_page(request: Request, symbol: str):
 
 
 async def _build_symbol_context(symbol: str, cosmos, 
-                                preferences: dict = None) -> dict:
+                                preferences: dict = None,
+                                force_refresh: bool = False) -> dict:
     """Build context data for a symbol (CosmosDB + TradingView).
     
     Args:
         symbol: Stock symbol
         cosmos: CosmosDB client
         preferences: Dict with keys: tradingview, positions, activities (all bool)
+        force_refresh: When True, bypass TradingView cache.
 
-    Returns dict with keys: context, exchange, display_name.
+    Returns dict with keys: context, exchange, display_name, cached_resources.
     """
     # Default to all enabled for backward compatibility
     if preferences is None:
@@ -1921,6 +1979,7 @@ async def _build_symbol_context(symbol: str, cosmos,
     context_parts: List[str] = []
     symbol_doc = None
     exchange = "NYSE"
+    cached_resources: list = []
 
     if cosmos:
         try:
@@ -1966,12 +2025,17 @@ async def _build_symbol_context(symbol: str, cosmos,
     if preferences.get('tradingview', True):
         try:
             from src.tv_data_fetcher import create_fetcher
+            from src.tv_cache import get_tv_cache
             from src.config import Config
 
             config = Config()
             full_symbol = f"{exchange}-{symbol}"
             async with create_fetcher(config) as fetcher:
-                tv_data = await fetcher.fetch_all(full_symbol)
+                tv_data = await fetcher.fetch_all(full_symbol,
+                                                  force_refresh=force_refresh,
+                                                  cache=get_tv_cache())
+
+            cached_resources = tv_data.get("cached_resources", [])
 
             tv_sections = []
             for section_key, section_label in [
@@ -2001,6 +2065,7 @@ async def _build_symbol_context(symbol: str, cosmos,
         "context": context_text,
         "exchange": exchange,
         "display_name": display_name,
+        "cached_resources": cached_resources,
     }
 
 
@@ -2025,7 +2090,10 @@ def _build_symbol_system_prompt(symbol: str, exchange: str,
 
 @app.post("/api/symbols/{symbol}/chat/context")
 async def symbol_chat_context(request: Request, symbol: str):
-    """Pre-fetch all heavy context (CosmosDB + TradingView) for a symbol."""
+    """Pre-fetch all heavy context (CosmosDB + TradingView) for a symbol.
+    
+    Pass ``"refresh": true`` in the JSON body to bypass the TradingView cache.
+    """
     symbol = symbol.upper()
     cosmos = getattr(request.app.state, "cosmos", None)
     
@@ -2033,11 +2101,14 @@ async def symbol_chat_context(request: Request, symbol: str):
     try:
         body = await request.json()
         preferences = body.get('preferences', {})
+        force_refresh = body.get('refresh', False)
     except Exception:
         preferences = {}
+        force_refresh = False
 
     try:
-        result = await _build_symbol_context(symbol, cosmos, preferences)
+        result = await _build_symbol_context(symbol, cosmos, preferences,
+                                             force_refresh=force_refresh)
         return JSONResponse(result)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)

@@ -22,6 +22,8 @@ from requests.exceptions import HTTPError
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
+from src import tv_cache
+
 logger = logging.getLogger(__name__)
 
 # ======================================================================
@@ -1367,12 +1369,23 @@ class TradingViewFetcher:
     # Public entry point
     # ------------------------------------------------------------------
 
-    async def fetch_all(self, symbol: str) -> dict:
-        """Fetch all data for a symbol.
+    async def fetch_all(self, symbol: str, *,
+                        force_refresh: bool = False,
+                        cache: "tv_cache.TVCache | None" = None) -> dict:
+        """Fetch all data for a symbol, with optional caching.
+
+        Args:
+            symbol: Hyphen-separated symbol (e.g. ``NYSE-MO``).
+            force_refresh: When *True* always fetch from TradingView and
+                update the cache.  When *False* (default) return cached
+                data for each resource if available and not expired.
+            cache: Optional :class:`tv_cache.TVCache` instance.  If *None*
+                caching is disabled entirely (backward-compatible).
 
         Returns dict with keys: overview, technicals, forecast, dividends,
-        options_chain, tv_403 (bool — True if ANY resource got 403), and
-        tv_403_resources (list of resource names that got 403).
+        options_chain, tv_403 (bool — True if ANY resource got 403),
+        tv_403_resources (list of resource names that got 403), and
+        cached_resources (list of resource names served from cache).
         Each resource is fetched independently — a 403 on one does NOT
         block the others.
         Timing stats are stored in ``self.last_fetch_stats``.
@@ -1380,18 +1393,43 @@ class TradingViewFetcher:
         # Convert NYSE-MO → NYSE:MO for TradingView URLs
         full_symbol = symbol.replace("-", ":")
 
-        logger.info("Pre-fetching TradingView data for %s", symbol)
+        logger.info("Pre-fetching TradingView data for %s (force_refresh=%s, cache=%s)",
+                     symbol, force_refresh, "enabled" if cache else "disabled")
 
         self.last_fetch_stats: dict[str, dict] = {}
         # Track which individual resources hit unrecoverable 403
         _failed_resources: list[str] = []
+        _cached_resources: list[str] = []
 
-        # Optional homepage warm-up
-        if self._warmup_enabled:
-            await self._warmup()
+        # Optional homepage warm-up (skip if everything can come from cache)
+        need_warmup = True
 
-        # Helper that wraps a single fetch with timing
+        # Helper that wraps a single fetch with timing + cache integration
         async def _timed_fetch(resource: str, factory, label: str) -> str:
+            nonlocal need_warmup
+
+            # --- cache read (when not forcing refresh) ---
+            if cache and not force_refresh:
+                async with cache.get_lock(symbol, resource):
+                    entry = cache.get(symbol, resource)
+                    if entry is not None:
+                        _cached_resources.append(resource)
+                        self.last_fetch_stats[resource] = {
+                            **entry.fetch_stats,
+                            "cached": True,
+                            "cache_age": round(time.time() - entry.timestamp, 1),
+                        }
+                        logger.info("Cache hit for %s/%s (age %.1fs)",
+                                    symbol, resource,
+                                    time.time() - entry.timestamp)
+                        return entry.data
+
+            # --- warm-up (only once, only if we actually need to fetch) ---
+            if need_warmup and self._warmup_enabled:
+                await self._warmup()
+                need_warmup = False
+
+            # --- actual fetch ---
             has_error = False
             start = time.time()
             try:
@@ -1405,11 +1443,18 @@ class TradingViewFetcher:
                 else:
                     raise
             duration = time.time() - start
-            self.last_fetch_stats[resource] = {
+            stats = {
                 "duration": round(duration, 2),
                 "size": len(result),
                 "error": has_error,
+                "cached": False,
             }
+            self.last_fetch_stats[resource] = stats
+
+            # --- cache write (only on success) ---
+            if cache and not has_error:
+                cache.set(symbol, resource, result, stats)
+
             return result
 
         options_chain = await _timed_fetch(
@@ -1455,6 +1500,7 @@ class TradingViewFetcher:
             "options_chain": options_chain,
             "tv_403": len(_failed_resources) > 0,
             "tv_403_resources": _failed_resources,
+            "cached_resources": _cached_resources,
         }
 
 

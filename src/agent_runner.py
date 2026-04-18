@@ -13,6 +13,7 @@ from agent_framework.azure import AzureOpenAIChatClient
 
 from .cosmos_db import CosmosDBService
 from .context import ContextProvider
+from .tv_cache import get_tv_cache as _get_tv_cache
 
 # Canonical timestamp format — used for ALL activity and alert log entries.
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -249,7 +250,9 @@ class AgentRunner:
             )
 
             # Pre-fetch all TradingView data
-            data = await fetcher.fetch_all(full_symbol)
+            data = await fetcher.fetch_all(full_symbol,
+                                           force_refresh=True,
+                                           cache=_get_tv_cache())
 
             # Track partial 403 errors — analysis continues with available data
             has_data_error = data.get("tv_403", False)
@@ -458,7 +461,9 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
                 position_id=position_id,
             )
 
-            data = await fetcher.fetch_all(full_symbol)
+            data = await fetcher.fetch_all(full_symbol,
+                                           force_refresh=True,
+                                           cache=_get_tv_cache())
 
             # Track partial 403 errors — analysis continues with available data
             has_data_error = data.get("tv_403", False)
