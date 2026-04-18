@@ -1189,28 +1189,36 @@ async def api_symbol_options_chain(request: Request, symbol: str):
         )
 
     raw = entry.data
-    # Strip header prefix if present
-    header_match = re.match(
-        r"OPTIONS CHAIN DATA\s*\([^)]*\)\s*:\s*\n", raw
-    )
-    if header_match:
-        raw = raw[header_match.end():]
+    # Strip header prefix if present (e.g. "OPTIONS CHAIN DATA (API intercepted, N responses captured):\n")
+    raw = re.sub(r"^OPTIONS CHAIN DATA\s*\([^)]*\)\s*:\s*\n*", "", raw).strip()
 
-    # Parse all JSON objects (multiple responses may be concatenated)
+    # Parse JSON — try whole string first, fall back to splitting on blank lines
     all_items: list = []
     data_time = None
-    for block in re.split(r"\n{2,}", raw):
-        block = block.strip()
-        if not block:
-            continue
-        try:
-            parsed = json.loads(block)
-            if isinstance(parsed, dict):
-                all_items.extend(parsed.get("data", []))
-                if "time" in parsed and data_time is None:
-                    data_time = parsed["time"]
-        except json.JSONDecodeError:
-            continue
+
+    def _extract(parsed: dict):
+        items = parsed.get("symbols", parsed.get("data", []))
+        all_items.extend(items)
+        nonlocal data_time
+        if "time" in parsed and data_time is None:
+            data_time = parsed["time"]
+
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            _extract(parsed)
+    except json.JSONDecodeError:
+        # Multiple JSON objects concatenated with blank lines
+        for block in re.split(r"\n{2,}", raw):
+            block = block.strip()
+            if not block:
+                continue
+            try:
+                parsed = json.loads(block)
+                if isinstance(parsed, dict):
+                    _extract(parsed)
+            except json.JSONDecodeError:
+                continue
 
     if not all_items:
         return JSONResponse(
@@ -1223,13 +1231,17 @@ async def api_symbol_options_chain(request: Request, symbol: str):
 
     for item in all_items:
         f = item.get("f")
-        if not f or len(f) < 14:
+        if not f or len(f) < 15:
             continue
         option_type = f[7]  # "call" or "put"
         expiration = str(f[4]) if f[4] is not None else None
         if not expiration:
             continue
 
+        # Field mapping (from TradingView scanner API):
+        # 0=ask, 1=bid, 2=currency, 3=delta, 4=expiration, 5=gamma,
+        # 6=iv, 7=option-type, 8=pricescale, 9=rho, 10=root,
+        # 11=strike, 12=theoPrice, 13=theta, 14=vega, 15=bid_iv, 16=ask_iv
         opt = {
             "symbol": item.get("s", ""),
             "strike": f[11],
@@ -1238,8 +1250,9 @@ async def api_symbol_options_chain(request: Request, symbol: str):
             "mid": f[12],
             "delta": f[3],
             "gamma": f[5],
-            "theta": f[9],
-            "vega": f[13],
+            "theta": f[13],
+            "vega": f[14],
+            "rho": f[9],
             "iv": f[6],
         }
 
