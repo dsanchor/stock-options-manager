@@ -1389,3 +1389,38 @@ Added error_count tracking to TradingView fetch runtime statistics. Errors track
 
 When running the full analysis, do not trigger all four agent blocks in parallel. Run each block sequentially — one at a time, waiting for each to complete before starting the next.
 
+
+---
+
+## Symbol Position Report — LLM Endpoint Pattern
+
+**Date:** 2026-07  
+**Author:** Rusty (Agent Dev)  
+**Status:** Implemented
+
+### Decision
+
+Added a new LLM report generation endpoint (`POST /api/symbols/{symbol}/report`) that follows the same Azure OpenAI calling pattern as `symbol_chat_api` but with:
+- Higher `max_completion_tokens` (4096 vs 2048) for comprehensive reports
+- Per-agent-type activity loading (last 3 each) instead of mixed last-3-overall
+- Cache-only TradingView data (no `force_refresh`) for speed
+- Structured Spanish-language system prompt with 7 mandatory sections
+
+### Rationale
+
+- Reports need more token budget than chat replies since they cover all sections
+- Per-agent activity breakdown gives better context than the chat's mixed approach
+- Using cache avoids 30-60s TradingView fetches during interactive report generation
+- Spanish output matches the user's communication language
+
+### Impact
+
+- `web/app.py`: New endpoint between fetch-preview page route and fetch-preview API
+- `web/templates/symbol_detail.html`: Report button + modal overlay + markdown renderer
+- No changes to existing endpoints or data models
+
+### Related Files
+
+- `.squad/orchestration-log/2026-04-18T0827-rusty-report.md` (Agent routing log)
+- `.squad/log/2026-04-18T0827-symbol-report.md` (Session summary)
+
