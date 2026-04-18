@@ -1084,6 +1084,188 @@ async def fetch_preview_page(request: Request, symbol: str):
     })
 
 
+# ===========================================================================
+# API — Symbol Position Report (LLM-generated)
+# ===========================================================================
+
+@app.post("/api/symbols/{symbol}/report")
+async def symbol_report_api(request: Request, symbol: str):
+    """Generate a comprehensive position/situation report for a symbol.
+
+    Uses cached TradingView data + CosmosDB activities and calls Azure OpenAI
+    to produce a structured markdown report in Spanish.
+    """
+    symbol = symbol.upper()
+
+    try:
+        cosmos = _get_cosmos(request)
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
+
+    symbol_doc = cosmos.get_symbol(symbol)
+    if not symbol_doc:
+        return JSONResponse({"error": f"Symbol {symbol} not found"},
+                            status_code=404)
+
+    exchange = symbol_doc.get("exchange", "NYSE")
+    context_parts: List[str] = []
+    cached_resources: list = []
+
+    # 1. Symbol config (positions, watchlist, etc.)
+    context_parts.append("--- Symbol Config ---")
+    context_parts.append(json.dumps(
+        {k: v for k, v in symbol_doc.items()
+         if k in ("symbol", "display_name", "exchange",
+                   "watchlist", "positions")},
+        indent=2, default=str))
+
+    # 2. Recent activities per agent type (last 3 each)
+    agent_activities: Dict[str, list] = {}
+    for agent_type in ("covered_call", "cash_secured_put",
+                       "open_call_monitor", "open_put_monitor"):
+        try:
+            acts = cosmos.get_recent_activities(symbol, agent_type,
+                                                max_entries=3)
+            acts = [_clean_doc(a) for a in acts]
+            agent_activities[agent_type] = acts
+        except Exception as exc:
+            logger.warning("report: failed to load %s activities: %s",
+                           agent_type, exc)
+            agent_activities[agent_type] = []
+
+    for agent_type, acts in agent_activities.items():
+        label = AGENT_TYPES.get(agent_type, {}).get("label", agent_type)
+        context_parts.append(f"\n--- Recent Activities: {label} (last 3) ---")
+        if acts:
+            for a in acts:
+                context_parts.append(json.dumps(a, indent=2, default=str))
+        else:
+            context_parts.append("(No recent activities)")
+
+    # 3. TradingView data (use cache, no force refresh)
+    try:
+        from src.tv_data_fetcher import create_fetcher
+        from src.tv_cache import get_tv_cache
+        from src.config import Config
+
+        config_obj = Config()
+        full_symbol = f"{exchange}-{symbol}"
+        async with create_fetcher(config_obj) as fetcher:
+            tv_data = await fetcher.fetch_all(full_symbol,
+                                              force_refresh=False,
+                                              cache=get_tv_cache())
+        cached_resources = tv_data.get("cached_resources", [])
+
+        for section_key, section_label in [
+            ("overview", "Overview"),
+            ("technicals", "Technicals"),
+            ("forecast", "Forecast"),
+            ("dividends", "Dividends"),
+            ("options_chain", "Options Chain"),
+        ]:
+            content = tv_data.get(section_key, "")
+            if content and not content.startswith("[ERROR"):
+                context_parts.append(
+                    f"\n--- TradingView {section_label} ---\n{content}")
+    except Exception as exc:
+        logger.warning("report: TradingView fetch failed: %s", exc)
+        context_parts.append("(Live TradingView data unavailable)")
+
+    context_text = "\n".join(context_parts)
+
+    # 4. Build system prompt for the report
+    system_prompt = (
+        f"Eres un analista experto en opciones sobre acciones. "
+        f"Genera un informe completo y estructurado en español sobre la "
+        f"situación actual de {symbol} ({exchange}:{symbol}).\n\n"
+        f"El informe DEBE tener exactamente estas secciones en formato "
+        f"Markdown:\n\n"
+        f"## 📊 Análisis Técnico\n"
+        f"(Tendencia, soportes/resistencias, RSI, medias móviles, "
+        f"perspectiva a corto y medio plazo)\n\n"
+        f"## 📅 Fechas Clave\n"
+        f"(Próxima fecha de earnings, fecha ex-dividendo)\n\n"
+        f"## 💰 Dividendos\n"
+        f"(Próximo dividendo si está anunciado, historial reciente, "
+        f"tasa de crecimiento, yield)\n\n"
+        f"## 📈 Posiciones Abiertas\n"
+        f"(Para cada posición abierta: tipo, strike, vencimiento, prima, "
+        f"evaluación de riesgo actual basada en las últimas actividades "
+        f"del monitor)\n\n"
+        f"## 🔍 Seguimiento de Estrategias\n"
+        f"### Covered Calls\n"
+        f"(Resumen de las últimas 3 actividades del agente covered_call — "
+        f"qué recomiendan)\n"
+        f"### Cash-Secured Puts\n"
+        f"(Resumen de las últimas 3 actividades del agente "
+        f"cash_secured_put — qué recomiendan)\n\n"
+        f"## 📋 Cadena de Opciones\n"
+        f"### Calls\n"
+        f"(Tabla con los datos de la cadena de opciones - calls)\n"
+        f"### Puts\n"
+        f"(Tabla con los datos de la cadena de opciones - puts)\n\n"
+        f"## 🎯 Resumen y Recomendaciones\n"
+        f"(Evaluación general de la situación que integre todo lo "
+        f"anterior, con recomendaciones concretas)\n\n"
+        f"Usa los datos proporcionados a continuación. Si algún dato no "
+        f"está disponible, indícalo claramente. Sé preciso con números y "
+        f"fechas. Usa tablas markdown cuando sea apropiado.\n\n"
+        f"Datos disponibles:\n{context_text}"
+    )
+
+    user_prompt = (
+        f"Genera el informe completo de situación para {symbol}. "
+        f"Incluye todos los datos disponibles y análisis detallado."
+    )
+
+    # 5. Call Azure OpenAI
+    config = _load_config()
+    azure_cfg = config.get("azure", {})
+    endpoint = _resolve_env(azure_cfg.get("project_endpoint", ""))
+    model = _resolve_env(azure_cfg.get("model_deployment", "gpt-4o"))
+    api_key = _resolve_env(azure_cfg.get("api_key", ""))
+
+    if not endpoint:
+        return JSONResponse({"error": "Azure endpoint not configured"},
+                            status_code=500)
+    if not api_key:
+        return JSONResponse({"error": "Azure API key not configured"},
+                            status_code=500)
+
+    if endpoint.endswith("/api"):
+        endpoint = endpoint[:-4]
+
+    try:
+        from openai import AzureOpenAI
+
+        client = AzureOpenAI(
+            azure_endpoint=endpoint,
+            api_key=api_key,
+            api_version="2024-12-01-preview",
+        )
+
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.7,
+            max_completion_tokens=4096,
+        )
+
+        report = response.choices[0].message.content
+        return JSONResponse({
+            "report": report,
+            "cached_resources": cached_resources,
+            "symbol": symbol,
+        })
+
+    except Exception as e:
+        logger.exception("Report generation failed for %s", symbol)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.get("/api/symbols/{symbol}/fetch-preview")
 async def api_fetch_preview(request: Request, symbol: str):
     """Fetch raw TradingView data for a symbol and return as JSON.

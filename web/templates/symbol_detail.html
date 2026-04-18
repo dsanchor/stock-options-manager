@@ -53,6 +53,28 @@
                 <span>Chat</span>
             </a>
         </span>
+        <span style="display:flex; align-items:center; gap:0.4rem;">
+            <button id="generateReport" class="switch-link" style="display:inline-flex; align-items:center; gap:0.4rem; text-decoration:none; color:inherit; padding:0.2rem 0.6rem; border-radius:16px; background:rgba(255,255,255,0.06); border:1px solid var(--border, #2d2d35); transition:background 0.2s; cursor:pointer; font:inherit;">
+                <span style="font-size:0.9rem;">📊</span>
+                <span>Report</span>
+            </button>
+        </span>
+    </div>
+</div>
+
+<!-- Report Modal Overlay -->
+<div id="reportOverlay" style="display:none; position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,0.7); overflow-y:auto; padding:2rem 1rem;">
+    <div style="max-width:900px; margin:0 auto; background:var(--card-bg, #1a1a2e); border:1px solid var(--border, #2d2d35); border-radius:12px; padding:1.5rem 2rem; position:relative;">
+        <button id="closeReport" style="position:absolute; top:1rem; right:1rem; background:none; border:none; color:var(--text, #e0e0e0); font-size:1.5rem; cursor:pointer; padding:0.2rem 0.5rem;">✕</button>
+        <div id="reportContent" style="color:var(--text, #e0e0e0); line-height:1.6;">
+            <div id="reportLoading" style="text-align:center; padding:3rem 0;">
+                <div style="font-size:2rem; margin-bottom:1rem;">⏳</div>
+                <p>Generando informe… esto puede tardar un momento.</p>
+            </div>
+            <div id="reportBody" style="display:none;"></div>
+            <div id="reportError" style="display:none; text-align:center; padding:2rem 0; color:#ff6b6b;"></div>
+        </div>
+        <div id="reportMeta" style="display:none; margin-top:1.5rem; padding-top:1rem; border-top:1px solid var(--border, #2d2d35); font-size:0.8rem; color:var(--text-secondary, #888);"></div>
     </div>
 </div>
 
@@ -925,6 +947,110 @@
                     runPosBtn.classList.remove('running', 'done', 'error');
                 }, 3000);
             });
+        });
+    }
+
+    // --- Report generation ---
+    var reportBtn = document.getElementById('generateReport');
+    var overlay = document.getElementById('reportOverlay');
+    var closeBtn = document.getElementById('closeReport');
+    var reportLoading = document.getElementById('reportLoading');
+    var reportBody = document.getElementById('reportBody');
+    var reportError = document.getElementById('reportError');
+    var reportMeta = document.getElementById('reportMeta');
+
+    function simpleMarkdown(md) {
+        // Minimal markdown→HTML: headers, bold, italic, tables, code, lists
+        var html = md
+            .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+            .replace(/^## (.+)$/gm, '<h2 style="margin-top:1.5rem; margin-bottom:0.5rem; border-bottom:1px solid var(--border, #2d2d35); padding-bottom:0.3rem;">$1</h2>')
+            .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*(.+?)\*/g, '<em>$1</em>')
+            .replace(/`([^`]+)`/g, '<code style="background:rgba(255,255,255,0.08); padding:0.1rem 0.3rem; border-radius:3px; font-size:0.9em;">$1</code>');
+
+        // Convert markdown tables
+        var lines = html.split('\n');
+        var result = [];
+        var inTable = false;
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i].trim();
+            if (line.match(/^\|(.+)\|$/)) {
+                if (line.match(/^\|[\s\-:|]+\|$/)) continue; // separator row
+                var cells = line.split('|').filter(function(c) { return c.trim() !== ''; });
+                if (!inTable) {
+                    result.push('<table style="width:100%; border-collapse:collapse; margin:0.5rem 0; font-size:0.85rem;">');
+                    result.push('<tr>' + cells.map(function(c) {
+                        return '<th style="border:1px solid var(--border, #2d2d35); padding:0.4rem 0.6rem; text-align:left; background:rgba(255,255,255,0.04);">' + c.trim() + '</th>';
+                    }).join('') + '</tr>');
+                    inTable = true;
+                } else {
+                    result.push('<tr>' + cells.map(function(c) {
+                        return '<td style="border:1px solid var(--border, #2d2d35); padding:0.3rem 0.6rem;">' + c.trim() + '</td>';
+                    }).join('') + '</tr>');
+                }
+            } else {
+                if (inTable) { result.push('</table>'); inTable = false; }
+                if (line === '') {
+                    result.push('<br>');
+                } else {
+                    result.push('<p style="margin:0.3rem 0;">' + line + '</p>');
+                }
+            }
+        }
+        if (inTable) result.push('</table>');
+        return result.join('\n');
+    }
+
+    if (reportBtn) {
+        reportBtn.addEventListener('click', function() {
+            overlay.style.display = 'block';
+            reportLoading.style.display = 'block';
+            reportBody.style.display = 'none';
+            reportError.style.display = 'none';
+            reportMeta.style.display = 'none';
+            document.body.style.overflow = 'hidden';
+
+            fetch('/api/symbols/' + SYMBOL + '/report', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            })
+            .then(function(resp) { return resp.json(); })
+            .then(function(data) {
+                reportLoading.style.display = 'none';
+                if (data.error) {
+                    reportError.style.display = 'block';
+                    reportError.textContent = '❌ Error: ' + data.error;
+                    return;
+                }
+                reportBody.innerHTML = simpleMarkdown(data.report || '(Empty report)');
+                reportBody.style.display = 'block';
+
+                if (data.cached_resources && data.cached_resources.length > 0) {
+                    reportMeta.style.display = 'block';
+                    reportMeta.textContent = '📦 Cached: ' + data.cached_resources.join(', ');
+                }
+            })
+            .catch(function(err) {
+                reportLoading.style.display = 'none';
+                reportError.style.display = 'block';
+                reportError.textContent = '❌ Network error: ' + err.message;
+            });
+        });
+    }
+
+    function closeReportOverlay() {
+        overlay.style.display = 'none';
+        document.body.style.overflow = '';
+    }
+
+    if (closeBtn) {
+        closeBtn.addEventListener('click', closeReportOverlay);
+    }
+    if (overlay) {
+        overlay.addEventListener('click', function(e) {
+            if (e.target === overlay) closeReportOverlay();
         });
     }
 
