@@ -1,20 +1,21 @@
 # Stock Options Manager
 
-Periodic options trading analysis using Microsoft Agent Framework with hybrid TradingView data fetching — `requests` + `BeautifulSoup` + TradingView scanner API for most data, Playwright (headless Chromium) only for options chain. All data — watchlists, positions, activities, and alerts — is stored in **Azure CosmosDB** (NoSQL) with a symbol-centric partition model.
+Periodic options trading analysis using Microsoft Agent Framework with hybrid TradingView data fetching — `requests` + `BeautifulSoup` + TradingView scanner API for most data, Playwright (headless Chromium) only for options chain — fronted by an **in-memory cache layer** (`tv_cache.py`) with per-key TTL and async locking to eliminate redundant fetches across agents. All data — watchlists, positions, activities, reports, and alerts — is stored in **Azure CosmosDB** (NoSQL) with a symbol-centric partition model.
 
 ## Architecture
 
-Four specialized agents handle options trading:
+Five specialized agents handle options trading:
 - **Covered Call Agent**: Analyzes stocks for covered call writing opportunities
 - **Cash Secured Put Agent**: Analyzes stocks for cash secured put opportunities
 - **Open Call Monitor**: Monitors open covered call positions for assignment risk
 - **Open Put Monitor**: Monitors open cash-secured put positions for assignment risk
+- **Report Agent**: Generates comprehensive per-symbol reports combining technical analysis, dividends, options chain, open position risk, and monitoring recommendations
 
-The first two agents (sell-side) decide whether to **open** new positions. The last two (position monitors) decide whether to **hold or adjust** existing positions.
+The first two agents (sell-side) decide whether to **open** new positions. The next two (position monitors) decide whether to **hold or adjust** existing positions. The report agent provides on-demand deep-dive analysis accessible from each symbol's detail page. Additionally, **per-symbol chat** is available directly from the symbol detail page, offering context-aware conversations with pre-loaded TradingView data via the cache layer.
 
 Both sell-side agents use the Microsoft Agent Framework (`agent-framework`) with TradingView as the data source. Market data is pre-fetched deterministically — overview, technicals, forecast, and dividends via `requests` + `BeautifulSoup` + TradingView scanner API; options chain via [Playwright](https://playwright.dev/python/) (headless Chromium) — and passed to the LLM for analysis. The LLM never touches the browser or makes HTTP requests directly.
 
-**Storage backend:** Azure CosmosDB with three containers: `symbols` (watchlists, positions, activities, alerts), `telemetry` (runtime performance stats with 30-day TTL), and `settings` (application configuration persistence). Each symbol is a partition key in the symbols container containing three document types: `symbol_config` (watchlist flags + positions), `activity` (full audit trail), and `alert` (actionable alerts). The telemetry container tracks TradingView fetch durations and agent run times, displayed on the Settings page. The settings container persists application configuration with partition key `/id`. See the [Azure CosmosDB Setup](#azure-cosmosdb-setup) section for provisioning.
+**Storage backend:** Azure CosmosDB with three containers: `symbols` (watchlists, positions, activities, alerts, reports), `telemetry` (runtime performance stats with 30-day TTL), and `settings` (application configuration persistence). Each symbol is a partition key in the symbols container containing four document types: `symbol_config` (watchlist flags + positions), `activity` (full audit trail), `alert` (actionable alerts), and `report` (generated symbol reports). The telemetry container tracks TradingView fetch durations and agent run times, displayed on the Settings page. The settings container persists application configuration with partition key `/id`. See the [Azure CosmosDB Setup](#azure-cosmosdb-setup) section for provisioning.
 
 ## How It Works
 
@@ -73,7 +74,7 @@ The Open Call Monitor and Open Put Monitor watch **existing** short options posi
 
 Positions are managed via the web dashboard or API. Each position is stored within the symbol's `symbol_config` document in CosmosDB with type (call/put), strike, expiration, status, and notes. Position monitors only run for symbols with `status: "active"` positions.
 
-**Profit optimization:** When ALL market indicators unanimously show the position is deeply OTM with no risk catalysts, the monitor may recommend tightening the strike to collect additional premium (ROLL_DOWN for calls, ROLL_UP for puts). This requires unanimous indicator agreement across 9 conditions — conservative by design. Profit-optimization rolls are tagged with a `"profit_optimization"` risk flag to distinguish them from defensive rolls.
+**Profit optimization (premium-first roll policy):** When ALL market indicators unanimously show the position is deeply OTM with no risk catalysts, the monitor may recommend tightening the strike to collect additional premium (ROLL_DOWN for calls, ROLL_UP for puts). This requires unanimous indicator agreement across 9 conditions — conservative by design. Profit-optimization rolls are tagged with a `"profit_optimization"` risk flag to distinguish them from defensive rolls. Monitor agents prioritize premium collection when rolling, considering whether to tighten strikes more aggressively when conditions allow.
 
 **Roll types:**
 - **ROLL_UP** — Higher strike, same expiration (gives more room above for calls)
@@ -121,7 +122,7 @@ Active positions in the Symbol Detail page have a Roll button in the positions t
 
 LLMs don't reliably make multi-step browser tool calls. When given Playwright tools directly, they skip pages, fabricate navigation errors, and ignore sequencing instructions.
 
-The solution: `TradingViewFetcher` (`src/tv_data_fetcher.py`) uses a hybrid approach — `requests` + `BeautifulSoup` + TradingView scanner API for most data, Playwright only for options chain. No LLM involvement in any fetching. It gathers five data sets per symbol:
+The solution: `TradingViewFetcher` (`src/tv_data_fetcher.py`) uses a hybrid approach — `requests` + `BeautifulSoup` + TradingView scanner API for most data, Playwright only for options chain. No LLM involvement in any fetching. It gathers five data sets per symbol, backed by the [TradingView Data Cache](#tradingview-data-cache) to avoid redundant fetches when multiple agents or endpoints (chat, report, analysis) request the same symbol data:
 
 | Data | Method | Typical Size | Content |
 |------|--------|-------------|---------|
@@ -133,7 +134,23 @@ The solution: `TradingViewFetcher` (`src/tv_data_fetcher.py`) uses a hybrid appr
 
 Playwright and Chromium are initialized lazily — they only start when options chain is actually fetched, saving resources when only the four HTTP-based fetchers run.
 
+**Anti-403 resilience:** TradingView fetching includes a 4-phase anti-403 strategy for improved reliability — progressive backoff, header rotation, session refresh, and sequential full-analysis mode as a last resort. Error tracking and stats are displayed on the Settings page.
+
+**Fund-type symbol handling:** For fund-type symbols (e.g., `NYSE:O`) where `_extract_pro_symbol()` returns `None`, the fetcher falls back to a `full_symbol.replace("-", ":", 1)` format to construct valid TradingView URLs.
+
 The agent is created with **no tools** — it only analyzes the pre-fetched data included in its prompt. This is the key pattern: move deterministic multi-step workflows to the host language; let the LLM do what it's good at — analysis.
+
+### TradingView Data Cache
+
+An in-memory cache layer (`src/tv_cache.py`) sits between consumers (chat, report, analysis endpoints) and `TradingViewFetcher`, eliminating redundant fetches when multiple agents analyze the same symbol in a short time window.
+
+**How it works:**
+- Cache keys are per-symbol per-data-type: `(symbol, data_type)` where `data_type` is one of `overview`, `technicals`, `forecast`, `dividends`, or `options_chain`
+- Each entry has a configurable TTL — stale entries are evicted automatically
+- Async locking prevents thundering-herd problems: if two agents request the same symbol simultaneously, only one fetch executes; the other awaits the cached result
+- The cache is process-local (in-memory) — no external infrastructure required
+
+**Consumers:** The cache is used by the `/chat` endpoint (Portfolio Chat and Quick Analysis), the Report Agent, and the per-symbol analysis runner. Any component that calls `TradingViewFetcher` benefits from deduplication transparently.
 
 ### Per-symbol Context Filtering
 
@@ -150,13 +167,14 @@ context:
 
 All data is stored in Azure CosmosDB across three containers:
 
-**`symbols` container** (partition key: `/symbol`) — three document types:
+**`symbols` container** (partition key: `/symbol`) — four document types:
 
 | Document Type | Purpose | Growth |
 |---|---|---|
 | `symbol_config` | One per symbol — watchlist flags, positions, metadata | Static (updated, not appended) |
 | `activity` | One per symbol per agent run — full analysis output | ~20/day per symbol |
 | `alert` | One per actionable activity (SELL, ROLL, CLOSE) | ~1-5/week per symbol |
+| `report` | On-demand symbol report — technical analysis, dividends, options, risk | ~1-2/week per symbol |
 
 **`telemetry` container** (partition key: `/metric_type`) — runtime performance stats with 30-day TTL:
 
@@ -300,6 +318,28 @@ summary_agent:
 
 If Telegram is disabled, the summary is still generated but not sent.
 
+## Symbol Report
+
+The "Generate Report" button on each symbol's detail page triggers a comprehensive, on-demand analysis report via the **Report Agent** (`src/report_agent.py`).
+
+### What's Included
+
+Each report covers:
+- **Technical Analysis** — Current trend direction, price range, and key technical indicators
+- **Earnings & Ex-Dividend** — Upcoming dates and their impact on options timing
+- **Dividend Summary & Growth** — Yield, payment history, and growth trajectory
+- **Options Chain** — Available calls then puts with strikes, premiums, and greeks
+- **Open Position Risk Analysis** — Risk assessment for any active positions, including recent activity history
+- **Monitoring Agent Recommendations** — Suggested actions based on current market conditions
+
+### How It Works
+
+1. User clicks "Generate Report" on the symbol detail page
+2. The Report Agent uses the same `AgentRunner → ChatAgent → AzureOpenAIChatClient` pattern as other agents
+3. TradingView data is loaded via the [TradingView Data Cache](#tradingview-data-cache) for fast context assembly
+4. The LLM generates a structured report from the system prompt (`src/tv_report_instructions.py`)
+5. The report is stored in CosmosDB as a `doc_type="report"` document and displayed on a dedicated page (`/symbols/{symbol}/report`)
+
 ## Project Structure
 
 ```
@@ -313,49 +353,59 @@ stock-options-manager/
 │   ├── context.py                        # Context injection adapter — formats CosmosDB data for prompts
 │   ├── agent_runner.py                   # Core execution engine — TradingView pre-fetch + per-symbol loop
 │   ├── tv_data_fetcher.py                # Hybrid TradingView data fetcher (BeautifulSoup + scanner API for most data, Playwright for options chain)
+│   ├── tv_cache.py                       # In-memory TradingView data cache with per-key TTL and async locking
 │   ├── covered_call_agent.py             # Covered call wrapper
 │   ├── cash_secured_put_agent.py         # Cash secured put wrapper
 │   ├── open_call_monitor_agent.py        # Open call position monitor wrapper
 │   ├── open_put_monitor_agent.py         # Open put position monitor wrapper
+│   ├── report_agent.py                   # Report generation agent wrapper
 │   ├── tv_covered_call_instructions.py   # TradingView covered call instructions (no-tools variant)
 │   ├── tv_cash_secured_put_instructions.py # TradingView cash secured put instructions (no-tools variant)
 │   ├── tv_open_call_instructions.py      # TradingView open call monitor instructions
 │   ├── tv_open_put_instructions.py       # TradingView open put monitor instructions
+│   ├── tv_open_call_chat_instructions.py # Chat instructions for open call analysis
+│   ├── tv_open_put_chat_instructions.py  # Chat instructions for open put analysis
+│   ├── tv_report_instructions.py         # Report agent system prompt
 │   └── telegram_notifier.py              # Telegram notification service — sends alerts via bot API
 ├── scripts/
 │   └── provision_cosmosdb.sh             # Azure CosmosDB provisioning via az CLI
 ├── web/
 │   ├── __init__.py
 │   ├── app.py                            # FastAPI web dashboard — all routes + CosmosDB queries
-│   ├── templates/                        # Jinja2 HTML templates (dark trading theme)
+│   ├── templates/                        # Jinja2 HTML templates (Revolut-inspired dark theme)
 │   │   ├── base.html                     # Base layout with nav
-│   │   ├── dashboard.html                # Main dashboard — alert overview + activity feed
+│   │   ├── dashboard.html                # Main dashboard — alert overview + activity feed with confidence/agent filters
 │   │   ├── alerts.html                  # Alert list for agent+symbol
 │   │   ├── alert_detail.html            # Single alert + backing activities
-│   │   ├── settings.html                 # Settings (cron expression)
-│   │   ├── symbol_detail.html            # Symbol detail with positions, activities, per-symbol chat
+│   │   ├── settings.html                 # Settings (cron expression, error stats)
+│   │   ├── symbol_detail.html            # Symbol detail with positions, activities, report/chat buttons, notes, play button
+│   │   ├── symbol_report.html            # Per-symbol report display page
+│   │   ├── symbol_chat.html              # Per-symbol chat page with context selection
 │   │   ├── fetch_preview.html            # Raw data debug/preview page
-│   │   └── chat.html                     # Chat interface
+│   │   └── chat.html                     # Chat interface (dual-mode)
 │   └── static/
-│       ├── style.css                     # Dark trading theme CSS
-│       └── app.js                        # Client-side JS (row clicks, trigger buttons)
+│       ├── style.css                     # Revolut-inspired dark trading theme CSS
+│       └── app.js                        # Client-side JS (row clicks, trigger buttons, filters)
 ├── run_web.py                            # Web dashboard entry point
 ├── requirements.txt
+├── DESIGN.md                             # UI/UX design reference (Revolut-inspired restyle)
 └── README.md
 ```
 
 ## Web Dashboard
 
-- **Dashboard** (`/`) — Alerts overview by agent type with time-range counts, scheduler status, recent activity feed, and position summary.
+- **Dashboard** (`/`) — Alerts overview by agent type with rolling time-range counts (today, last 7 days, last 30 days), scheduler status, recent activity feed with alert indicators and clickable links, position summary. Activities can be filtered by **confidence level** (high/medium/low) and **agent type** for granular views.
 - **Alert Details** (`/alerts/{agent}/{symbol}`) — All alerts for a specific symbol, newest first, with activity badges and risk flags.
 - **Alert + Activities** (`/alerts/{agent}/{symbol}/{index}`) — Full alert JSON and backing activities from the same time window.
-- **Symbol Detail** (`/symbols/{symbol}`) — Full detail page for a symbol: expandable positions with source traceability, Close/Roll/Delete actions, activities, alerts, and "Open Position from Alert" / "Roll Position from Alert" buttons on activity detail; per-symbol chat.
+- **Symbol Detail** (`/symbols/{symbol}`) — Full detail page for a symbol: expandable positions with source traceability, editable notes field, Close/Roll/Delete actions, activities, alerts, and "Open Position from Alert" / "Roll Position from Alert" buttons on activity detail. Features a **play button** (▶) for running individual symbol analysis on demand. **Generate Report** and **Chat** buttons are aligned right; watchlist toggles are aligned left. Activities support confidence and agent-type filtering.
+- **Symbol Report** (`/symbols/{symbol}/report`) — Dedicated report display page showing the latest generated report for a symbol (technical analysis, dividends, options chain, risk assessment, and recommendations).
+- **Symbol Chat** (`/symbols/{symbol}/chat`) — Per-symbol chat page with a context selection screen before starting the conversation. Pre-loads TradingView data via the cache layer for faster responses. Supports open call and open put analysis contexts.
 - **Fetch Preview** (`/symbols/{symbol}/fetch-preview`) — Debug page showing raw TradingView data for each resource (overview, technicals, forecast, options chain) with fetch timing and size.
 - **Chat** (`/chat`) — Dual-mode chat experience powered by Azure OpenAI:
   - **Portfolio Chat** — Analyze tracked symbols using CosmosDB data (watchlists, positions, recent activities). Click "Portfolio Chat" to ask questions about your tracked symbols.
   - **Quick Analysis** — Analyze any symbol (tracked or not) by fetching live TradingView data without saving to the database. Click "Quick Analysis", select a market (NASDAQ/NYSE/AMEX/OTC), and get instant analysis without committing to tracking.
   - Mode selector on the chat page lets you switch between modes at any time.
-- **Settings** (`/settings`) — Scheduler config, Telegram notifications toggle & test button, Summarization Agent config (cron schedule & activity count), runtime stats (today/7d/30d telemetry), and a Debug TradingView Fetch tool for testing data fetching per symbol. Settings are persisted to CosmosDB and survive application restarts and deployments. Changes made in the Settings UI are immediately available to all components (scheduler, telegram notifier, summarization agent, etc.) without requiring a restart.
+- **Settings** (`/settings`) — Scheduler config, Telegram notifications toggle & test button, Summarization Agent config (cron schedule & activity count), runtime stats (today/7d/30d telemetry), TradingView error tracking and anti-403 stats, and a Debug TradingView Fetch tool for testing data fetching per symbol. Settings are persisted to CosmosDB and survive application restarts and deployments. Changes made in the Settings UI are immediately available to all components (scheduler, telegram notifier, summarization agent, etc.) without requiring a restart.
 
 ---
 
