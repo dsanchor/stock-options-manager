@@ -1123,6 +1123,124 @@ async def symbol_report_page(request: Request, symbol: str):
     })
 
 
+@app.get("/symbols/{symbol}/options-chain", response_class=HTMLResponse)
+async def symbol_options_chain_page(request: Request, symbol: str):
+    """Render the option chain visualisation page for a symbol."""
+    cosmos = getattr(request.app.state, "cosmos", None)
+    if cosmos is None:
+        error_detail = getattr(request.app.state, "cosmos_error", "unknown")
+        return HTMLResponse(f"CosmosDB not available: {error_detail}",
+                            status_code=503)
+
+    doc = cosmos.get_symbol(symbol.upper())
+    if not doc:
+        return HTMLResponse(f"Symbol {symbol} not found", status_code=404)
+
+    return templates.TemplateResponse("symbol_options_chain.html", {
+        "request": request,
+        "symbol_doc": doc,
+    })
+
+
+@app.get("/api/symbols/{symbol}/options-chain")
+async def api_symbol_options_chain(request: Request, symbol: str):
+    """Return parsed option chain data from the TV cache."""
+    try:
+        cosmos = _get_cosmos(request)
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
+
+    doc = cosmos.get_symbol(symbol.upper())
+    if not doc:
+        return JSONResponse({"error": f"Symbol {symbol} not found"},
+                            status_code=404)
+
+    from src.tv_cache import get_tv_cache
+    cache = get_tv_cache()
+    entry = cache.get(symbol.upper(), "options_chain")
+    if entry is None or not entry.data:
+        return JSONResponse(
+            {"error": "No options chain data in cache", "symbol": symbol.upper()},
+            status_code=404,
+        )
+
+    raw = entry.data
+    # Strip header prefix if present
+    header_match = re.match(
+        r"OPTIONS CHAIN DATA\s*\([^)]*\)\s*:\s*\n", raw
+    )
+    if header_match:
+        raw = raw[header_match.end():]
+
+    # Parse all JSON objects (multiple responses may be concatenated)
+    all_items: list = []
+    data_time = None
+    for block in re.split(r"\n{2,}", raw):
+        block = block.strip()
+        if not block:
+            continue
+        try:
+            parsed = json.loads(block)
+            if isinstance(parsed, dict):
+                all_items.extend(parsed.get("data", []))
+                if "time" in parsed and data_time is None:
+                    data_time = parsed["time"]
+        except json.JSONDecodeError:
+            continue
+
+    if not all_items:
+        return JSONResponse(
+            {"error": "No options chain data in cache", "symbol": symbol.upper()},
+            status_code=404,
+        )
+
+    calls: dict[str, list] = defaultdict(list)
+    puts: dict[str, list] = defaultdict(list)
+
+    for item in all_items:
+        f = item.get("f")
+        if not f or len(f) < 14:
+            continue
+        option_type = f[7]  # "call" or "put"
+        expiration = str(f[4]) if f[4] is not None else None
+        if not expiration:
+            continue
+
+        opt = {
+            "symbol": item.get("s", ""),
+            "strike": f[11],
+            "bid": f[1],
+            "ask": f[0],
+            "mid": f[12],
+            "delta": f[3],
+            "gamma": f[5],
+            "theta": f[9],
+            "vega": f[13],
+            "iv": f[6],
+        }
+
+        if option_type == "call":
+            calls[expiration].append(opt)
+        elif option_type == "put":
+            puts[expiration].append(opt)
+
+    # Sort within each expiration by strike, then sort keys chronologically
+    for bucket in (calls, puts):
+        for exp in bucket:
+            bucket[exp].sort(key=lambda o: (o["strike"] or 0))
+
+    sorted_calls = dict(sorted(calls.items()))
+    sorted_puts = dict(sorted(puts.items()))
+
+    return JSONResponse({
+        "symbol": symbol.upper(),
+        "timestamp": data_time,
+        "cache_age_seconds": round(time.time() - entry.timestamp, 1),
+        "calls": sorted_calls,
+        "puts": sorted_puts,
+    })
+
+
 @app.get("/api/symbols/{symbol}/fetch-preview")
 async def api_fetch_preview(request: Request, symbol: str):
     """Fetch raw TradingView data for a symbol and return as JSON.
