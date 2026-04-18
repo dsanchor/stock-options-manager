@@ -440,3 +440,8 @@ Added agent type dropdown filters to both the dashboard Recent Activity section 
 **Pattern:** When passing Cosmos document fields to Jinja2 `data-` attributes, always extract to an explicit string field in the route handler rather than relying on Jinja2 attribute access on dict-like objects.
 
 **Files:** `web/app.py`, `web/templates/dashboard.html`, `web/templates/symbol_detail.html`, `web/static/app.js`
+
+### Symbol Position Report Feature (2026-07)
+Added `POST /api/symbols/{symbol}/report` endpoint that generates a comprehensive LLM-powered position report in Spanish. The endpoint gathers all available data (CosmosDB symbol doc, last 3 activities per agent type, cached TradingView data) into a single context string, then calls Azure OpenAI with `max_completion_tokens=4096` and a structured system prompt specifying 7 report sections. Frontend uses a modal overlay with a simple markdown-to-HTML converter (handles headers, bold, tables, code). Uses cache only (no `force_refresh`) to avoid slow fetches during report generation. The report button sits next to the existing Chat link in the symbol detail header.
+
+**Files:** `web/app.py` (endpoint ~line 1086), `web/templates/symbol_detail.html` (button + modal + JS)
