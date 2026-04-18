@@ -23,7 +23,30 @@
 - Playwright locator refactor (2026-03-31): Targeted "Fundamentals and stats" extraction
 - JSON format hints (2026-03-31): Added parenthetical notes to 4 instruction files
 
-## Recent Tasks (2026-04)
+## Recent Tasks
+
+### Options Chain Scheduled Caching (2026-04-03)
+**Status:** ✅ Completed  
+**Scope:** Implement scheduled background fetching and caching of options chain data
+
+**Changes:**
+- **config.yaml:** Added `options_chain_scheduler` section (enabled by default, hourly cron `0 * * * *`)
+- **src/config.py:** Added properties for `options_chain_scheduler_enabled` and `options_chain_scheduler_cron`
+- **src/tv_cache.py:** Increased options_chain TTL from 300s (5 min) to 7200s (2 hours) to match hourly fetch cycle
+- **src/tv_data_fetcher.py:** Modified `fetch_all()` to use cache-first for options_chain with live fallback only when cache is empty
+- **src/main.py:** Added scheduler loop for options chain fetching (similar to summary_agent pattern), including config reload integration and reschedule support
+- **web/app.py:** Added options chain scheduler settings handling in settings_config_page and settings_config_save
+- **web/templates/settings_config.html:** Added Options Chain Scheduler UI section with enable/disable toggle, cron input, and last/next run displays
+
+**Architecture:**
+- Options chain data is now fetched on a schedule (default: every hour) for ALL symbols in the database
+- All access points (agents, chat, reports) use cached data ONLY — no inline fetching
+- Fallback to live fetch only occurs if cache is completely empty for a symbol
+- Reduces latency for agent runs and chat queries by pre-populating cache
+- Schedule is configurable via web UI settings page
+- Follows the same pattern as summary_agent for consistency
+
+**Commit:** 9aacf0f
 
 ### Quick Analysis Summary Table + Activity Navigation (2026-04-02T22:13:22Z)
 **Status:** ✅ Completed  
