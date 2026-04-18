@@ -1158,9 +1158,30 @@ async def api_symbol_options_chain(request: Request, symbol: str):
     from src.tv_cache import get_tv_cache
     cache = get_tv_cache()
     entry = cache.get(symbol.upper(), "options_chain")
+
+    # Fallback: if no cached data, fetch live and populate cache
+    if entry is None or not entry.data:
+        try:
+            from src.tv_data_fetcher import create_fetcher
+            from src.config import Config
+            config = Config()
+            full_sym = doc.get("exchange", "NASDAQ") + "-" + doc["symbol"]
+            async with create_fetcher(config) as fetcher:
+                raw_data = await fetcher.fetch_options_chain(full_sym)
+                if raw_data:
+                    cache.set(symbol.upper(), "options_chain", raw_data,
+                              {"source": "live_fallback"})
+                    entry = cache.get(symbol.upper(), "options_chain")
+        except Exception as e:
+            logger.exception("Live options chain fetch failed for %s", symbol)
+            return JSONResponse(
+                {"error": f"Failed to fetch options chain: {e}", "symbol": symbol.upper()},
+                status_code=500,
+            )
+
     if entry is None or not entry.data:
         return JSONResponse(
-            {"error": "No options chain data in cache", "symbol": symbol.upper()},
+            {"error": "No options chain data available", "symbol": symbol.upper()},
             status_code=404,
         )
 

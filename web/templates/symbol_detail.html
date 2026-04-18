@@ -85,8 +85,8 @@
     </div>
 
     {% if symbol_doc.positions %}
-    <div class="table-wrap">
-        <table id="positionsTable">
+    <div class="table-wrap" style="overflow-x: hidden;">
+        <table id="positionsTable" style="table-layout: fixed;">
             <thead>
                 <tr>
                     <th style="width:2rem;"></th>
@@ -139,8 +139,8 @@
                     </td>
                 </tr>
                 <tr class="pos-detail-row" data-pos-idx="{{ loop.index0 }}" style="display:none;">
-                    <td colspan="10" style="padding:0; border-top:none;">
-                        <div style="padding:1rem 1.5rem; background:var(--bg-card, #222228); border-top:1px dashed var(--border, #2d2d35);">
+                    <td colspan="10" style="padding:0; border-top:none; overflow:hidden;">
+                        <div style="padding:1rem 1.5rem; background:var(--bg-card, #222228); border-top:1px dashed var(--border, #2d2d35); overflow:hidden; word-break:break-word;">
                             <div class="roll-form" data-roll-form-idx="{{ loop.index0 }}" data-pos-type="{{ pos.type }}" style="display:none; margin-bottom:1rem; padding:1rem; background:rgba(255,255,255,0.04); border-radius:8px; border:1px solid var(--border, #2d2d35);">
                                 <h4 style="margin:0 0 0.75rem; color:var(--text, #ffffff);">🔄 Roll Position</h4>
                                 <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:end;">

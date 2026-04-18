@@ -95,83 +95,32 @@ document.addEventListener('DOMContentLoaded', function() {
     if (runFullBtn) {
         var _fullAnalysisOrigText = runFullBtn.textContent;
 
-        function _setIndividualButtons(disabled) {
-            document.querySelectorAll('.btn-trigger[data-agent]').forEach(function(b) {
-                b.disabled = disabled;
-            });
-            document.querySelectorAll('.btn-trigger-row[data-agent]').forEach(function(b) {
-                b.disabled = disabled;
-            });
-        }
-
-        function _pollFullAnalysis() {
-            fetch('/api/trigger-all/status')
-                .then(function(res) { return res.json(); })
-                .then(function(s) {
-                    if (s.running) {
-                        var done = s.completed ? s.completed.length : 0;
-                        var label = s.current || '…';
-                        runFullBtn.textContent = '⏳ Running ' + (done + 1) + '/' + s.total + ': ' + label + '…';
-                        setTimeout(_pollFullAnalysis, 4000);
-                    } else {
-                        var completed = s.completed ? s.completed.length : 0;
-                        var errors = s.errors ? s.errors.length : 0;
-                        if (errors > 0) {
-                            runFullBtn.textContent = '⚠ Done (' + (completed - errors) + '/' + s.total + ', ' + errors + ' error' + (errors > 1 ? 's' : '') + ')';
-                            runFullBtn.classList.remove('running');
-                            runFullBtn.classList.add('error');
-                        } else {
-                            runFullBtn.textContent = '✓ Complete (' + completed + '/' + s.total + ')';
-                            runFullBtn.classList.remove('running');
-                            runFullBtn.classList.add('done');
-                        }
-                        setTimeout(function() {
-                            runFullBtn.textContent = _fullAnalysisOrigText;
-                            runFullBtn.disabled = false;
-                            runFullBtn.classList.remove('running', 'done', 'error');
-                            _setIndividualButtons(false);
-                        }, 5000);
-                    }
-                })
-                .catch(function() {
-                    setTimeout(_pollFullAnalysis, 5000);
-                });
-        }
-
         runFullBtn.addEventListener('click', function(e) {
             e.stopPropagation();
             runFullBtn.disabled = true;
-            runFullBtn.textContent = '⏳ Starting…';
-            runFullBtn.classList.add('running');
-            _setIndividualButtons(true);
+            runFullBtn.textContent = '⏳ Triggering…';
 
             fetch('/api/trigger-all', { method: 'POST' })
                 .then(function(res) { return res.json(); })
                 .then(function(data) {
                     if (data.status === 'started') {
-                        setTimeout(_pollFullAnalysis, 3000);
+                        runFullBtn.textContent = '✓ Triggered';
+                        runFullBtn.classList.add('done');
                     } else {
                         runFullBtn.textContent = '✗ ' + (data.error || 'Error');
-                        runFullBtn.classList.remove('running');
                         runFullBtn.classList.add('error');
-                        setTimeout(function() {
-                            runFullBtn.textContent = _fullAnalysisOrigText;
-                            runFullBtn.disabled = false;
-                            runFullBtn.classList.remove('error');
-                            _setIndividualButtons(false);
-                        }, 4000);
                     }
                 })
                 .catch(function() {
                     runFullBtn.textContent = '✗ Network error';
-                    runFullBtn.classList.remove('running');
                     runFullBtn.classList.add('error');
+                })
+                .finally(function() {
                     setTimeout(function() {
                         runFullBtn.textContent = _fullAnalysisOrigText;
                         runFullBtn.disabled = false;
-                        runFullBtn.classList.remove('error');
-                        _setIndividualButtons(false);
-                    }, 4000);
+                        runFullBtn.classList.remove('done', 'error');
+                    }, 3000);
                 });
         });
     }
