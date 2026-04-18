@@ -1273,6 +1273,14 @@ class TradingViewFetcher:
             except Exception:
                 return
 
+            # Discard responses with totalCount <= 1 (not real option chain data)
+            try:
+                parsed = json.loads(body)
+                if parsed.get("totalCount", 0) <= 1:
+                    return
+            except (json.JSONDecodeError, ValueError):
+                pass
+
             captured_responses.append({
                 "url": resp_url,
                 "size": len(body),

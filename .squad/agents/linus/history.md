@@ -1299,3 +1299,9 @@ Set to `null` for WAIT, populated for all ROLL and CLOSE activities.
 - Roll Search Algorithm derived from common practitioner workflows: time extension first (cheapest), then strike adjustment, then combined
 
 **Future Considerations**: May need to adjust $1 and $20 thresholds based on real-world agent performance. Could add Tier 2.5 for larger accounts or adjust thresholds dynamically based on position size. Profit Optimization sections remain separate logic for OTM positions. Mandatory Earnings Gate remains independent and takes priority over roll economics.
+
+### TradingView Options Chain totalCount Filter (2026-07-25)
+- **Issue**: `fetch_options_chain` in `src/tv_data_fetcher.py` was capturing a useless scanner response (totalCount=1) alongside real option chain data
+- **Fix**: Added early filtering in `_on_response` callback (line ~1276): parse JSON body, check `totalCount`, discard if ≤ 1
+- **Pattern**: Filter at capture time (in the response handler) rather than post-processing, so downstream code never sees garbage data
+- **Key file**: `src/tv_data_fetcher.py`, `_on_response` callback inside `fetch_options_chain`
