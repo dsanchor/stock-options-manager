@@ -32,13 +32,9 @@
         <div class="summary-value">{{ position_count }}</div>
         <div class="summary-label">Open Positions</div>
     </div>
-</div>
-
-<!-- Scheduler info -->
-<div class="scheduler-bar">
-    <span>Last run: <strong>{{ last_run or "Never" }}</strong></span>
-    <span>Next run: <strong>{{ next_run or "N/A" }}</strong></span>
-    <button id="run-full-analysis" class="btn-trigger btn-trigger-blue" title="Run all agents sequentially">▶▶ Run Full Analysis</button>
+    <div class="summary-card summary-card-action">
+        <button id="run-full-analysis" class="btn-trigger btn-trigger-blue" title="Run all agents sequentially">▶▶ Run Full Analysis</button>
+    </div>
 </div>
 
 <!-- Agent tables -->

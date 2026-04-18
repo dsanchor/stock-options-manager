@@ -831,37 +831,11 @@ def _build_dashboard_tables(cosmos, all_symbols, all_alerts, all_activities):
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     cosmos = getattr(request.app.state, "cosmos", None)
-    cosmos_settings = _load_settings_from_cosmos(cosmos)
-    config = cosmos_settings if cosmos_settings else _load_config()
-    cron_expr = config.get("scheduler", {}).get("cron", "")
-    scheduler_tz_str = config.get("scheduler", {}).get("timezone", "America/New_York")
-    
-    # Use scheduler timezone for next_run calculation
-    try:
-        scheduler_tz = pytz.timezone(scheduler_tz_str)
-    except Exception:
-        scheduler_tz = pytz.timezone("America/New_York")
-        scheduler_tz_str = "America/New_York"
 
-    next_run = ""
-    next_run_iso = ""
-    if cron_expr:
-        try:
-            now_tz = datetime.now(scheduler_tz)
-            cron = croniter(cron_expr, now_tz)
-            next_run_dt = cron.get_next(datetime)
-            next_run = _format_time_dual_tz(next_run_dt, scheduler_tz_str)
-            next_run_iso = next_run_dt.isoformat()
-        except Exception:
-            next_run = "Invalid cron"
-
-    cosmos = getattr(request.app.state, "cosmos", None)
     empty_ctx = {
         "request": request,
         "agent_tables": [],
         "grand_totals": {"today": 0, "week": 0, "month": 0, "total": 0},
-        "last_run": "", "last_run_iso": "", "next_run": next_run, "next_run_iso": next_run_iso,
-        "cron_expr": cron_expr, "scheduler_timezone": scheduler_tz_str,
         "symbol_count": 0, "position_count": 0, "activity": [],
         "agent_types": AGENT_TYPES,
     }
@@ -910,24 +884,6 @@ async def dashboard(request: Request):
     agent_tables, grand_totals = _build_dashboard_tables(
         cosmos, all_symbols, all_alerts, all_activities)
 
-    last_run = ""
-    last_run_iso = ""
-    if all_activities:
-        # Activities store timestamps in ISO format (UTC)
-        timestamp_str = all_activities[0].get("timestamp", "")
-        if timestamp_str:
-            try:
-                # Parse the UTC timestamp
-                last_run_dt = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
-                # Convert to scheduler timezone
-                if last_run_dt.tzinfo is None:
-                    last_run_dt = last_run_dt.replace(tzinfo=timezone.utc)
-                last_run = _format_time_dual_tz(last_run_dt, scheduler_tz_str)
-                last_run_iso = last_run_dt.isoformat()
-            except Exception:
-                # Fallback to simple string truncation
-                last_run = timestamp_str[:19]
-
     activity = []
     for d in all_activities[:100]:
         agent_key = str(d.get("agent_type", ""))
@@ -940,12 +896,6 @@ async def dashboard(request: Request):
         "request": request,
         "agent_tables": agent_tables,
         "grand_totals": grand_totals,
-        "last_run": last_run,
-        "last_run_iso": last_run_iso,
-        "next_run": next_run,
-        "next_run_iso": next_run_iso,
-        "cron_expr": cron_expr,
-        "scheduler_timezone": scheduler_tz_str,
         "symbol_count": symbol_count,
         "position_count": position_count,
         "activity": activity,
@@ -1545,10 +1495,50 @@ async def settings_runtime_page(request: Request):
             telemetry_stats = cosmos.get_telemetry_stats()
         except Exception:
             pass
-    
+
+    # Compute last_run / next_run for scheduler status
+    cosmos_settings = _load_settings_from_cosmos(cosmos)
+    config = cosmos_settings if cosmos_settings else _load_config()
+    cron_expr = config.get("scheduler", {}).get("cron", "")
+    scheduler_tz_str = config.get("scheduler", {}).get("timezone", "America/New_York")
+    try:
+        scheduler_tz = pytz.timezone(scheduler_tz_str)
+    except Exception:
+        scheduler_tz = pytz.timezone("America/New_York")
+        scheduler_tz_str = "America/New_York"
+
+    next_run = ""
+    if cron_expr:
+        try:
+            now_tz = datetime.now(scheduler_tz)
+            cron = croniter(cron_expr, now_tz)
+            next_run_dt = cron.get_next(datetime)
+            next_run = _format_time_dual_tz(next_run_dt, scheduler_tz_str)
+        except Exception:
+            next_run = "Invalid cron"
+
+    last_run = ""
+    if cosmos:
+        try:
+            all_activities = cosmos.get_all_activities(limit=1)
+            if all_activities:
+                timestamp_str = all_activities[0].get("timestamp", "")
+                if timestamp_str:
+                    try:
+                        last_run_dt = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+                        if last_run_dt.tzinfo is None:
+                            last_run_dt = last_run_dt.replace(tzinfo=timezone.utc)
+                        last_run = _format_time_dual_tz(last_run_dt, scheduler_tz_str)
+                    except Exception:
+                        last_run = timestamp_str[:19]
+        except Exception:
+            pass
+
     return templates.TemplateResponse("settings_runtime.html", {
         "request": request,
         "telemetry_stats": telemetry_stats,
+        "last_run": last_run,
+        "next_run": next_run,
     })
 
 

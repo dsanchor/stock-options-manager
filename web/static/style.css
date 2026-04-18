@@ -155,27 +155,18 @@ h1, h2, h3, h4, h5, h6 {
     color: var(--accent-blue);
 }
 .summary-label { color: var(--text-muted); font-size: 0.8rem; margin-top: 0.25rem; }
+.summary-card-action {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.summary-card-action .btn-trigger {
+    font-size: 0.9rem;
+    white-space: nowrap;
+}
 
 /* Data error indicator in activity feed */
 .data-error-indicator { cursor: help; margin-right: 0.15rem; }
-
-/* ── Scheduler bar ── */
-.scheduler-bar {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1.5rem;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem 1rem;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-card);
-    margin-bottom: 1.5rem;
-    font-size: 0.85rem;
-    color: var(--text-muted);
-}
-.scheduler-bar strong { color: var(--text); }
-.scheduler-bar .btn-trigger { margin-left: auto; }
 
 /* ── Cards ── */
 .card {
@@ -576,7 +567,6 @@ textarea:focus { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
 @media (max-width: 640px) {
     .topnav { flex-direction: column; gap: 0.5rem; align-items: flex-start; }
     .summary-row { grid-template-columns: repeat(3, 1fr); }
-    .scheduler-bar { flex-direction: column; gap: 0.5rem; }
     .detail-grid { grid-template-columns: 1fr; }
     .chat-bubble { max-width: 95%; }
     .activity-item { font-size: 0.78rem; }
