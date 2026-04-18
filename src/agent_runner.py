@@ -778,3 +778,80 @@ Generate your 3-line summaries now. Output plain text only — no JSON, no code 
         logger.info("Summary Agent - Completed execution")
         logger.info("="*70)
         print("="*70 + "\n")
+
+    async def run_report_agent(
+        self,
+        symbol: str,
+        exchange: str,
+        context_text: str,
+        cosmos: CosmosDBService,
+        cached_resources: list | None = None,
+    ) -> str:
+        """Generate a comprehensive position/situation report for a symbol.
+
+        Uses ChatAgent to produce a structured markdown report from
+        pre-gathered context (TradingView data + CosmosDB activities).
+
+        Args:
+            symbol: Ticker symbol (e.g. "AAPL")
+            exchange: Exchange code (e.g. "NASDAQ")
+            context_text: Pre-built context string with all data
+            cosmos: CosmosDBService for storing the report
+            cached_resources: TradingView resources served from cache
+
+        Returns:
+            The generated markdown report text.
+        """
+        from .tv_report_instructions import TV_REPORT_INSTRUCTIONS
+
+        full_symbol = f"{exchange}-{symbol}" if exchange else symbol
+        analysis_ts = datetime.now().strftime(TIMESTAMP_FORMAT)
+
+        logger.info("Starting report agent for %s", full_symbol)
+        print(f"\n--- Generating report for {full_symbol} ---")
+
+        run_start = time.time()
+
+        message = f"""Generate a comprehensive situation report for {symbol} (exchange: {exchange}, full symbol: {full_symbol}).
+
+=== AVAILABLE DATA ===
+
+{context_text}
+
+=== END OF DATA ===
+
+Current timestamp: {analysis_ts}
+All market data has been pre-fetched above. Do NOT use any browser tools — analyze the data provided and generate your report."""
+
+        agent = ChatAgent(
+            chat_client=self.client,
+            name="ReportAgent",
+            instructions=TV_REPORT_INSTRUCTIONS,
+        )
+        result = await agent.run(message)
+        report_text = result.text or str(result)
+
+        run_duration = round(time.time() - run_start, 2)
+        logger.info("Report agent completed for %s in %.2fs (%d chars)",
+                     full_symbol, run_duration, len(report_text))
+        print(f"✅ Report generated ({run_duration}s, {len(report_text)} chars)")
+
+        # Persist report to CosmosDB
+        cosmos.write_report(
+            symbol=symbol,
+            report_markdown=report_text,
+            cached_resources=cached_resources or [],
+            timestamp=analysis_ts,
+        )
+
+        # Telemetry (best-effort)
+        try:
+            cosmos.write_telemetry("agent_run", {
+                "symbol": symbol,
+                "agent_type": "report",
+                "duration_seconds": run_duration,
+            })
+        except Exception:
+            logger.debug("Telemetry write skipped for report agent")
+
+        return report_text

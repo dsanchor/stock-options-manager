@@ -1092,8 +1092,9 @@ async def fetch_preview_page(request: Request, symbol: str):
 async def symbol_report_api(request: Request, symbol: str):
     """Generate a comprehensive position/situation report for a symbol.
 
-    Uses cached TradingView data + CosmosDB activities and calls Azure OpenAI
-    to produce a structured markdown report in Spanish.
+    Uses the ReportAgent (same pattern as other agents) to produce a
+    structured markdown report from cached TradingView data + CosmosDB
+    activities/alerts.
     """
     symbol = symbol.upper()
 
@@ -1107,118 +1108,7 @@ async def symbol_report_api(request: Request, symbol: str):
         return JSONResponse({"error": f"Symbol {symbol} not found"},
                             status_code=404)
 
-    exchange = symbol_doc.get("exchange", "NYSE")
-    context_parts: List[str] = []
-    cached_resources: list = []
-
-    # 1. Symbol config (positions, watchlist, etc.)
-    context_parts.append("--- Symbol Config ---")
-    context_parts.append(json.dumps(
-        {k: v for k, v in symbol_doc.items()
-         if k in ("symbol", "display_name", "exchange",
-                   "watchlist", "positions")},
-        indent=2, default=str))
-
-    # 2. Recent activities per agent type (last 3 each)
-    agent_activities: Dict[str, list] = {}
-    for agent_type in ("covered_call", "cash_secured_put",
-                       "open_call_monitor", "open_put_monitor"):
-        try:
-            acts = cosmos.get_recent_activities(symbol, agent_type,
-                                                max_entries=3)
-            acts = [_clean_doc(a) for a in acts]
-            agent_activities[agent_type] = acts
-        except Exception as exc:
-            logger.warning("report: failed to load %s activities: %s",
-                           agent_type, exc)
-            agent_activities[agent_type] = []
-
-    for agent_type, acts in agent_activities.items():
-        label = AGENT_TYPES.get(agent_type, {}).get("label", agent_type)
-        context_parts.append(f"\n--- Recent Activities: {label} (last 3) ---")
-        if acts:
-            for a in acts:
-                context_parts.append(json.dumps(a, indent=2, default=str))
-        else:
-            context_parts.append("(No recent activities)")
-
-    # 3. TradingView data (use cache, no force refresh)
-    try:
-        from src.tv_data_fetcher import create_fetcher
-        from src.tv_cache import get_tv_cache
-        from src.config import Config
-
-        config_obj = Config()
-        full_symbol = f"{exchange}-{symbol}"
-        async with create_fetcher(config_obj) as fetcher:
-            tv_data = await fetcher.fetch_all(full_symbol,
-                                              force_refresh=False,
-                                              cache=get_tv_cache())
-        cached_resources = tv_data.get("cached_resources", [])
-
-        for section_key, section_label in [
-            ("overview", "Overview"),
-            ("technicals", "Technicals"),
-            ("forecast", "Forecast"),
-            ("dividends", "Dividends"),
-            ("options_chain", "Options Chain"),
-        ]:
-            content = tv_data.get(section_key, "")
-            if content and not content.startswith("[ERROR"):
-                context_parts.append(
-                    f"\n--- TradingView {section_label} ---\n{content}")
-    except Exception as exc:
-        logger.warning("report: TradingView fetch failed: %s", exc)
-        context_parts.append("(Live TradingView data unavailable)")
-
-    context_text = "\n".join(context_parts)
-
-    # 4. Build system prompt for the report
-    system_prompt = (
-        f"You are an expert stock options analyst. "
-        f"Generate a complete, structured report in English about the "
-        f"current situation of {symbol} ({exchange}:{symbol}).\n\n"
-        f"The report MUST have exactly these sections in Markdown "
-        f"format:\n\n"
-        f"## 📊 Technical Analysis\n"
-        f"(Trend, support/resistance levels, RSI, moving averages, "
-        f"short- and medium-term outlook)\n\n"
-        f"## 📅 Key Dates\n"
-        f"(Next earnings date, ex-dividend date)\n\n"
-        f"## 💰 Dividends\n"
-        f"(Next dividend if announced, recent history, "
-        f"growth rate, yield)\n\n"
-        f"## 📈 Open Positions\n"
-        f"(For each open position: type, strike, expiration, premium, "
-        f"current risk assessment based on the latest monitor "
-        f"activities)\n\n"
-        f"## 🔍 Strategy Monitoring\n"
-        f"### Covered Calls\n"
-        f"(Summary of the last 3 covered_call agent activities — "
-        f"what they recommend)\n"
-        f"### Cash-Secured Puts\n"
-        f"(Summary of the last 3 cash_secured_put agent "
-        f"activities — what they recommend)\n\n"
-        f"## 📋 Options Chain\n"
-        f"### Calls\n"
-        f"(Table with options chain data - calls)\n"
-        f"### Puts\n"
-        f"(Table with options chain data - puts)\n\n"
-        f"## 🎯 Summary & Recommendations\n"
-        f"(Overall assessment integrating all of the above, "
-        f"with concrete recommendations)\n\n"
-        f"Use the data provided below. If any data is not available, "
-        f"state it clearly. Be precise with numbers and dates. "
-        f"Use markdown tables where appropriate.\n\n"
-        f"Available data:\n{context_text}"
-    )
-
-    user_prompt = (
-        f"Generate the full situation report for {symbol}. "
-        f"Include all available data and detailed analysis."
-    )
-
-    # 5. Call Azure OpenAI
+    # Build an AgentRunner on demand (no scheduler dependency)
     config = _load_config()
     azure_cfg = config.get("azure", {})
     endpoint = _resolve_env(azure_cfg.get("project_endpoint", ""))
@@ -1236,34 +1126,51 @@ async def symbol_report_api(request: Request, symbol: str):
         endpoint = endpoint[:-4]
 
     try:
-        from openai import AzureOpenAI
+        from src.agent_runner import AgentRunner
+        from src.report_agent import run_report_analysis
+        from src.config import Config
 
-        client = AzureOpenAI(
-            azure_endpoint=endpoint,
-            api_key=api_key,
-            api_version="2024-12-01-preview",
-        )
-
-        response = client.chat.completions.create(
+        runner = AgentRunner(
+            project_endpoint=endpoint,
             model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.7,
-            max_completion_tokens=4096,
+            api_key=api_key,
+        )
+        config_obj = Config()
+
+        result = await run_report_analysis(
+            config=config_obj,
+            runner=runner,
+            cosmos=cosmos,
+            symbol=symbol,
         )
 
-        report = response.choices[0].message.content
-        return JSONResponse({
-            "report": report,
-            "cached_resources": cached_resources,
-            "symbol": symbol,
-        })
+        if "error" in result:
+            return JSONResponse({"error": result["error"]}, status_code=404)
+
+        return JSONResponse(result)
 
     except Exception as e:
         logger.exception("Report generation failed for %s", symbol)
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/symbols/{symbol}/report", response_class=HTMLResponse)
+async def symbol_report_page(request: Request, symbol: str):
+    """Render the dedicated report page for a symbol."""
+    cosmos = getattr(request.app.state, "cosmos", None)
+    if cosmos is None:
+        error_detail = getattr(request.app.state, "cosmos_error", "unknown")
+        return HTMLResponse(f"CosmosDB not available: {error_detail}",
+                            status_code=503)
+
+    doc = cosmos.get_symbol(symbol.upper())
+    if not doc:
+        return HTMLResponse(f"Symbol {symbol} not found", status_code=404)
+
+    return templates.TemplateResponse("symbol_report.html", {
+        "request": request,
+        "symbol_doc": doc,
+    })
 
 
 @app.get("/api/symbols/{symbol}/fetch-preview")

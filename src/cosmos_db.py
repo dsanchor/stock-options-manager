@@ -720,6 +720,53 @@ class CosmosDBService:
         
         return result
 
+    # ── Reports ──────────────────────────────────────────────────────
+
+    def write_report(self, symbol: str, report_markdown: str,
+                     cached_resources: list | None = None,
+                     timestamp: str | None = None) -> dict:
+        """Write a generated report document.
+
+        Args:
+            symbol: Ticker symbol (partition key).
+            report_markdown: Full markdown report from the agent.
+            cached_resources: List of TradingView resources served from cache.
+            timestamp: Override timestamp (ISO format). Defaults to now.
+
+        Returns:
+            The created CosmosDB document.
+        """
+        ts = timestamp or datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        ts_compact = ts.replace("-", "").replace(":", "").replace("T", "_")[:15]
+
+        doc = {
+            "id": f"{symbol}_report_{ts_compact}",
+            "symbol": symbol,
+            "doc_type": "report",
+            "timestamp": ts,
+            "report": report_markdown,
+            "cached_resources": cached_resources or [],
+        }
+        return self.container.create_item(doc)
+
+    def get_latest_report(self, symbol: str) -> dict | None:
+        """Get the most recent report for a symbol.
+
+        Returns:
+            The report document, or None if no report exists.
+        """
+        query = (
+            "SELECT TOP 1 * FROM c "
+            "WHERE c.doc_type = 'report' "
+            "ORDER BY c.timestamp DESC"
+        )
+        results = list(self.container.query_items(
+            query=query,
+            parameters=[],
+            partition_key=symbol,
+        ))
+        return results[0] if results else None
+
     # ── Telemetry ──────────────────────────────────────────────────────
 
     def write_telemetry(self, metric_type: str, data: dict) -> None:
