@@ -2005,11 +2005,31 @@ async def chat_api(request: Request):
         cosmos = getattr(request.app.state, "cosmos", None)
         if cosmos:
             try:
+                # Build set of closed position IDs to exclude
+                closed_position_ids: set = set()
+                all_symbols = cosmos.list_symbols() if cosmos else []
+                for sym_cfg in all_symbols:
+                    for pos in sym_cfg.get("positions", []):
+                        if pos.get("status") != "active":
+                            closed_position_ids.add(pos["position_id"])
+
                 for agent_key, meta in AGENT_TYPES.items():
                     alerts = cosmos.get_all_alerts(
                         agent_type=agent_key, limit=20)
                     activities = cosmos.get_all_activities(
                         agent_type=agent_key, limit=20)
+
+                    # Filter out activities/alerts linked to closed positions
+                    if closed_position_ids:
+                        activities = [d for d in activities
+                                      if d.get("position_id") not in closed_position_ids]
+                        closed_activity_ids = {d.get("id") for d in cosmos.get_all_activities(
+                            agent_type=agent_key, limit=100)
+                            if d.get("position_id") in closed_position_ids}
+                        alerts = [s for s in alerts
+                                  if s.get("position_id") not in closed_position_ids
+                                  and s.get("activity_id") not in closed_activity_ids]
+
                     if not alerts and not activities:
                         continue
 
@@ -2216,12 +2236,18 @@ async def _build_symbol_context(symbol: str, cosmos,
                 exchange = symbol_doc.get("exchange", "NYSE")
                 # Only include positions if requested
                 if preferences.get('positions', True):
+                    # Filter out closed positions before including in context
+                    filtered_doc = {k: v for k, v in symbol_doc.items()
+                                    if k in ("symbol", "display_name", "exchange",
+                                             "watchlist", "positions")}
+                    if "positions" in filtered_doc:
+                        filtered_doc["positions"] = [
+                            p for p in filtered_doc["positions"]
+                            if p.get("status") == "active"
+                        ]
                     context_parts.append("--- Symbol Config ---")
                     context_parts.append(json.dumps(
-                        {k: v for k, v in symbol_doc.items()
-                         if k in ("symbol", "display_name", "exchange",
-                                  "watchlist", "positions")},
-                        indent=2, default=str))
+                        filtered_doc, indent=2, default=str))
         except Exception as exc:
             logger.warning("symbol_chat: failed to load symbol doc: %s", exc)
 

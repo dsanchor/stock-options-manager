@@ -39,13 +39,23 @@ async def run_report_analysis(
     context_parts: List[str] = []
     cached_resources: list = []
 
-    # 1. Symbol config (positions, watchlist, etc.)
+    # 1. Symbol config (positions, watchlist, etc.) — active positions only
+    filtered_doc = {k: v for k, v in symbol_doc.items()
+                    if k in ("symbol", "display_name", "exchange",
+                             "watchlist", "positions")}
+    if "positions" in filtered_doc:
+        filtered_doc["positions"] = [
+            p for p in filtered_doc["positions"]
+            if p.get("status") == "active"
+        ]
     context_parts.append("--- Symbol Config ---")
-    context_parts.append(json.dumps(
-        {k: v for k, v in symbol_doc.items()
-         if k in ("symbol", "display_name", "exchange",
-                   "watchlist", "positions")},
-        indent=2, default=str))
+    context_parts.append(json.dumps(filtered_doc, indent=2, default=str))
+
+    # Build closed position IDs for filtering activities/alerts
+    closed_position_ids = {
+        p["position_id"] for p in symbol_doc.get("positions", [])
+        if p.get("status") != "active" and "position_id" in p
+    }
 
     # 2. Recent activities AND alerts per agent type (last 3 each)
     for agent_type in ("covered_call", "cash_secured_put",
@@ -66,6 +76,11 @@ async def run_report_analysis(
                     merged.append(item)
             merged.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
             merged = merged[:3]
+
+            # Filter out items linked to closed positions
+            if closed_position_ids:
+                merged = [m for m in merged
+                          if m.get("position_id") not in closed_position_ids]
         except Exception as exc:
             logger.warning("report: failed to load %s activities: %s",
                            agent_type, exc)
