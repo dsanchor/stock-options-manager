@@ -29,8 +29,9 @@ Calls and puts are grouped by expiration date (YYYYMMDD key). Each expiration
 contains a list of contracts sorted by strike price. Contract fields:
   - opra_symbol: OPRA identifier (e.g. "OPRA:MSFT260427C475.0")
   - strike: Strike price in dollars
-  - bid / ask: Best bid and ask prices
-  - mid: Theoretical mid-price
+  - bid: Best bid price — the price a BUYER is willing to pay for this contract
+  - ask: Best ask price — the price a SELLER is asking for this contract
+  - mid: Theoretical mid-price (model-derived fair value, NOT necessarily (bid+ask)/2)
   - iv: Implied volatility (decimal, e.g. 0.364 = 36.4%)
   - delta: Delta (0 to 1 for calls, -1 to 0 for puts)
   - gamma: Gamma (rate of delta change)
@@ -41,6 +42,17 @@ contains a list of contracts sorted by strike price. Contract fields:
   - expiration: Expiration date as YYYYMMDD string
   - option_type: "call" or "put"
   - bid_iv / ask_iv: Bid/ask implied volatilities (optional)
+
+PREMIUM CALCULATION (CRITICAL — read carefully):
+All strategies in this application SELL (write) options. When SELLING an option:
+  - premium_per_contract = bid (you sell at the bid price — what the buyer pays you)
+  - total_premium = bid × 100 (each contract = 100 shares)
+  - premium_pct (covered call) = (bid / current_stock_price) × 100
+  - premium_pct (cash-secured put) = (bid / strike) × 100
+  - annualized_return = premium_pct × (365 / DTE)
+Do NOT use 'ask' or 'mid' as the premium received. The 'bid' is always the
+realistic premium a seller collects. Use 'mid' only for theoretical/fair-value
+comparisons, never as actual premium income.
 """
 
 # Canonical field names we expose on each contract

@@ -80,15 +80,15 @@ Market data has been pre-fetched and included in your message. You will find fiv
    - **Early Assignment Risk (Rare)**: Deep ITM puts before ex-div may face early assignment if holder wants to capture dividend
    - **Options Pricing Impact**: Put premiums slightly higher for dividend-paying stocks (reflects lower downside from div income)
 
-5. **OPTIONS CHAIN** — Contains the expanded options chain accessibility snapshot.
-   Rows contain: Delta, Gamma, Theta, Vega, IV%, Strike, Bid, Ask, Volume for calls and puts.
-   The expiration closest to 30-45 DTE has been pre-expanded.
-   - **Put-Specific Data Extraction**: Puts are in the right half of each data row
+5. **OPTIONS CHAIN** — Structured JSON containing call and put contracts grouped by expiration date.
+   The data is provided in the OPTIONS CHAIN FORMAT documented above the JSON payload.
+   Each contract has named fields: strike, bid, ask, mid, iv, delta, gamma, theta, vega, rho, etc.
+   - **Put-Specific Data Extraction**: Look at the "puts" section of the JSON
    - Identify put strikes at or below support levels (S1-S3 from technicals)
+   - The 'bid' field IS your premium per contract when selling — do NOT use 'ask' or 'mid' as premium
    - Note IV for each strike — elevated put IV = fear premium = favorable for sellers
    - Read delta values — target delta between -0.20 and -0.35 for conservative CSP
-   - Check volume for liquidity (higher = better)
-   - **Fallback** (if options chain shows [ERROR: ...] or is collapsed):
+   - **Fallback** (if options chain shows [ERROR: ...] or is empty):
      - Use **pivot points** S1/S2/S3 as strike targets for support
      - Use IV% from nearby strikes as volatility proxy
      - Note that options chain data was unavailable
@@ -532,7 +532,7 @@ When SELL criteria are met, select strike using:
    - **High conviction** (enthusiastically want stock): Sell $95 put (delta -0.25, 3% margin below S1)
    - **Moderate conviction**: Sell $92 put (delta -0.20, at S2 support level)
    - **Low conviction/uncertainty**: Sell $90 put (delta -0.18, clearly OTM, safer)
-4. **Verify premium**: Ensure selected strike offers premium ≥ 1.5% of strike price
+4. **Verify premium**: Use the 'bid' field from the options chain as your premium. Ensure bid ≥ 1.5% of strike price
 5. **Confirm support**: Ensure strike is AT or BELOW support level (never above)
 
 ## INTERPRETING PREVIOUS ACTIVITY LOG

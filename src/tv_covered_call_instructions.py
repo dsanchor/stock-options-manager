@@ -61,12 +61,13 @@ Market data has been pre-fetched and included in your message. You will find fiv
    - Key data: Ex-dividend date, payment date, dividend amount, dividend yield, payout frequency
    - Analysis: Ex-div within DTE + ITM call = HIGH early assignment risk
 
-5. **OPTIONS CHAIN** — Contains the expanded options chain accessibility snapshot.
-   Rows contain: Delta, Gamma, Theta, Vega, IV%, Strike, Bid, Ask, Volume for calls and puts.
-   The expiration closest to 30-45 DTE has been pre-expanded.
-   - Extract: Strike prices, IV%, delta, bid/ask, volume from the data rows
+5. **OPTIONS CHAIN** — Structured JSON containing call and put contracts grouped by expiration date.
+   The data is provided in the OPTIONS CHAIN FORMAT documented above the JSON payload.
+   Each contract has named fields: strike, bid, ask, mid, iv, delta, gamma, theta, vega, rho, etc.
+   - Extract: strike, delta, iv, bid (= premium you receive when SELLING), theta from each contract
+   - The 'bid' field IS your premium per contract when selling — do NOT use 'ask' or 'mid' as premium
    - Current price is also visible in the page header
-   - **Fallback** (if options chain shows [ERROR: ...] or is collapsed):
+   - **Fallback** (if options chain shows [ERROR: ...] or is empty):
      - Use **pivot points** R1/R2/R3 as strike targets
      - Use IV% from nearby strikes as volatility proxy
      - Note that options chain data was unavailable
@@ -240,7 +241,7 @@ The agent synthesizes all gathered data into a comprehensive analysis:
   - Pivot points: Classic, Fibonacci, Camarilla, Woodie, DM — with R1-R3, S1-S3 — excellent for strike selection and support/resistance identification
   - Analyst consensus: Number of analysts + buy/sell/neutral breakdown + earnings data on forecast page
   - Pre-analyzed technical summary: "Strong Buy" to "Strong Sell" overall signal — no synthesis needed
-  - Options chain: Strikes, IV, bid/ask, volume, open interest, Greeks — pre-expanded for 30-45 DTE
+  - Options chain: Structured JSON with strike, bid (= premium), ask, mid, IV, delta, gamma, theta, vega, rho per contract — grouped by expiration
   - Current price visible in page headers — no separate data needed
 
 - **Limitations:**
@@ -416,7 +417,7 @@ When SELL criteria are met, select strike using:
    - **Bullish** (want stock to appreciate): Sell $190 or $195 call (delta 0.25 or 0.18, gives upside room)
    - **Neutral** (expect flat/slight decline): Sell $185 call (delta 0.30, moderate income)
    - **Bearish** (expect decline): Don't sell calls; wait or sell lower strike with caution
-4. **Verify premium**: Ensure selected strike offers premium ≥ 1.0% of stock price for 30-45 DTE
+4. **Verify premium**: Use the 'bid' field from the options chain as your premium. Ensure bid ≥ 1.0% of stock price for 30-45 DTE
 5. **Confirm resistance**: Ensure strike is AT or ABOVE resistance level (never below for call selling)
 
 ## INTERPRETING PREVIOUS ACTIVITY LOG
