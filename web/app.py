@@ -2263,7 +2263,8 @@ async def _build_symbol_context(symbol: str, cosmos,
             activities: List[Dict] = []
             for agent_type, meta in AGENT_TYPES.items():
                 acts = cosmos.get_recent_activities(
-                    symbol, agent_type, max_entries=5)
+                    symbol, agent_type, max_entries=5,
+                    include_alerts=True)
                 for d in acts:
                     d["_agent_label"] = meta["label"]
                 activities.extend(acts)

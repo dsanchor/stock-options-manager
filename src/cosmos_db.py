@@ -528,17 +528,22 @@ class CosmosDBService:
 
     def get_recent_activities(self, symbol: str, agent_type: str,
                              max_entries: int = 20,
-                             position_id: str | None = None) -> list[dict]:
+                             position_id: str | None = None,
+                             include_alerts: bool = False) -> list[dict]:
         """Get recent activities for a symbol+agent, newest first.
 
         For position monitors, optionally filter by position_id.
-        Returns activities that are NOT alerts (is_alert != true).
+        When include_alerts is False (default), excludes alert entries.
+        When True, returns all activities regardless of is_alert flag.
         """
         conditions = [
             "c.doc_type = 'activity'",
             "c.agent_type = @agent_type",
-            "(c.is_alert = false OR NOT IS_DEFINED(c.is_alert))",
         ]
+        if not include_alerts:
+            conditions.append(
+                "(c.is_alert = false OR NOT IS_DEFINED(c.is_alert))")
+
         params: list[dict] = [
             {"name": "@agent_type", "value": agent_type},
         ]
