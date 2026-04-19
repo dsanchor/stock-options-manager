@@ -42,7 +42,9 @@
             return html;
         }
         exps.forEach(function(exp, idx) {
-            var rows = groups[exp];
+            var raw = groups[exp];
+            // Support both strike-keyed dicts and legacy arrays
+            var rows = Array.isArray(raw) ? raw : Object.values(raw);
             var id = title.toLowerCase().replace(/\s/g,'') + '_' + exp;
             html += '<div style="margin-bottom:0.75rem;">';
             html += '<div onclick="document.getElementById(\'' + id + '\').style.display = document.getElementById(\'' + id + '\').style.display === \'none\' ? \'block\' : \'none\'; this.querySelector(\'.toggle-icon\').textContent = document.getElementById(\'' + id + '\').style.display === \'none\' ? \'▸\' : \'▾\';" '
