@@ -1305,3 +1305,13 @@ Set to `null` for WAIT, populated for all ROLL and CLOSE activities.
 - **Fix**: Added early filtering in `_on_response` callback (line ~1276): parse JSON body, check `totalCount`, discard if ≤ 1
 - **Pattern**: Filter at capture time (in the response handler) rather than post-processing, so downstream code never sees garbage data
 - **Key file**: `src/tv_data_fetcher.py`, `_on_response` callback inside `fetch_options_chain`
+
+### Options Chain Schema Documentation (2026-07-25)
+- **Task**: Add schema documentation to all places where options chain JSON is injected into agent prompts, chat contexts, and reports
+- **Approach**: Created `OPTIONS_CHAIN_SCHEMA_DESCRIPTION` constant in `src/options_chain_parser.py` — a reusable string describing the JSON structure and all contract fields (strike, greeks, IV, etc.)
+- **Injection points** (6 total):
+  1. `src/agent_runner.py` `_format_options_chain()` — prepends schema before JSON (covers both `run_symbol_agent` and `run_position_monitor`)
+  2. `src/report_agent.py` context builder — prepends schema when options chain is parsed
+  3. `web/app.py` `chat_api()` quick-analysis mode — inserts schema before raw options chain data
+  4. `web/app.py` `_build_symbol_context()` — prepends schema to options chain section in symbol chat
+- **Key files**: `src/options_chain_parser.py`, `src/agent_runner.py`, `src/report_agent.py`, `web/app.py`
