@@ -1171,10 +1171,17 @@ async def api_symbol_options_chain(request: Request, symbol: str):
             full_sym = doc.get("exchange", "NASDAQ") + ":" + doc["symbol"]
             async with create_fetcher(config) as fetcher:
                 raw_data = await fetcher.fetch_options_chain(full_sym)
-                if raw_data:
-                    cache.set(cache_key, "options_chain", raw_data,
-                              {"source": "live_fallback"})
-                    entry = cache.get(cache_key, "options_chain")
+                if raw_data and not raw_data.startswith("[ERROR"):
+                    # Validate the data is parseable before caching
+                    from src.options_chain_parser import parse_options_chain as _test_parse
+                    test_result = _test_parse(raw_data, symbol.upper())
+                    if test_result["calls"] or test_result["puts"]:
+                        cache.set(cache_key, "options_chain", raw_data,
+                                  {"source": "live_fallback"})
+                        entry = cache.get(cache_key, "options_chain")
+                    else:
+                        logger.warning("Live fetch returned unparseable data for %s (length=%d)",
+                                       symbol, len(raw_data))
         except Exception as e:
             logger.exception("Live options chain fetch failed for %s", symbol)
             return JSONResponse(
@@ -1184,7 +1191,8 @@ async def api_symbol_options_chain(request: Request, symbol: str):
 
     if entry is None or not entry.data:
         return JSONResponse(
-            {"error": "No options chain data available", "symbol": symbol.upper()},
+            {"error": "No options chain data available. Try running a full analysis first, or wait for the options chain scheduler.",
+             "symbol": symbol.upper()},
             status_code=404,
         )
 
