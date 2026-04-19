@@ -1189,92 +1189,21 @@ async def api_symbol_options_chain(request: Request, symbol: str):
         )
 
     raw = entry.data
-    # Strip header prefix if present (e.g. "OPTIONS CHAIN DATA (API intercepted, N responses captured):\n")
-    raw = re.sub(r"^OPTIONS CHAIN DATA\s*\([^)]*\)\s*:\s*\n*", "", raw).strip()
+    from src.options_chain_parser import parse_options_chain
+    result = parse_options_chain(raw, symbol.upper())
 
-    # Parse JSON — try whole string first, fall back to splitting on blank lines
-    all_items: list = []
-    data_time = None
-
-    def _extract(parsed: dict):
-        items = parsed.get("symbols", parsed.get("data", []))
-        all_items.extend(items)
-        nonlocal data_time
-        if "time" in parsed and data_time is None:
-            data_time = parsed["time"]
-
-    try:
-        parsed = json.loads(raw)
-        if isinstance(parsed, dict):
-            _extract(parsed)
-    except json.JSONDecodeError:
-        # Multiple JSON objects concatenated with blank lines
-        for block in re.split(r"\n{2,}", raw):
-            block = block.strip()
-            if not block:
-                continue
-            try:
-                parsed = json.loads(block)
-                if isinstance(parsed, dict):
-                    _extract(parsed)
-            except json.JSONDecodeError:
-                continue
-
-    if not all_items:
+    if not result["calls"] and not result["puts"]:
         return JSONResponse(
             {"error": "Failed to parse options chain data", "symbol": symbol.upper()},
             status_code=404,
         )
 
-    calls: dict[str, list] = defaultdict(list)
-    puts: dict[str, list] = defaultdict(list)
-
-    for item in all_items:
-        f = item.get("f")
-        if not f or len(f) < 15:
-            continue
-        option_type = f[7]  # "call" or "put"
-        expiration = str(f[4]) if f[4] is not None else None
-        if not expiration:
-            continue
-
-        # Field mapping (from TradingView scanner API):
-        # 0=ask, 1=bid, 2=currency, 3=delta, 4=expiration, 5=gamma,
-        # 6=iv, 7=option-type, 8=pricescale, 9=rho, 10=root,
-        # 11=strike, 12=theoPrice, 13=theta, 14=vega, 15=bid_iv, 16=ask_iv
-        opt = {
-            "symbol": item.get("s", ""),
-            "strike": f[11],
-            "bid": f[1],
-            "ask": f[0],
-            "mid": f[12],
-            "delta": f[3],
-            "gamma": f[5],
-            "theta": f[13],
-            "vega": f[14],
-            "rho": f[9],
-            "iv": f[6],
-        }
-
-        if option_type == "call":
-            calls[expiration].append(opt)
-        elif option_type == "put":
-            puts[expiration].append(opt)
-
-    # Sort within each expiration by strike, then sort keys chronologically
-    for bucket in (calls, puts):
-        for exp in bucket:
-            bucket[exp].sort(key=lambda o: (o["strike"] or 0))
-
-    sorted_calls = dict(sorted(calls.items()))
-    sorted_puts = dict(sorted(puts.items()))
-
     return JSONResponse({
         "symbol": symbol.upper(),
-        "timestamp": data_time,
+        "timestamp": result["timestamp"],
         "cache_age_seconds": round(time.time() - entry.timestamp, 1),
-        "calls": sorted_calls,
-        "puts": sorted_puts,
+        "calls": result["calls"],
+        "puts": result["puts"],
     })
 
 

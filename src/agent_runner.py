@@ -13,6 +13,7 @@ from agent_framework.azure import AzureOpenAIChatClient
 
 from .cosmos_db import CosmosDBService
 from .context import ContextProvider
+from .options_chain_parser import parse_options_chain
 from .tv_cache import get_tv_cache as _get_tv_cache
 
 # Canonical timestamp format — used for ALL activity and alert log entries.
@@ -58,6 +59,16 @@ class AgentRunner:
         )
         self.telegram_notifier = telegram_notifier
     
+    # ── Options chain formatting ────────────────────────────────────────
+
+    @staticmethod
+    def _format_options_chain(raw_chain: str, symbol: str) -> str:
+        """Parse raw options chain through the shared parser; fall back to raw."""
+        structured = parse_options_chain(raw_chain, symbol)
+        if structured.get("calls") or structured.get("puts"):
+            return json.dumps(structured, indent=2)
+        return raw_chain
+
     # ── JSON / SUMMARY extraction ──────────────────────────────────────
 
     @staticmethod
@@ -281,7 +292,7 @@ class AgentRunner:
 {data['dividends']}
 
 --- OPTIONS CHAIN ({exchange}:{symbol}) ---
-{data['options_chain']}
+{self._format_options_chain(data.get('options_chain', ''), symbol)}
 
 === END OF DATA ===
 
@@ -492,7 +503,7 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
 {data['forecast']}
 
 --- OPTIONS CHAIN ({exchange}:{symbol}) ---
-{data['options_chain']}
+{self._format_options_chain(data.get('options_chain', ''), symbol)}
 
 === END OF DATA ===
 
