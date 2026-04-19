@@ -1193,6 +1193,8 @@ async def api_symbol_options_chain(request: Request, symbol: str):
     result = parse_options_chain(raw, symbol.upper())
 
     if not result["calls"] and not result["puts"]:
+        logger.error("Failed to parse options chain for %s (raw length=%d, first 500 chars=%s)",
+                      symbol, len(raw) if raw else 0, repr(raw[:500]) if raw else "empty")
         return JSONResponse(
             {"error": "Failed to parse options chain data", "symbol": symbol.upper()},
             status_code=404,
