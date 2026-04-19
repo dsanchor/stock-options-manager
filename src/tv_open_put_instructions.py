@@ -368,13 +368,13 @@ Before reporting roll economics, you MUST:
 - Approved automatically — this is the ideal outcome
 - Proceed with the roll recommendation
 
-**Tier 2 — ACCEPTABLE (Ultra-Defensive): Net Debit ≤ $20.00**
-- Roll costs money, but paying ≤$20.00 per share ($2,000 per contract) is acceptable insurance to avoid assignment on a position you want to keep
+**Tier 2 — ACCEPTABLE (Ultra-Defensive): Net Debit ≤ $1.00**
+- Roll costs money, but paying ≤$1.00 per share ($100 per contract) is acceptable insurance to avoid assignment on a position you want to keep
 - This is a defensive maneuver when the stock has moved significantly against you
 - MUST add `"ultra_defensive_roll"` to `risk_flags`
 - Include detailed justification in the `reason` field explaining why paying this debit is warranted
 
-**Tier 3 — REJECTED: Net Debit > $20.00**
+**Tier 3 — REJECTED: Net Debit > $1.00**
 - Do NOT recommend this roll
 - The cost is too high — position has deteriorated beyond reasonable roll economics
 - Execute the Roll Search Algorithm (below) to find alternatives
@@ -382,7 +382,7 @@ Before reporting roll economics, you MUST:
 
 **Roll Search Algorithm:**
 
-When your initial roll candidate fails the net credit test (Tier 1) or exceeds the $20 debit threshold (Tier 2), systematically search for better alternatives in this order:
+When your initial roll candidate fails the net credit test (Tier 1) or exceeds the $1 debit threshold (Tier 2), systematically search for better alternatives in this order:
 
 1. **Same new strike, +1 week further expiration**: Keep the strike, try the next weekly expiration (more time = more premium)
 2. **-1 strike increment lower, same expiration**: Move the strike down by $1-$2.50 (puts roll down for safety), keep expiration
@@ -395,13 +395,13 @@ Track how many candidates you evaluated in `roll_economics.candidates_evaluated`
 - "Buyback cost: $X.XX (ask at current $XX strike, MMM DD exp)"
 - "New premium: $Y.YY (bid at new $YY strike, MMM DD exp)"
 - "Net credit/debit: +$Z.ZZ" or "Net debit: -$Z.ZZ"
-- "Roll tier: Tier 1 (net credit)" or "Tier 2 (ultra-defensive, debit within $20 threshold)" or "Tier 3 (rejected, no viable roll found)"
+- "Roll tier: Tier 1 (net credit)" or "Tier 2 (ultra-defensive, debit within $1 threshold)" or "Tier 3 (rejected, no viable roll found)"
 
 **CLOSE Activity Updated Logic:**
 
 Recommend CLOSE only when:
 1. **Fundamental thesis has changed** (existing rule — you no longer want to own the underlying), OR
-2. **No viable roll exists**: After executing the Roll Search Algorithm, no candidate meets the ≥$1.00 net credit threshold AND no ultra-defensive roll (≤$20.00 debit) is acceptable
+2. **No viable roll exists**: After executing the Roll Search Algorithm, no candidate meets the ≥$1.00 net credit threshold AND no ultra-defensive roll (≤$1.00 debit) is acceptable
 
 When recommending CLOSE due to #2, set `roll_economics.roll_tier = "no_viable_roll"` and add `"no_viable_roll"` to `risk_flags`.
 
@@ -425,7 +425,7 @@ Use consistent risk flag names. Key flags for open put monitors:
 - `breakdown_momentum`, `support_break` (technical)
 - `fundamental_deterioration`, `analyst_downgrade` (fundamental)
 - `profit_optimization` (optimization rolls)
-- `ultra_defensive_roll` (roll with net debit ≤$20, acceptable insurance cost)
+- `ultra_defensive_roll` (roll with net debit ≤$1, acceptable insurance cost)
 - `no_viable_roll` (no roll candidate meets premium-first policy thresholds)
 
 **Earnings flag definitions:**
