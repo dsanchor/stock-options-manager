@@ -1424,3 +1424,53 @@ Added a new LLM report generation endpoint (`POST /api/symbols/{symbol}/report`)
 - `.squad/orchestration-log/2026-04-18T0827-rusty-report.md` (Agent routing log)
 - `.squad/log/2026-04-18T0827-symbol-report.md` (Session summary)
 
+
+---
+
+## Centralized Options Chain Schema Description
+
+**Date:** 2026-07-25  
+**Author:** Linus (Quant Dev)  
+**Status:** Implemented
+
+### Decision
+
+All agent prompts, chat contexts, and reports that include options chain data now prepend a standardized schema description (`OPTIONS_CHAIN_SCHEMA_DESCRIPTION` from `src/options_chain_parser.py`). This ensures every LLM receiving options chain data knows the JSON structure and field semantics.
+
+### Rationale
+
+Agents were receiving raw JSON without context on what fields mean — especially critical fields like `iv` (decimal, not percentage), `delta` (sign convention), and `theta` (negative = decay). This led to potential misinterpretation in analysis.
+
+### Impact
+
+- The constant is defined once in `options_chain_parser.py` and imported everywhere
+- Any new injection point for options chain data should import and prepend `OPTIONS_CHAIN_SCHEMA_DESCRIPTION`
+- No logic changes — only documentation added to prompts
+
+---
+
+## Filter TradingView Scanner Responses by totalCount
+
+**Date:** 2026-07-25  
+**Author:** Linus (Quant Dev)  
+**Status:** Implemented  
+**Impact:** Data quality for options chain fetching
+
+### Context
+
+The `fetch_options_chain` method intercepts TradingView scanner API responses matching `_OPTIONS_SCAN_URLS`. One of the intercepted responses contains `totalCount: 1` — it's metadata/noise, not actual option chain data. This polluted the captured data sent downstream.
+
+### Decision
+
+Filter responses at capture time inside `_on_response`: parse the JSON body and discard any response where `totalCount <= 1`. Responses that fail JSON parsing are kept (safe default).
+
+### Rationale
+
+- Filtering at the callback level prevents garbage from ever entering `captured_responses`
+- `totalCount > 1` is a reliable discriminator: real option chain data always has multiple rows
+- Non-JSON responses are allowed through as a safe fallback (shouldn't happen for these endpoints, but defensive)
+
+### Files Modified
+
+- `src/tv_data_fetcher.py` — `_on_response` callback in `fetch_options_chain`
+
