@@ -2236,18 +2236,12 @@ async def _build_symbol_context(symbol: str, cosmos,
                 exchange = symbol_doc.get("exchange", "NYSE")
                 # Only include positions if requested
                 if preferences.get('positions', True):
-                    # Filter out closed positions before including in context
-                    filtered_doc = {k: v for k, v in symbol_doc.items()
-                                    if k in ("symbol", "display_name", "exchange",
-                                             "watchlist", "positions")}
-                    if "positions" in filtered_doc:
-                        filtered_doc["positions"] = [
-                            p for p in filtered_doc["positions"]
-                            if p.get("status") == "active"
-                        ]
                     context_parts.append("--- Symbol Config ---")
                     context_parts.append(json.dumps(
-                        filtered_doc, indent=2, default=str))
+                        {k: v for k, v in symbol_doc.items()
+                         if k in ("symbol", "display_name", "exchange",
+                                  "watchlist", "positions")},
+                        indent=2, default=str))
         except Exception as exc:
             logger.warning("symbol_chat: failed to load symbol doc: %s", exc)
 
