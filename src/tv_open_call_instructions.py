@@ -299,7 +299,7 @@ When the current call is deep OTM and nearly worthless, you may recommend ROLL_D
 
 1. **Deep OTM**: Current price is at least 3.5% below the current strike (adequate safety buffer based on historical research)
 2. **Low delta**: Delta < 0.20 (captures <8-10% assignment probability, research-backed threshold)
-3. **Minimum DTE**: DTE ≥ 15 days (2+ weeks provide meaningful premium opportunity)
+3. **Minimum DTE**: DTE ≥ 10 days (sufficient time for meaningful premium opportunity)
 
 **FLEXIBLE CONDITIONS (need at least 4 of 7):**
 

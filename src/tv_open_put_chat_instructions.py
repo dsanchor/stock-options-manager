@@ -229,7 +229,7 @@ If the user mentions they have an existing deep OTM put position that's nearly w
 **MANDATORY CONDITIONS (all 3 required):**
 1. Position is DEEP OTM: Current price at least 3.5% above strike
 2. Very low delta: |Delta| < 0.20 (approximately <20% assignment probability)
-3. Sufficient time: DTE ≥ 15 days
+3. Sufficient time: DTE ≥ 10 days
 
 **FLEXIBLE CONDITIONS (need at least 4 of 7):**
 4. Technicals neutral/bullish (Oscillator: Buy or Neutral, NOT Sell)

@@ -307,7 +307,7 @@ When the current put is deep OTM and nearly worthless, you may recommend ROLL_UP
 2. **Low |delta|**: |Delta| < 0.20 (approximately <20% assignment probability)
    - Research basis: Options with delta <0.20 have <20% ITM probability at expiration; acceptable risk tier
    - Note: Puts have negative delta; use absolute value for comparison
-3. **DTE ≥ 15**: Enough time remaining for the roll to be worthwhile
+3. **DTE ≥ 10**: Enough time remaining for the roll to be worthwhile
    - Research basis: 15+ days provides meaningful theta decay runway; theta acceleration occurs <21 DTE
 
 **FLEXIBLE CONDITIONS (need at least 4 of 7):**

@@ -90,7 +90,7 @@ If the user has an **existing open call position** that is deep OTM and nearly w
 **MANDATORY conditions (all 3 must pass):**
 1. **Deep OTM**: Current price at least 3.5% below current strike
 2. **Low delta**: Delta < 0.20 (less than 8-10% assignment probability)
-3. **Minimum DTE**: At least 15 days remaining (2+ weeks for meaningful premium)
+3. **Minimum DTE**: At least 10 days remaining (sufficient time for meaningful premium)
 
 **FLEXIBLE conditions (need 4 of 7):**
 4. Technicals bearish or neutral (no bullish signals)
