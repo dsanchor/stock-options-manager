@@ -13,7 +13,7 @@ from agent_framework.azure import AzureOpenAIChatClient
 
 from .cosmos_db import CosmosDBService
 from .context import ContextProvider
-from .options_chain_parser import parse_options_chain
+from .options_chain_parser import parse_options_chain, OPTIONS_CHAIN_SCHEMA_DESCRIPTION
 from .tv_cache import get_tv_cache as _get_tv_cache
 
 # Canonical timestamp format — used for ALL activity and alert log entries.
@@ -66,7 +66,10 @@ class AgentRunner:
         """Parse raw options chain through the shared parser; fall back to raw."""
         structured = parse_options_chain(raw_chain, symbol)
         if structured.get("calls") or structured.get("puts"):
-            return json.dumps(structured, indent=2)
+            return (
+                OPTIONS_CHAIN_SCHEMA_DESCRIPTION + "\n"
+                + json.dumps(structured, indent=2)
+            )
         return raw_chain
 
     # ── JSON / SUMMARY extraction ──────────────────────────────────────
@@ -694,38 +697,136 @@ Analyze the position risk and output your activity in the required JSON format. 
         print("="*70)
         
         try:
-            # Fetch recent activities by symbol
+            import json
+
+            # ── 1. Load all symbol configs for portfolio context ──
+            all_symbols = cosmos.list_symbols()
+            logger.info("Loaded %d symbol configs", len(all_symbols))
+
+            # Build closed position IDs and portfolio structure
+            closed_position_ids: set = set()
+            portfolio = {
+                "active_calls": [],
+                "active_puts": [],
+                "watching_calls": [],
+                "watching_puts": [],
+            }
+
+            for sym_doc in all_symbols:
+                sym = sym_doc.get("symbol", "?")
+                wl = sym_doc.get("watchlist", {})
+                positions = sym_doc.get("positions", [])
+
+                # Track closed position IDs for activity filtering
+                for p in positions:
+                    if p.get("status") != "active":
+                        pid = p.get("position_id")
+                        if pid:
+                            closed_position_ids.add(pid)
+
+                # Active positions (only active, never closed)
+                active_calls = [p for p in positions
+                                if p.get("status") == "active"
+                                and p.get("type") == "call"]
+                active_puts = [p for p in positions
+                               if p.get("status") == "active"
+                               and p.get("type") == "put"]
+
+                if active_calls:
+                    portfolio["active_calls"].append({
+                        "symbol": sym,
+                        "positions": [
+                            {"strike": p.get("strike"),
+                             "expiration": p.get("expiration"),
+                             "position_id": p.get("position_id")}
+                            for p in active_calls
+                        ],
+                    })
+                if active_puts:
+                    portfolio["active_puts"].append({
+                        "symbol": sym,
+                        "positions": [
+                            {"strike": p.get("strike"),
+                             "expiration": p.get("expiration"),
+                             "position_id": p.get("position_id")}
+                            for p in active_puts
+                        ],
+                    })
+
+                # Watchlist / following (only if enabled)
+                if wl.get("covered_call"):
+                    portfolio["watching_calls"].append(sym)
+                if wl.get("cash_secured_put"):
+                    portfolio["watching_puts"].append(sym)
+
+            logger.info(
+                "Portfolio: %d active-call symbols, %d active-put symbols, "
+                "%d watching-calls, %d watching-puts, %d closed position IDs",
+                len(portfolio["active_calls"]),
+                len(portfolio["active_puts"]),
+                len(portfolio["watching_calls"]),
+                len(portfolio["watching_puts"]),
+                len(closed_position_ids),
+            )
+
+            # ── 2. Fetch recent activities and filter closed positions ──
             logger.info("Fetching recent activities from CosmosDB (limit=%d per symbol)", activity_count)
             activities_by_symbol = cosmos.get_recent_activities_by_symbol(
                 limit_per_symbol=activity_count
             )
-            
-            if not activities_by_symbol:
-                logger.info("No activities found — summary agent has nothing to report")
-                print("ℹ️  No activities found — nothing to summarize")
+
+            # Filter out activities linked to closed positions
+            if closed_position_ids:
+                for sym, acts in list(activities_by_symbol.items()):
+                    filtered = [a for a in acts
+                                if a.get("position_id") not in closed_position_ids]
+                    if filtered:
+                        activities_by_symbol[sym] = filtered
+                    else:
+                        del activities_by_symbol[sym]
+
+            has_activities = bool(activities_by_symbol)
+            has_portfolio = (portfolio["active_calls"] or portfolio["active_puts"]
+                            or portfolio["watching_calls"] or portfolio["watching_puts"])
+
+            if not has_activities and not has_portfolio:
+                logger.info("No activities or portfolio data — summary agent has nothing to report")
+                print("ℹ️  No activities or portfolio data — nothing to summarize")
                 return
-            
+
             logger.info("Loaded activities for %d symbol(s)", len(activities_by_symbol))
             print(f"📋 Loaded activities for {len(activities_by_symbol)} symbol(s)")
-            
-            # Format activities data for the agent
-            import json
-            activities_text = json.dumps(activities_by_symbol, indent=2, default=str)
-            
-            logger.info("Building prompt with activities data (%d chars)", len(activities_text))
-            
-            # Build the prompt
+
+            portfolio_text = json.dumps(portfolio, indent=2, default=str)
+            activities_text = json.dumps(activities_by_symbol, indent=2, default=str) if has_activities else "{}"
+
+            logger.info("Building prompt with portfolio (%d chars) + activities (%d chars)",
+                        len(portfolio_text), len(activities_text))
+
+            # ── 3. Build the prompt ──
             prompt = f"""{TV_SUMMARY_INSTRUCTIONS}
+
+## PORTFOLIO OVERVIEW
+
+The following shows ALL active (open) positions and ALL symbols on the watchlist (following).
+Use this to determine which symbols belong in each section.
+All positions are SOLD (short) options — sold calls and sold puts.
+
+```json
+{portfolio_text}
+```
 
 ## RECENT ACTIVITIES DATA
 
-The following is a dictionary of recent activities grouped by symbol (newest first):
+The following is a dictionary of recent activities grouped by symbol (newest first).
+Only includes activities for active (open) positions — closed positions are excluded.
 
 ```json
 {activities_text}
 ```
 
 Generate your 3-line summaries now. Output plain text only — no JSON, no code blocks.
+Every symbol listed in the portfolio overview MUST appear in the corresponding section, even if there are no recent activities for it.
 """
             
             # Run the agent

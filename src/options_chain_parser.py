@@ -12,6 +12,37 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Reusable schema description — import and prepend wherever options chain
+# JSON is injected into agent prompts, chat contexts, or reports.
+# ---------------------------------------------------------------------------
+OPTIONS_CHAIN_SCHEMA_DESCRIPTION = """\
+OPTIONS CHAIN FORMAT:
+The options chain is a JSON object with the following structure:
+{
+  "symbol": "<TICKER>",
+  "timestamp": "<ISO 8601 fetch time>",
+  "calls": { "<YYYYMMDD>": [ ...contracts... ] },
+  "puts":  { "<YYYYMMDD>": [ ...contracts... ] }
+}
+Calls and puts are grouped by expiration date (YYYYMMDD key). Each expiration
+contains a list of contracts sorted by strike price. Contract fields:
+  - opra_symbol: OPRA identifier (e.g. "OPRA:MSFT260427C475.0")
+  - strike: Strike price in dollars
+  - bid / ask: Best bid and ask prices
+  - mid: Theoretical mid-price
+  - iv: Implied volatility (decimal, e.g. 0.364 = 36.4%)
+  - delta: Delta (0 to 1 for calls, -1 to 0 for puts)
+  - gamma: Gamma (rate of delta change)
+  - theta: Theta (daily time decay, negative value)
+  - vega: Vega (sensitivity to volatility)
+  - rho: Rho (sensitivity to interest rates)
+  - currency: Currency code (usually "USD")
+  - expiration: Expiration date as YYYYMMDD string
+  - option_type: "call" or "put"
+  - bid_iv / ask_iv: Bid/ask implied volatilities (optional)
+"""
+
 # Canonical field names we expose on each contract
 _FIELD_MAP = {
     "ask": "ask",

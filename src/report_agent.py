@@ -118,10 +118,16 @@ async def run_report_analysis(
             content = tv_data.get(section_key, "")
             if content and not content.startswith("[ERROR"):
                 if section_key == "options_chain":
-                    from .options_chain_parser import parse_options_chain
+                    from .options_chain_parser import (
+                        parse_options_chain,
+                        OPTIONS_CHAIN_SCHEMA_DESCRIPTION,
+                    )
                     parsed = parse_options_chain(content, symbol)
                     if parsed.get("calls") or parsed.get("puts"):
-                        content = json.dumps(parsed, indent=2)
+                        content = (
+                            OPTIONS_CHAIN_SCHEMA_DESCRIPTION + "\n"
+                            + json.dumps(parsed, indent=2)
+                        )
                 context_parts.append(
                     f"\n--- TradingView {section_label} ---\n{content}")
     except Exception as exc:

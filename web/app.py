@@ -2115,7 +2115,9 @@ async def chat_api(request: Request):
             context_parts.append(data["dividends"])
         
         if "options_chain" in data and data["options_chain"]:
+            from src.options_chain_parser import OPTIONS_CHAIN_SCHEMA_DESCRIPTION
             context_parts.append("\n=== OPTIONS CHAIN ===")
+            context_parts.append(OPTIONS_CHAIN_SCHEMA_DESCRIPTION)
             context_parts.append(data["options_chain"])
         
         context_text = "\n\n".join(context_parts)
@@ -2305,6 +2307,9 @@ async def _build_symbol_context(symbol: str, cosmos,
             ]:
                 content = tv_data.get(section_key, "")
                 if content and not content.startswith("[ERROR"):
+                    if section_key == "options_chain":
+                        from src.options_chain_parser import OPTIONS_CHAIN_SCHEMA_DESCRIPTION
+                        content = OPTIONS_CHAIN_SCHEMA_DESCRIPTION + "\n" + content
                     tv_sections.append(
                         f"\n--- TradingView {section_label} ---\n{content}")
 
