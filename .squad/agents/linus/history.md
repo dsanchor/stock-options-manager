@@ -1315,3 +1315,12 @@ Set to `null` for WAIT, populated for all ROLL and CLOSE activities.
   3. `web/app.py` `chat_api()` quick-analysis mode — inserts schema before raw options chain data
   4. `web/app.py` `_build_symbol_context()` — prepends schema to options chain section in symbol chat
 - **Key files**: `src/options_chain_parser.py`, `src/agent_runner.py`, `src/report_agent.py`, `web/app.py`
+
+### Anti-Hallucination Guardrails for Roll Prices (2026-07-22)
+- **Problem**: Open call/put monitor agents were hallucinating bid/ask prices when recommending rolls — fabricating plausible numbers instead of reading from the options chain JSON.
+- **Root cause**: Agent instructions lacked explicit constraints forbidding price fabrication and had no verification step requiring exact chain lookups before reporting roll economics.
+- **Changes** (3 files, instruction text only — no code logic changed):
+  1. `src/options_chain_parser.py` — Added "DATA INTEGRITY (MANDATORY)" section to `OPTIONS_CHAIN_SCHEMA_DESCRIPTION`. Forbids estimating, interpolating, rounding, or fabricating prices. Requires "contract not found in chain" if no match.
+  2. `src/tv_open_call_instructions.py` — Added "VERIFICATION (CRITICAL)" step after Roll Economics Calculation in Premium-First Roll Policy. Requires agent to match option_type + expiration + strike → read exact bid/ask before reporting economics. If either contract missing, set roll_economics to null.
+  3. `src/tv_open_put_instructions.py` — Same verification step added to put monitor instructions.
+- **Key insight**: LLM agents will confabulate numeric values unless instructions explicitly require exact lookup + quote and define what to do when a contract isn't found.

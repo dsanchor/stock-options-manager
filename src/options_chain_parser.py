@@ -29,8 +29,8 @@ Calls and puts are grouped by expiration date (YYYYMMDD key). Each expiration
 contains a list of contracts sorted by strike price. Contract fields:
   - opra_symbol: OPRA identifier (e.g. "OPRA:MSFT260427C475.0")
   - strike: Strike price in dollars
-  - bid: Best bid price — the price a BUYER is willing to pay for this contract
-  - ask: Best ask price — the price a SELLER is asking for this contract
+  - bid: Best bid price — what you RECEIVE when you SELL (open or close) this contract
+  - ask: Best ask price — what you PAY when you BUY (open or close) this contract
   - mid: Theoretical mid-price (model-derived fair value, NOT necessarily (bid+ask)/2)
   - iv: Implied volatility (decimal, e.g. 0.364 = 36.4%)
   - delta: Delta (0 to 1 for calls, -1 to 0 for puts)
@@ -53,6 +53,27 @@ All strategies in this application SELL (write) options. When SELLING an option:
 Do NOT use 'ask' or 'mid' as the premium received. The 'bid' is always the
 realistic premium a seller collects. Use 'mid' only for theoretical/fair-value
 comparisons, never as actual premium income.
+
+ROLL OPERATIONS (buying back + selling new):
+  - buyback_cost = ask of your CURRENT contract (you BUY to close → pay the ask)
+  - new_premium  = bid of the NEW target contract (you SELL to open → receive the bid)
+  - net_credit   = new_premium - buyback_cost (positive = you collect, negative = you pay)
+
+HOW TO LOOK UP A CONTRACT:
+  Example: find the premium for selling an MSFT $475 call expiring 2026-04-27:
+  1. Go to calls → key "20260427" (expiration in YYYYMMDD)
+  2. In that array, find the object where "strike": 475
+  3. Read "bid" → that is the premium you receive when selling
+  Example: find the buyback cost for your current MSFT $470 call expiring 2026-04-18:
+  1. Go to calls → key "20260418"
+  2. Find the object where "strike": 470
+  3. Read "ask" → that is the cost to buy back (close) the position
+
+DATA INTEGRITY (MANDATORY):
+  Every price you report (bid, ask, premium, buyback cost) MUST be the EXACT value
+  from a contract in this JSON data. NEVER estimate, interpolate, round, or fabricate prices.
+  If you cannot find a contract matching your target strike AND expiration in the chain,
+  state "contract not found in chain" — do NOT invent a price.
 """
 
 # Canonical field names we expose on each contract
