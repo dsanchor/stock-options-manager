@@ -22,11 +22,12 @@ The options chain is a JSON object with the following structure:
 {
   "symbol": "<TICKER>",
   "timestamp": "<ISO 8601 fetch time>",
-  "calls": { "<YYYYMMDD>": [ ...contracts... ] },
-  "puts":  { "<YYYYMMDD>": [ ...contracts... ] }
+  "calls": { "<YYYYMMDD>": { "<strike>": {contract}, ... } },
+  "puts":  { "<YYYYMMDD>": { "<strike>": {contract}, ... } }
 }
 Calls and puts are grouped by expiration date (YYYYMMDD key). Each expiration
-contains a list of contracts sorted by strike price. Contract fields:
+contains a dictionary of contracts keyed by strike price (e.g. "475.0", "472.5").
+Contract fields:
   - opra_symbol: OPRA identifier (e.g. "OPRA:MSFT260427C475.0")
   - strike: Strike price in dollars
   - bid: Best bid price — what you RECEIVE when you SELL (open or close) this contract
@@ -61,19 +62,16 @@ ROLL OPERATIONS (buying back + selling new):
 
 HOW TO LOOK UP A CONTRACT:
   Example: find the premium for selling an MSFT $475 call expiring 2026-04-27:
-  1. Go to calls → key "20260427" (expiration in YYYYMMDD)
-  2. In that array, find the object where "strike": 475
-  3. Read "bid" → that is the premium you receive when selling
+  1. calls["20260427"]["475.0"]["bid"] → that is the premium you receive when selling
   Example: find the buyback cost for your current MSFT $470 call expiring 2026-04-18:
-  1. Go to calls → key "20260418"
-  2. Find the object where "strike": 470
-  3. Read "ask" → that is the cost to buy back (close) the position
+  1. calls["20260418"]["470.0"]["ask"] → that is the cost to buy back (close) the position
+  Direct key access — no searching required.
 
 DATA INTEGRITY (MANDATORY):
   Every price you report (bid, ask, premium, buyback cost) MUST be the EXACT value
   from a contract in this JSON data. NEVER estimate, interpolate, round, or fabricate prices.
-  If you cannot find a contract matching your target strike AND expiration in the chain,
-  state "contract not found in chain" — do NOT invent a price.
+  State the full path and value: e.g., calls["20260427"]["475.0"]["ask"] = 3.00
+  If the key path does not exist in the chain, state "contract not found in chain" — do NOT invent a price.
 """
 
 # Canonical field names we expose on each contract
@@ -137,8 +135,8 @@ def parse_options_chain(raw: str, symbol: str = "") -> dict:
         logger.warning("options_chain_parser: no valid JSON found (raw length=%d)", len(raw))
         return {"symbol": symbol, "timestamp": None, "calls": {}, "puts": {}}
 
-    calls: Dict[str, list] = defaultdict(list)
-    puts: Dict[str, list] = defaultdict(list)
+    calls: Dict[str, dict] = defaultdict(dict)
+    puts: Dict[str, dict] = defaultdict(dict)
     data_time: Optional[Any] = None
 
     for parsed in parsed_blocks:
@@ -206,15 +204,16 @@ def parse_options_chain(raw: str, symbol: str = "") -> dict:
             if ask_iv is not None:
                 opt["ask_iv"] = ask_iv
 
+            strike_key = str(float(opt["strike"])) if opt["strike"] is not None else "0.0"
             if option_type == "call":
-                calls[expiration].append(opt)
+                calls[expiration][strike_key] = opt
             else:
-                puts[expiration].append(opt)
+                puts[expiration][strike_key] = opt
 
-    # Sort within each expiration by strike, then sort keys chronologically
+    # Sort strikes within each expiration, then sort expiration keys chronologically
     for bucket in (calls, puts):
         for exp in bucket:
-            bucket[exp].sort(key=lambda o: (o["strike"] or 0))
+            bucket[exp] = dict(sorted(bucket[exp].items(), key=lambda kv: float(kv[0])))
 
     sorted_calls = dict(sorted(calls.items()))
     sorted_puts = dict(sorted(puts.items()))
@@ -225,3 +224,48 @@ def parse_options_chain(raw: str, symbol: str = "") -> dict:
         "calls": sorted_calls,
         "puts": sorted_puts,
     }
+
+
+def filter_options_chain_for_position(
+    chain: dict,
+    current_strike: float,
+    option_type: Optional[str] = None,
+    num_strikes: int = 15,
+) -> dict:
+    """Filter a parsed options chain to ±num_strikes around current_strike.
+
+    Keeps only strikes within range for each expiration in calls/puts.
+    Adds a ``current_position`` key with the reference strike.
+    """
+    strike_val = float(current_strike)
+
+    def _filter_bucket(bucket: dict) -> dict:
+        filtered = {}
+        for exp, strikes_dict in bucket.items():
+            sorted_keys = sorted(strikes_dict.keys(), key=lambda k: float(k))
+            # Find the index of the strike closest to current_strike
+            closest_idx = min(
+                range(len(sorted_keys)),
+                key=lambda i: abs(float(sorted_keys[i]) - strike_val),
+            ) if sorted_keys else 0
+            lo = max(0, closest_idx - num_strikes)
+            hi = min(len(sorted_keys), closest_idx + num_strikes + 1)
+            kept = sorted_keys[lo:hi]
+            if kept:
+                filtered[exp] = {k: strikes_dict[k] for k in kept}
+        return filtered
+
+    result = {
+        "symbol": chain.get("symbol", ""),
+        "timestamp": chain.get("timestamp"),
+        "current_position": {
+            "strike": strike_val,
+            "strike_key": str(float(strike_val)),
+        },
+    }
+    if option_type:
+        result["current_position"]["option_type"] = option_type
+
+    result["calls"] = _filter_bucket(chain.get("calls", {}))
+    result["puts"] = _filter_bucket(chain.get("puts", {}))
+    return result

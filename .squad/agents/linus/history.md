@@ -1324,3 +1324,28 @@ Set to `null` for WAIT, populated for all ROLL and CLOSE activities.
   2. `src/tv_open_call_instructions.py` — Added "VERIFICATION (CRITICAL)" step after Roll Economics Calculation in Premium-First Roll Policy. Requires agent to match option_type + expiration + strike → read exact bid/ask before reporting economics. If either contract missing, set roll_economics to null.
   3. `src/tv_open_put_instructions.py` — Same verification step added to put monitor instructions.
 - **Key insight**: LLM agents will confabulate numeric values unless instructions explicitly require exact lookup + quote and define what to do when a contract isn't found.
+
+### Options Chain Format Analysis — LLM Hallucination Root Cause (2026-01-15)
+- **Problem**: Monitor agents continue to hallucinate bid/ask prices despite anti-hallucination guardrails (verification steps, data integrity rules). Fabrication rate ~30-40%.
+- **Root cause**: The nested-array JSON format (calls → expiration → array of contracts) forces a 4-step cognitive task: (1) navigate to expiration key, (2) scan array of 20-40 contracts, (3) match strike by equality, (4) extract bid/ask field. LLMs are autocompletion engines, not symbolic reasoners — array scanning + equality matching exceeds reliability threshold.
+- **Analysis findings**: 
+  - Current format token count: ~20,000 tokens for typical 6-expiration chain
+  - Lookup pattern requires iteration + filtering (error-prone for LLMs)
+  - Prompt engineering cannot fix structural data problems
+- **Recommendation**: Switch to **strike-keyed dictionaries + position-relative filtering** (hybrid of options 2b + 2d)
+  - Strike-keyed: `calls["20260427"]["475.0"]["ask"]` — direct path, no iteration, no equality matching
+  - Pre-filtered: Send only ±15 strikes from current position (60-75% token reduction, 30-40 contracts vs 100-200)
+  - Expected hallucination drop: 30-40% → <5%
+- **Alternative**: Markdown tables with pre-computed net credits if JSON still shows >10% error rate
+- **Future option**: Pre-computed roll tables (server calculates candidates, agent picks) — most reliable but reduces agent autonomy
+- **Key insight**: "Make the right thing the easy thing" — if correct lookup is 1 step and wrong lookup is 3 steps, errors drop dramatically. Direct key access (`dict[key]`) is autocompletion-friendly; array scanning is not.
+- **Deliverable**: Full analysis report saved to `options_chain_format_analysis.md`
+
+### Strike-Keyed Dict + Position-Relative Filtering Implementation (2026-05-12)
+- **Parser**: `parse_options_chain()` now outputs strike-keyed dicts instead of arrays: `calls["20260427"]["475.0"] = {contract}`. Strikes sorted numerically within each expiration.
+- **Strike key format**: `str(float(strike))` normalizes all strikes — "475.0", "472.5". Kept `strike` field inside opt dict for redundancy.
+- **Filter function**: New `filter_options_chain_for_position(chain, current_strike, option_type, num_strikes=15)` trims to ±15 strikes around position. Adds `current_position` metadata to output.
+- **Agent runner**: `_format_options_chain()` gained optional `current_strike` and `option_type` params. Monitor agents pass position context for filtering; analysis agents get the full chain.
+- **Schema description**: Updated `OPTIONS_CHAIN_SCHEMA_DESCRIPTION` — HOW TO LOOK UP section now shows direct key-path access, DATA INTEGRITY requires stating full path.
+- **Instruction files**: VERIFICATION sections in `tv_open_call_instructions.py` and `tv_open_put_instructions.py` now use key-path syntax: `calls["exp"]["strike"]["ask"]` / `puts["exp"]["strike"]["bid"]`.
+- **Cleanup**: Deleted `options_chain_format_analysis.md` (analysis artifact, not production code).

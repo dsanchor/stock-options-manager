@@ -341,10 +341,11 @@ When recommending a roll, suggest specific new strike and expiration:
 
 **VERIFICATION (CRITICAL — do NOT skip):**
 Before reporting roll economics, you MUST:
-1. Find your CURRENT contract in the chain: match option_type + expiration (YYYYMMDD) + strike → read the 'ask' field. This is your buyback_cost.
-2. Find your ROLL TARGET contract in the chain: match option_type + new expiration (YYYYMMDD) + new strike → read the 'bid' field. This is your new_premium.
-3. If EITHER contract is not found in the options chain data, set roll_economics to null and explain in 'reason' that the contract was not available in the chain.
-4. Quote the exact values — do NOT round, estimate, or approximate.
+1. Find your CURRENT contract: calls["<expiration>"]["<strike>"]["ask"]. This is your buyback_cost.
+2. Find your ROLL TARGET contract: calls["<new_expiration>"]["<new_strike>"]["bid"]. This is your new_premium.
+3. State the full path and value: e.g., calls["20260427"]["475.0"]["ask"] = 3.00
+4. If EITHER key path does not exist in the data, set roll_economics to null and explain the contract was not available.
+5. Quote the exact values — do NOT round, estimate, or approximate.
 
 **Three-Tier Hierarchy:**
 
