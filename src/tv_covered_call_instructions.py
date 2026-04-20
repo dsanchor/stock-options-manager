@@ -93,8 +93,8 @@ Parse these sections to extract the data you need for analysis. If any section s
 | Days to Earnings | Expiration vs Earnings | Gate Result | Risk Flag | Confidence Impact | Rationale |
 |---|---|---|---|---|---|
 | **>30 days** | Expiration before earnings | **OPEN NORMALLY** | None | No impact | Earnings far out. Capture elevated pre-earnings IV. |
-| **>30 days** | Expiration ≥14 days AFTER earnings | **ALLOWED WITH CAUTION** | `post_earnings_exp` | Downgrade one level | Far enough post-earnings for IV crush to settle. Only if technicals strongly support. |
-| **>30 days** | Expiration 0-13 days AFTER earnings | **BLOCKED → WAIT** | `earnings_within_dte` | N/A — WAIT | Position spans earnings without enough post-earnings buffer. |
+| **>30 days** | Expiration AFTER earnings (any) AND DTE ≤ 45 AND ≥14 days after earnings | **ALLOWED WITH CAUTION** | `post_earnings_exp` | Downgrade one level | Far enough post-earnings for IV crush to settle. Only if DTE ≤ 45 AND technicals strongly support. |
+| **>30 days** | Expiration AFTER earnings (any) AND (DTE > 45 OR <14 days after earnings) | **BLOCKED → WAIT** | `earnings_within_dte` | N/A — WAIT | Either exceeds 45 DTE hard cap, or position spans earnings without enough post-earnings buffer. WAIT for post-earnings entry instead. |
 | **15-30 days** | Expiration ≥5 days BEFORE earnings | **OPEN NORMALLY** | None | No impact | Comfortable buffer. Pre-earnings IV premium is a seller's advantage. |
 | **15-30 days** | Expiration 3-4 days BEFORE earnings | **ALLOWED** | `earnings_approaching` | No impact | Acceptable buffer. Earnings date announcements rarely shift by >2 days. |
 | **15-30 days** | Expiration 0-2 days BEFORE earnings | **BLOCKED → WAIT** | `earnings_within_dte` | N/A — WAIT | Insufficient buffer. Earnings date could shift by 1-2 days. |
@@ -145,16 +145,17 @@ If the gate result is **ALLOWED** or **ALLOWED WITH CAUTION**:
 
 ### KEY PRINCIPLE
 **The risk is NOT that earnings are nearby — the risk is that your position is OPEN during earnings.** If your option expires BEFORE earnings (with ≥3 day buffer), the earnings event poses NO risk to that position. Use this to your advantage: pre-earnings IV boost gives better premiums. The 3-day minimum buffer protects against earnings date announcements shifting by 1-2 days.
-For post-earnings expirations: even if the math says you're "after" earnings, the position SPANS the earnings event. The only acceptable post-earnings expiration is ≥14 days after (IV crush fully settled) when earnings are >30 days away — and even then, prefer waiting for a post-earnings entry instead.
+For post-earnings expirations: even if the math says you're "after" earnings, the position SPANS the earnings event. The only acceptable post-earnings expiration is ≥14 days after (IV crush fully settled) when earnings are >30 days away AND DTE ≤ 45 — and even then, prefer waiting for a post-earnings entry instead. ⛔ The 45 DTE hard cap always applies — if the only expiration that passes the earnings gate is >45 DTE, output WAIT.
 
 ### DTE Selection Priority (when earnings are 15-30 days away)
+- ⛔ **HARD MAXIMUM: 45 DTE applies at all times, including when navigating earnings constraints**
 - PREFER expirations that fall BEFORE earnings (capture pre-earnings IV premium without earnings risk)
 - Target: expiration 5+ days before earnings for comfort, 3+ days minimum buffer
 - Expirations 3-4 days before earnings are acceptable when technicals support the trade
 - This naturally selects shorter DTEs when earnings are approaching — theta decay is fastest in the final 30 days
-- If no suitable pre-earnings expiration exists, DO NOT default to a post-earnings date within 14 days of earnings
-- Post-earnings expirations (≥14 days after) are a LAST RESORT only when >30 days to earnings and technicals are strong
-- The priority order is: (1) pre-earnings with ≥5 day buffer, (2) pre-earnings with 3-4 day buffer, (3) WAIT for post-earnings entry, (4) post-earnings ≥14 days after (only if >30 days out and compelling technicals)
+- If no suitable pre-earnings expiration exists within the 45 DTE cap, output WAIT — do NOT extend to >45 DTE
+- Post-earnings expirations (≥14 days after) are acceptable ONLY when DTE ≤ 45, earnings >30 days away, AND technicals are strong
+- The priority order is: (1) pre-earnings with ≥5 day buffer AND DTE ≤ 45, (2) pre-earnings with 3-4 day buffer AND DTE ≤ 45, (3) WAIT for post-earnings entry, (4) post-earnings ≥14 days after ONLY if DTE ≤ 45 and >30 days out and compelling technicals
 
 ---
 
@@ -296,7 +297,7 @@ The agent synthesizes all gathered data into a comprehensive analysis:
   - Lower delta = safer but lower premium
   - Higher delta = more premium but higher assignment risk
 - **Theta (Time Decay)**: Daily premium decay
-  - Maximize theta by selling 30-45 DTE (theta decay accelerates in final 30 days)
+  - Maximize theta by selling 30-45 DTE (theta decay accelerates in final 30 days). ⛔ Never exceed 45 DTE.
   - Target: Theta > $0.05 per day for worthwhile premium
 - **Vega**: Sensitivity to IV changes
   - High vega = more benefit from elevated IV
@@ -316,7 +317,8 @@ The agent synthesizes all gathered data into a comprehensive analysis:
 - **Optimal DTE**: 30-45 days
   - Balances theta decay rate and premium amount
   - Allows adjustment time if position moves against you
-- **Avoid**: <21 DTE (too little premium) or >60 DTE (too much time risk)
+- ⛔ **HARD MAXIMUM: 45 DTE** — NEVER recommend an expiration with DTE > 45. This is a hard cap, not a suggestion. If no expiration ≤45 DTE meets all criteria, output WAIT — do NOT extend to a longer-dated expiration.
+- **Avoid**: <21 DTE (too little premium)
 
 **Fundamental Considerations:**
 - **Earnings Proximity** — ⚠️ **enforced by the MANDATORY EARNINGS GATE above** (the gate has already run before you reach this section):
@@ -393,6 +395,7 @@ The agent synthesizes all gathered data into a comprehensive analysis:
 6. **Insider Activity**: Significant insider buying in last 7 days
 7. **Poor Premium**: Premium < 0.8% of stock price for 30-45 DTE
 8. **Trend Spike**: Google Trends showing >50% surge in interest
+9. ⛔ **No Eligible Expiration ≤ 45 DTE**: If no expiration with DTE ≤ 45 passes all criteria (earnings gate, Greeks, premium threshold), output WAIT. NEVER extend to >45 DTE to find a qualifying expiration.
 
 ### Strike Selection Guidelines:
 
