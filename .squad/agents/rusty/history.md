@@ -474,3 +474,11 @@ Updated README.md to document three recent changes:
 1. **Risk Rating (0-10)** — Added new subsection under Key Concepts explaining the 5-dimension scoring system for sell-side agents, plus updated the example activity JSON to show `risk_rating` and `risk_rating_breakdown` fields.
 2. **Profit Optimization gate change** — Updated from "unanimous 9 conditions" to "3 mandatory + 4/7 flexible (super-majority gate)" with DTE ≥10 days and $1 ultra-defensive roll threshold.
 3. **Telegram notifications** — Added that sell alerts now include `Risk: X/10`.
+
+### Risk Rating Frontend Display (2026-07)
+Added color-coded risk rating (0-10) display to three frontend views:
+- **activity_detail.html**: Full "X/10 + label" badge after Confidence field
+- **dashboard.html**: Compact "Risk X/10" badge in activity feed items
+- **symbol_detail.html**: New "Risk" column in activities table
+- **style.css**: 5-tier color scale (green→dark red) for `.risk-rating-*` classes
+All guarded with `{% if ... is not none %}` for backward compatibility with older activities.

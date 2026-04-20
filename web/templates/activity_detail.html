@@ -57,7 +57,7 @@
             <div class="detail-label">Confidence</div>
             <div class="detail-value"><span class="confidence confidence-{{ activity.confidence or 'medium' }}">{{ activity.confidence or "—" }}</span></div>
         </div>
-        {% if activity.risk_rating is not none %}
+        {% if activity.risk_rating is defined and activity.risk_rating is not none %}
         <div class="detail-field">
             <div class="detail-label">Risk Rating</div>
             <div class="detail-value">
