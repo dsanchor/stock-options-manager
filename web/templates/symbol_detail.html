@@ -453,6 +453,8 @@
                     <td>
                         {% if d.risk_rating is defined and d.risk_rating is not none %}
                         <span class="risk-rating risk-rating-{{ 'low' if d.risk_rating <= 2 else ('moderate' if d.risk_rating <= 4 else ('elevated' if d.risk_rating <= 6 else ('high' if d.risk_rating <= 8 else 'very-high'))) }}">{{ d.risk_rating }}/10</span>
+                        {% elif d.assignment_risk is defined and d.assignment_risk %}
+                        <span class="badge badge-risk-{{ d.assignment_risk | lower }}">{{ d.assignment_risk }}</span>
                         {% else %}—{% endif %}
                     </td>
                     <td>

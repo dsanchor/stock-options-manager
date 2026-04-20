@@ -67,6 +67,13 @@
                 </span>
             </div>
         </div>
+        {% elif activity.assignment_risk is defined and activity.assignment_risk %}
+        <div class="detail-field">
+            <div class="detail-label">Assignment Risk</div>
+            <div class="detail-value">
+                <span class="badge badge-risk-{{ activity.assignment_risk | lower }}">{{ activity.assignment_risk }}</span>
+            </div>
+        </div>
         {% endif %}
         {% if activity.underlying_price is not none %}
         <div class="detail-field">
