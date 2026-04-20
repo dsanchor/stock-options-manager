@@ -1474,3 +1474,50 @@ Filter responses at capture time inside `_on_response`: parse the JSON body and 
 
 - `src/tv_data_fetcher.py` — `_on_response` callback in `fetch_options_chain`
 
+# Decision: Enforce Hard 45 DTE Cap for New Positions
+
+**Date:** 2026-07  
+**Author:** Linus (Quant Dev)  
+**Status:** ✅ Implemented  
+**Impact:** Agent instructions (CC + CSP), user-facing recommendations
+
+## Problem
+
+User reported seeing expiration recommendations with DTE > 45 days too frequently. Root cause: instructions said "Optimal: 30-45 DTE" but "Avoid: >60 DTE", creating a 46-60 day gap the LLM treated as permitted. Additionally, the earnings gate post-earnings path could push expirations beyond 45 DTE.
+
+## Decision
+
+45 DTE is now a **hard maximum** for all new covered call and cash-secured put positions. If no expiration ≤45 DTE passes all criteria (earnings gate, Greeks, premium), the agent outputs WAIT instead of extending to a longer-dated expiration.
+
+## Changes Made
+
+Both `src/tv_covered_call_instructions.py` and `src/tv_cash_secured_put_instructions.py`:
+1. Replaced "Avoid >60 DTE" with "⛔ HARD MAXIMUM: 45 DTE"
+2. Added DTE ≤ 45 guard to earnings gate post-earnings allowance row
+3. Added 45 DTE cap to DTE Selection Priority and KEY PRINCIPLE sections
+4. Added "No Eligible Expiration ≤ 45 DTE" as explicit WAIT trigger
+5. Added "Never exceed 45 DTE" to Theta descriptions
+
+## Follow-up Needed
+
+- Alpha Vantage and Massive.com instruction files likely have the same ">60 DTE" gap — should be audited and patched.
+
+---
+
+# Decision: Risk fields in Telegram notifications
+
+**Date:** 2026-07
+**Author:** Rusty
+**Status:** Implemented
+
+## Context
+Telegram sell alerts already displayed `risk_rating` but it was never passed in the alert_data dict from agent_runner. Roll alerts had no risk info at all.
+
+## Decision
+- Sell alert_data now includes `risk_rating` (from agent JSON output)
+- Roll alert_data now includes `assignment_risk` (from agent JSON output)
+- Roll alert formatting shows "Assignment Risk: {value}" when present
+- Summary agent instructions now guide inclusion of risk levels for notable cases
+
+## Convention
+When adding new fields to Telegram notifications, ensure both sides are wired: the alert_data dict in agent_runner.py AND the formatter in telegram_notifier.py. Fields should be optional (guarded with `if X is not None`) for backward compatibility.
