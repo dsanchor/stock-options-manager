@@ -57,6 +57,17 @@
             <div class="detail-label">Confidence</div>
             <div class="detail-value"><span class="confidence confidence-{{ activity.confidence or 'medium' }}">{{ activity.confidence or "—" }}</span></div>
         </div>
+        {% if activity.risk_rating is not none %}
+        <div class="detail-field">
+            <div class="detail-label">Risk Rating</div>
+            <div class="detail-value">
+                <span class="risk-rating risk-rating-{{ 'low' if activity.risk_rating <= 2 else ('moderate' if activity.risk_rating <= 4 else ('elevated' if activity.risk_rating <= 6 else ('high' if activity.risk_rating <= 8 else 'very-high'))) }}">
+                    {{ activity.risk_rating }}/10
+                    {% if activity.risk_rating <= 2 %}Low{% elif activity.risk_rating <= 4 %}Moderate{% elif activity.risk_rating <= 6 %}Elevated{% elif activity.risk_rating <= 8 %}High{% else %}Very High{% endif %}
+                </span>
+            </div>
+        </div>
+        {% endif %}
         {% if activity.underlying_price is not none %}
         <div class="detail-field">
             <div class="detail-label">Underlying Price</div>

@@ -329,6 +329,13 @@ tbody td:last-child, thead th:last-child { text-align: right; width: 1%; white-s
 .confidence-medium { color: var(--accent-orange); }
 .confidence-low { color: var(--accent-red); }
 
+.risk-rating { font-size: 0.75rem; padding: 2px 8px; border-radius: 4px; font-weight: 600; white-space: nowrap; }
+.risk-rating-low { background: #1a7f37; color: #fff; }
+.risk-rating-moderate { background: #9a6700; color: #fff; }
+.risk-rating-elevated { background: #bc4c00; color: #fff; }
+.risk-rating-high { background: #cf222e; color: #fff; }
+.risk-rating-very-high { background: #82071e; color: #fff; }
+
 .flag {
     display: inline-block;
     padding: 0.1rem 0.4rem;

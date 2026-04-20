@@ -414,6 +414,7 @@
                     <th>Expiration</th>
                     <th>Underlying</th>
                     <th>Confidence</th>
+                    <th>Risk</th>
                     <th>Details</th>
                 </tr>
             </thead>
@@ -449,6 +450,11 @@
                     </td>
                     <td class="mono">{% if d.underlying_price %}${{ d.underlying_price }}{% else %}—{% endif %}</td>
                     <td><span class="confidence confidence-{{ d.confidence or 'medium' }}">{{ d.confidence or "—" }}</span></td>
+                    <td>
+                        {% if d.risk_rating is not none %}
+                        <span class="risk-rating risk-rating-{{ 'low' if d.risk_rating <= 2 else ('moderate' if d.risk_rating <= 4 else ('elevated' if d.risk_rating <= 6 else ('high' if d.risk_rating <= 8 else 'very-high'))) }}">{{ d.risk_rating }}/10</span>
+                        {% else %}—{% endif %}
+                    </td>
                     <td>
                         {{ d.reason[:120] ~ ("…" if d.reason | length > 120 else "") if d.reason else "—" }}
                         {% for flag in (d.risk_flags or []) %}
