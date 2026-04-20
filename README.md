@@ -257,7 +257,7 @@ For `SELL` activities, `strike`, `expiration`, premium, `risk_rating`, and `risk
 
 ### Telegram Notifications
 
-When a `SELL`, `ROLL`, or `CLOSE` alert is generated, a Telegram notification is sent if enabled (see [Configuration](#configuration)). The message includes the symbol, action, and key details (strike, expiration, risk flags). Sell alerts additionally include the risk rating (`Risk: X/10`) for at-a-glance risk assessment.
+When a `SELL`, `ROLL`, or `CLOSE` alert is generated, a Telegram notification is sent if enabled (see [Configuration](#configuration)). The message includes the symbol, action, and key details (strike, expiration, risk flags). Sell alerts additionally include the risk rating (`Risk: X/10`) for at-a-glance risk assessment. Roll alerts include the assignment risk level (e.g., `Assignment Risk: High`) when available from the monitor agent analysis.
 
 ## Dual-Mode Chat Experience
 

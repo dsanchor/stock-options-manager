@@ -376,6 +376,7 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
                         "expiration": json_data.get("expiration") if json_data else None,
                         "underlying_price": json_data.get("underlying_price") if json_data else None,
                         "confidence": json_data.get("confidence") if json_data else None,
+                        "risk_rating": json_data.get("risk_rating") if json_data else None,
                         "risk_flags": json_data.get("risk_flags") if json_data else None,
                     }
                     self.telegram_notifier.send_alert(
@@ -606,6 +607,7 @@ Analyze the position risk and output your activity in the required JSON format. 
                         "new_expiration": json_data.get("new_expiration") if json_data else None,
                         "underlying_price": json_data.get("underlying_price") if json_data else None,
                         "confidence": json_data.get("confidence") if json_data else None,
+                        "assignment_risk": json_data.get("assignment_risk") if json_data else None,
                         "risk_flags": json_data.get("risk_flags") if json_data else None,
                     }
                     # Normalize for templates

@@ -165,6 +165,8 @@ class TelegramNotifier:
         new_exp = data.get("new_expiration", "N/A")
         confidence = data.get("confidence", "N/A")
 
+        assignment_risk = data.get("assignment_risk")
+
         lines = [
             f"\U0001f504 <b>ROLL Alert: {symbol}</b>",
             f"Agent: {agent_label}",
@@ -173,6 +175,8 @@ class TelegramNotifier:
             f"New: ${new_strike} exp {new_exp}",
             f"Confidence: {confidence}",
         ]
+        if assignment_risk is not None:
+            lines.append(f"Assignment Risk: {str(assignment_risk).capitalize()}")
         return "\n".join(lines)
 
     # ── low-level send ────────────────────────────────────────────────

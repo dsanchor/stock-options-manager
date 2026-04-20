@@ -125,6 +125,10 @@ Activities per symbol include:
 2. Emoji + Market context (< 50 chars)
 3. → Action with timeframe
 
+**Risk indicators (include when notable):**
+- Open positions: Show assignment risk if medium+ (e.g., "⚠️ Risk: high")
+- New sell signals: Show risk rating if ≥5 (e.g., "Risk: 7/10")
+
 **Abbreviations for mobile:**
 - exp → expiration
 - Δ → delta
