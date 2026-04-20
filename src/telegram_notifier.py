@@ -143,6 +143,7 @@ class TelegramNotifier:
         strike = data.get("strike", "N/A")
         expiration = data.get("expiration", "N/A")
         confidence = data.get("confidence", "N/A")
+        risk_rating = data.get("risk_rating")
 
         lines = [
             f"\U0001f6a8 <b>SELL Alert: {symbol}</b>",
@@ -151,6 +152,8 @@ class TelegramNotifier:
             f"Expiration: {expiration}",
             f"Confidence: {confidence}",
         ]
+        if risk_rating is not None:
+            lines.append(f"Risk: {risk_rating}/10")
         return "\n".join(lines)
 
     @staticmethod

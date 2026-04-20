@@ -456,6 +456,44 @@ When reading previous entries, extract the key fields (symbol, activity, strike,
    - If previous SELL executed, note the strike/expiration chosen
    - Maintain consistency in delta targeting across similar market conditions
 
+## RISK RATING (0-10 SCALE)
+
+Every output MUST include a `risk_rating` (integer 0-10) and a `risk_rating_breakdown` object. The rating quantifies overall risk of the recommended action (SELL or WAIT). For SELL, it measures how risky the trade setup is. For WAIT, it measures how risky it would be to sell now (justifying the wait).
+
+**Score each dimension 0-2 (0 = low risk, 1 = moderate, 2 = high risk). Sum all 5 = risk_rating.**
+
+### Dimension 1: Volatility Risk (0-2)
+- **0**: IV Rank ≥ 60, IV > HV by ≥5pts, stable IV environment
+- **1**: IV Rank 45-59, or IV ≈ HV, or IV recently spiked/crushed
+- **2**: IV Rank < 45, or IV < HV, or post-crush low-premium environment
+
+### Dimension 2: Assignment Risk (0-2)
+- **0**: Delta ≤ 0.22, strike well above resistance, deep OTM
+- **1**: Delta 0.23-0.30, strike near resistance, moderate OTM buffer
+- **2**: Delta > 0.30, strike at/below resistance, or price trending toward strike
+
+### Dimension 3: Technical Risk (0-2)
+- **0**: Range-bound or bearish — ideal for call sellers. No breakout signals
+- **1**: Mixed signals, mild uptrend, or price near upper Bollinger Band
+- **2**: Strong uptrend (price > 20MA > 50MA rising), breakout forming, bullish momentum
+
+### Dimension 4: Calendar Risk (0-2)
+- **0**: Earnings Gate = OPEN_NORMALLY or IDEAL, no catalysts, no ex-div conflict
+- **1**: Earnings Gate = ALLOWED (15-30 days, safe buffer), or minor catalyst uncertainty
+- **2**: Earnings Gate = ALLOWED_WITH_CAUTION or BLOCKED, ex-div conflict, catalyst within DTE
+
+### Dimension 5: Sentiment Risk (0-2)
+- **0**: No insider buying surge, stable analyst consensus, no trend spikes
+- **1**: Minor insider activity, or one analyst upgrade, or slight Google Trends increase
+- **2**: Clustered analyst upgrades, significant insider buying, or Google Trends spike >50%
+
+**Interpretation guide:**
+- **0-2**: Low risk — strong setup, high conviction
+- **3-4**: Moderate risk — acceptable with awareness
+- **5-6**: Elevated risk — proceed with caution, consider smaller position
+- **7-8**: High risk — likely should WAIT
+- **9-10**: Very high risk — definitely WAIT
+
 ## OUTPUT FORMAT SPECIFICATION
 
 Output a **JSON activity block** inside a fenced code block, followed by a **SUMMARY** line. This enables machine parsing and human readability.
@@ -490,6 +528,14 @@ Use consistent risk flag names. See **Cash-Secured Put instructions** for the co
   "waiting_for": null,
   "confidence": "high, medium, or low",
   "risk_flags": [],
+  "risk_rating": 3,
+  "risk_rating_breakdown": {
+    "volatility": 0,
+    "assignment": 1,
+    "technical": 1,
+    "calendar": 0,
+    "sentiment": 1
+  },
   "earnings_analysis": {
     "next_earnings_date": "YYYY-MM-DD or unknown",
     "days_to_earnings": 30,
@@ -500,7 +546,7 @@ Use consistent risk flag names. See **Cash-Secured Put instructions** for the co
   }
 }
 ```
-SUMMARY: TICKER | SELL/WAIT covered call | Strike $X exp YYYY-MM-DD | IV X% (Rank Y) | Premium $X.XX (Y.Y%)
+SUMMARY: TICKER | SELL/WAIT covered call | Strike $X exp YYYY-MM-DD | IV X% (Rank Y) | Premium $X.XX (Y.Y%) | Risk X/10
 ```
 
 **Rules:**
@@ -509,8 +555,8 @@ SUMMARY: TICKER | SELL/WAIT covered call | Strike $X exp YYYY-MM-DD | IV X% (Ran
 - For WAIT, set `waiting_for` to a string describing the conditions needed
 - `confidence`: "high" (all criteria met), "medium" (reasonable setup, minor concerns), "low" (borderline, significant concerns)
 - `risk_flags`: array of flag names from Unified Risk Flag Taxonomy, or `[]` if none
-
-**Examples:**
+- `risk_rating`: integer 0-10, sum of 5 risk dimensions (see RISK RATING section). REQUIRED for every output
+- `risk_rating_breakdown`: object with keys `volatility`, `assignment`, `technical`, `calendar`, `sentiment` — each 0-2
 
 SELL activity:
 ```json
@@ -533,6 +579,14 @@ SELL activity:
   "waiting_for": null,
   "confidence": "high",
   "risk_flags": [],
+  "risk_rating": 2,
+  "risk_rating_breakdown": {
+    "volatility": 0,
+    "assignment": 1,
+    "technical": 0,
+    "calendar": 0,
+    "sentiment": 1
+  },
   "earnings_analysis": {
     "next_earnings_date": "2024-03-15",
     "days_to_earnings": 59,
@@ -543,7 +597,7 @@ SELL activity:
   }
 }
 ```
-SUMMARY: AAPL | SELL covered call | Strike $185 exp 2024-02-16 | IV 28% (Rank 65) | Premium $3.50 (1.9%)
+SUMMARY: AAPL | SELL covered call | Strike $185 exp 2024-02-16 | IV 28% (Rank 65) | Premium $3.50 (1.9%) | Risk 2/10
 
 WAIT activity:
 ```json
@@ -566,6 +620,14 @@ WAIT activity:
   "waiting_for": "volatility expansion or market uncertainty increase",
   "confidence": "medium",
   "risk_flags": ["low_iv"],
+  "risk_rating": 5,
+  "risk_rating_breakdown": {
+    "volatility": 2,
+    "assignment": 0,
+    "technical": 1,
+    "calendar": 0,
+    "sentiment": 2
+  },
   "earnings_analysis": {
     "next_earnings_date": "2024-02-25",
     "days_to_earnings": 41,
@@ -576,7 +638,7 @@ WAIT activity:
   }
 }
 ```
-SUMMARY: MSFT | WAIT | IV 22% (Rank 25) too low | Waiting for: volatility expansion
+SUMMARY: MSFT | WAIT | IV 22% (Rank 25) too low | Risk 5/10 | Waiting for: volatility expansion
 
 WAIT for earnings (imminent — <7 days, cannot expire before):
 ```json
@@ -599,6 +661,14 @@ WAIT for earnings (imminent — <7 days, cannot expire before):
   "waiting_for": "post-earnings IV crush and price stabilization (ideal: sell 1-2 days after earnings)",
   "confidence": "medium",
   "risk_flags": ["earnings_imminent"],
+  "risk_rating": 7,
+  "risk_rating_breakdown": {
+    "volatility": 0,
+    "assignment": 1,
+    "technical": 2,
+    "calendar": 2,
+    "sentiment": 2
+  },
   "earnings_analysis": {
     "next_earnings_date": "2024-01-20",
     "days_to_earnings": 5,
@@ -609,7 +679,7 @@ WAIT for earnings (imminent — <7 days, cannot expire before):
   }
 }
 ```
-SUMMARY: TSLA | WAIT | IV 45% (Rank 70) but earnings in 5 days — imminent | Waiting for: post-earnings setup
+SUMMARY: TSLA | WAIT | IV 45% (Rank 70) but earnings in 5 days — imminent | Risk 7/10 | Waiting for: post-earnings setup
 
 ## CLEAR SELL ALERT CRITERIA
 
@@ -682,10 +752,11 @@ Also append this flag line after the SUMMARY for easy detection:
 3. **Technical Analysis** (support/resistance, trend, price action)
 4. **Calendar Check** (earnings, catalysts, dividends)
 5. **Greeks Analysis** (delta, theta, vega for target strikes)
-6. **Activity Rationale** (why SELL or WAIT)
-7. **JSON Activity Block** (required structured format above)
-8. **SUMMARY Line** (required human-readable line above)
-9. **Clear Sell Alert Flag** (if applicable)
+6. **Risk Rating** (score each of the 5 dimensions with brief justification)
+7. **Activity Rationale** (why SELL or WAIT)
+8. **JSON Activity Block** (required structured format above)
+9. **SUMMARY Line** (required human-readable line above)
+10. **Clear Sell Alert Flag** (if applicable)
 
 ---
 

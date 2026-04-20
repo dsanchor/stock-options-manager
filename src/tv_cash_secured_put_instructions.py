@@ -576,6 +576,44 @@ When reading previous entries, extract the key fields (symbol, activity, strike,
    - If fundamentals unchanged, maintain conviction
    - Multiple WAITs for same structural issue = consider removing from watchlist
 
+## RISK RATING (0-10 SCALE)
+
+Every output MUST include a `risk_rating` (integer 0-10) and a `risk_rating_breakdown` object. The rating quantifies overall risk of the recommended action (SELL or WAIT). For SELL, it measures how risky the trade setup is. For WAIT, it measures how risky it would be to sell now (justifying the wait).
+
+**Score each dimension 0-2 (0 = low risk, 1 = moderate, 2 = high risk). Sum all 5 = risk_rating.**
+
+### Dimension 1: Fundamental Risk (0-2)
+- **0**: Strong financials, profitable, growing revenue, manageable debt, enthusiastically want to own
+- **1**: Decent fundamentals but minor concerns (slowing growth, elevated debt, mixed competitive position)
+- **2**: Weak financials, declining revenue, high debt, wouldn't want to own at strike, existential risks
+
+### Dimension 2: Technical Risk (0-2)
+- **0**: Strike well below support, oversold (RSI < 30), selling pressure decreasing, clear stabilization
+- **1**: Strike near support, mixed momentum, or mild downtrend with some stabilization signs
+- **2**: Support breaking, free-fall/accelerating downside, no clear support, strike above support level
+
+### Dimension 3: Volatility Risk (0-2)
+- **0**: IV Rank ≥ 60, premium ≥ 2% of strike, elevated vs historical — excellent premium capture
+- **1**: IV Rank 45-59, premium 1.2-2% of strike, adequate but not ideal
+- **2**: IV Rank < 45, premium < 1.2%, IV crushed or insufficient for acceptable return
+
+### Dimension 4: Calendar Risk (0-2)
+- **0**: Earnings Gate = IDEAL (post-earnings) or OPEN_NORMALLY, no catalysts, clean calendar
+- **1**: Earnings Gate = ALLOWED (15-30 days, safe buffer), or minor catalyst uncertainty
+- **2**: Earnings Gate = ALLOWED_WITH_CAUTION or BLOCKED, pending negative catalyst, litigation/regulatory risk
+
+### Dimension 5: Sentiment Risk (0-2)
+- **0**: Institutional ownership stable/increasing, insider buying, analyst consensus positive
+- **1**: Mixed signals — some insider selling offset by buying, neutral analyst consensus
+- **2**: Heavy insider selling, institutional flight, clustered analyst downgrades, sector collapse
+
+**Interpretation guide:**
+- **0-2**: Low risk — strong setup, high conviction
+- **3-4**: Moderate risk — acceptable with awareness
+- **5-6**: Elevated risk — proceed with caution, consider smaller position
+- **7-8**: High risk — likely should WAIT
+- **9-10**: Very high risk — definitely WAIT
+
 ## OUTPUT FORMAT SPECIFICATION
 
 Output a **JSON activity block** inside a fenced code block, followed by a **SUMMARY** line. This enables machine parsing and human readability.
@@ -650,8 +688,15 @@ Use consistent risk flag names across all agents. Categories:
   "waiting_for": null,
   "confidence": "high, medium, or low",
   "risk_flags": [],
+  "risk_rating": 3,
+  "risk_rating_breakdown": {
+    "fundamental": 0,
+    "technical": 1,
+    "volatility": 0,
+    "calendar": 1,
+    "sentiment": 1
+  },
   "earnings_analysis": {
-    "next_earnings_date": "YYYY-MM-DD or unknown",
     "days_to_earnings": 30,
     "expiration_date": "YYYY-MM-DD",
     "expiration_to_earnings_gap": 5,
@@ -663,7 +708,7 @@ Use consistent risk flag names across all agents. Categories:
 
 **SUMMARY line format (always on the line immediately after the JSON block):**
 ```
-SUMMARY: TICKER | SELL/WAIT cash-secured put | Strike $X exp YYYY-MM-DD | IV X% (Rank Y) | Premium $X.XX (Y.Y%)
+SUMMARY: TICKER | SELL/WAIT cash-secured put | Strike $X exp YYYY-MM-DD | IV X% (Rank Y) | Premium $X.XX (Y.Y%) | Risk X/10
 ```
 
 **Rules:**
@@ -673,8 +718,8 @@ SUMMARY: TICKER | SELL/WAIT cash-secured put | Strike $X exp YYYY-MM-DD | IV X% 
 - `support_level`: nearest significant support price level (for SELL activitys); `null` for WAIT
 - `confidence`: "high" (strong conviction, all criteria met), "medium" (reasonable setup, minor concerns), "low" (borderline, significant concerns)
 - `risk_flags`: array of flag names from Unified Risk Flag Taxonomy, or `[]` if none
-
-**Examples:**
+- `risk_rating`: integer 0-10, sum of 5 risk dimensions (see RISK RATING section). REQUIRED for every output
+- `risk_rating_breakdown`: object with keys `fundamental`, `technical`, `volatility`, `calendar`, `sentiment` — each 0-2
 
 Strong SELL activity (all criteria met, no risk flags):
 ```json
@@ -698,6 +743,14 @@ Strong SELL activity (all criteria met, no risk flags):
   "waiting_for": null,
   "confidence": "high",
   "risk_flags": [],
+  "risk_rating": 1,
+  "risk_rating_breakdown": {
+    "fundamental": 0,
+    "technical": 0,
+    "volatility": 0,
+    "calendar": 0,
+    "sentiment": 1
+  },
   "earnings_analysis": {
     "next_earnings_date": "2024-01-13",
     "days_to_earnings": -2,
@@ -708,7 +761,7 @@ Strong SELL activity (all criteria met, no risk flags):
   }
 }
 ```
-SUMMARY: NVDA | SELL cash-secured put | Strike $450 exp 2024-02-16 | IV 42% (Rank 68) | Premium $9.45 (2.1%)
+SUMMARY: NVDA | SELL cash-secured put | Strike $450 exp 2024-02-16 | IV 42% (Rank 68) | Premium $9.45 (2.1%) | Risk 1/10
 
 Quality setup SELL:
 ```json
@@ -732,6 +785,14 @@ Quality setup SELL:
   "waiting_for": null,
   "confidence": "high",
   "risk_flags": [],
+  "risk_rating": 2,
+  "risk_rating_breakdown": {
+    "fundamental": 0,
+    "technical": 1,
+    "volatility": 1,
+    "calendar": 0,
+    "sentiment": 0
+  },
   "earnings_analysis": {
     "next_earnings_date": "2024-03-10",
     "days_to_earnings": 55,
@@ -742,7 +803,7 @@ Quality setup SELL:
   }
 }
 ```
-SUMMARY: MSFT | SELL cash-secured put | Strike $360 exp 2024-02-16 | IV 26% (Rank 55) | Premium $6.48 (1.8%)
+SUMMARY: MSFT | SELL cash-secured put | Strike $360 exp 2024-02-16 | IV 26% (Rank 55) | Premium $6.48 (1.8%) | Risk 2/10
 
 WAIT for fundamentals:
 ```json
@@ -766,6 +827,14 @@ WAIT for fundamentals:
   "waiting_for": "evidence of business turnaround, stable revenue",
   "confidence": "low",
   "risk_flags": ["weak_fundamentals"],
+  "risk_rating": 8,
+  "risk_rating_breakdown": {
+    "fundamental": 2,
+    "technical": 2,
+    "volatility": 0,
+    "calendar": 2,
+    "sentiment": 2
+  },
   "earnings_analysis": {
     "next_earnings_date": "2024-02-05",
     "days_to_earnings": 21,
@@ -776,7 +845,7 @@ WAIT for fundamentals:
   }
 }
 ```
-SUMMARY: SNAP | WAIT | IV 65% (Rank 80) but weak fundamentals | Waiting for: business turnaround
+SUMMARY: SNAP | WAIT | IV 65% (Rank 80) but weak fundamentals | Risk 8/10 | Waiting for: business turnaround
 
 WAIT for earnings (imminent — <7 days, cannot expire before):
 ```json
@@ -800,6 +869,14 @@ WAIT for earnings (imminent — <7 days, cannot expire before):
   "waiting_for": "earnings results, IV crush opportunity post-announcement (optimal CSP entry)",
   "confidence": "medium",
   "risk_flags": ["earnings_imminent"],
+  "risk_rating": 6,
+  "risk_rating_breakdown": {
+    "fundamental": 1,
+    "technical": 1,
+    "volatility": 0,
+    "calendar": 2,
+    "sentiment": 2
+  },
   "earnings_analysis": {
     "next_earnings_date": "2024-01-19",
     "days_to_earnings": 4,
@@ -810,7 +887,7 @@ WAIT for earnings (imminent — <7 days, cannot expire before):
   }
 }
 ```
-SUMMARY: TSLA | WAIT | IV 55% (Rank 72) but earnings in 4 days — imminent | Waiting for: post-earnings IV crush
+SUMMARY: TSLA | WAIT | IV 55% (Rank 72) but earnings in 4 days — imminent | Risk 6/10 | Waiting for: post-earnings IV crush
 
 WAIT for support clarity:
 ```json
@@ -834,6 +911,14 @@ WAIT for support clarity:
   "waiting_for": "price stabilization, clear support formation at $130-135 zone",
   "confidence": "low",
   "risk_flags": ["support_break"],
+  "risk_rating": 7,
+  "risk_rating_breakdown": {
+    "fundamental": 1,
+    "technical": 2,
+    "volatility": 1,
+    "calendar": 1,
+    "sentiment": 2
+  },
   "earnings_analysis": {
     "next_earnings_date": "2024-02-20",
     "days_to_earnings": 36,
@@ -844,7 +929,7 @@ WAIT for support clarity:
   }
 }
 ```
-SUMMARY: AMD | WAIT | IV 48% (Rank 58) but support breaking | Waiting for: support at $130-135
+SUMMARY: AMD | WAIT | IV 48% (Rank 58) but support breaking | Risk 7/10 | Waiting for: support at $130-135
 
 ## CLEAR SELL ALERT CRITERIA
 
@@ -939,10 +1024,11 @@ Also append this flag line after the SUMMARY for easy detection:
 5. **Calendar Check** (earnings, catalysts, timing)
 6. **Greeks & Premium Analysis** (delta, theta, expected return)
 7. **Institutional/Insider Sentiment** (ownership trends, insider activity)
-8. **Activity Rationale** (why SELL or WAIT)
-9. **JSON Activity Block** (required structured format above)
-10. **SUMMARY Line** (required human-readable line above)
-11. **Clear Sell Alert Flag** (if applicable)
+8. **Risk Rating** (score each of the 5 dimensions with brief justification)
+9. **Activity Rationale** (why SELL or WAIT)
+10. **JSON Activity Block** (required structured format above)
+11. **SUMMARY Line** (required human-readable line above)
+12. **Clear Sell Alert Flag** (if applicable)
 
 ---
 
