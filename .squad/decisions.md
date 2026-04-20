@@ -2184,3 +2184,236 @@ If an agent type has zero recent activity, it won't appear in the dropdown. This
 
 ---
 
+
+---
+
+## 2026-04-20T10:25:00Z: User directive
+
+**By:** dsanchor (via Copilot)  
+**What:** Always update README if necessary. Any new functionality or changes to existing ones require a README update.  
+**Why:** User request — captured for team memory
+
+---
+
+## 2. Options Chain Format Recommendation
+
+**Date:** 2026-01-15  
+**Author:** Linus (Quant Dev)  
+**Status:** Proposed  
+**Impact:** Monitor agents (open_call_monitor, open_put_monitor), options chain parser, agent instructions
+
+### Problem Statement
+
+Monitor agents are hallucinating bid/ask prices when recommending roll operations. Despite multiple rounds of anti-hallucination guardrails (VERIFICATION steps, DATA INTEGRITY rules, action-oriented descriptions), fabrication rate remains at 30-40%.
+
+**Root cause identified:** The current nested-array JSON format forces a 4-step lookup task that exceeds LLM reliability thresholds:
+1. Navigate to expiration key in nested dict
+2. Scan array of 20-40 contracts
+3. Match strike by equality comparison
+4. Extract bid or ask field
+
+LLMs are autocompletion engines — they pattern-match plausible number sequences rather than precisely indexing arrays.
+
+### Proposed Solution
+
+**Strike-Keyed Dictionaries + Position-Relative Filtering** (Hybrid approach)
+
+#### Format Change
+
+**Current:**
+```json
+{
+  "calls": {
+    "20260427": [
+      {"strike": 470, "bid": 3.20, "ask": 3.50, ...},
+      {"strike": 472.5, "bid": 2.95, "ask": 3.20, ...},
+      {"strike": 475, "bid": 2.50, "ask": 3.00, ...}
+    ]
+  }
+}
+```
+
+**Proposed:**
+```json
+{
+  "calls": {
+    "20260427": {
+      "470.0": {"bid": 3.20, "ask": 3.50, "delta": 0.42, "iv": 0.31},
+      "472.5": {"bid": 2.95, "ask": 3.20, "delta": 0.38, "iv": 0.30},
+      "475.0": {"bid": 2.50, "ask": 3.00, "delta": 0.35, "iv": 0.28}
+    }
+  }
+}
+```
+
+#### Filtering Rule
+
+Only include strikes within ±15 strikes of the current position.
+- For $475 position: include $437.50 to $512.50 (assuming $2.50 increments)
+- Reduces chain from 100-200 contracts → 30-40 contracts
+- Token reduction: 60-75%
+
+#### Lookup Pattern
+
+**Before:** "Find strike 475 in array, extract ask field"  
+**After:** `calls["20260427"]["475.0"]["ask"]`
+
+Direct key path. No iteration, no filtering, no equality matching. Autocompletion-friendly.
+
+### Expected Outcomes
+
+1. **Hallucination rate:** 30-40% → <5%
+2. **Token efficiency:** 60-75% reduction in chain size
+3. **Verification simplicity:** Agent states full path (e.g., `calls["20260427"]["475.0"]["ask"] = 3.00`)
+4. **Cognitive load:** Minimal — direct key access vs multi-step search
+
+### Implementation Impact
+
+#### Files to Modify
+
+1. **`src/options_chain_parser.py`**
+   - Add strike-keyed output option
+   - Add position-relative filtering function
+   - Update `OPTIONS_CHAIN_SCHEMA_DESCRIPTION`
+
+2. **`src/tv_open_call_instructions.py`**
+   - Update VERIFICATION steps with new lookup pattern
+   - Update roll economics examples
+
+3. **`src/tv_open_put_instructions.py`**
+   - Same verification updates
+
+4. **`src/agent_runner.py`**
+   - Call parser with new format flag
+   - Pass current position for filtering
+
+#### Migration Strategy
+
+- **Backward compatible:** Parser can output both formats during transition
+- **Testing:** Run on 10-20 positions with known correct rolls
+- **Validation:** Log all roll economics with source paths, flag mismatches
+- **Rollback:** Keep legacy format as fallback
+
+### Alternative Approaches Considered
+
+#### Markdown Tables (Option 2a)
+- **Pros:** Maximum clarity, excellent bid/ask column separation
+- **Cons:** 30-40% more tokens than JSON
+- **Verdict:** Fallback if JSON still shows >10% error rate
+
+#### Pre-Computed Roll Tables (Option 2e)
+- **Pros:** Eliminates all lookup errors, smallest token footprint
+- **Cons:** Reduces agent autonomy, major architectural change
+- **Verdict:** Future iteration if strike-keyed format fails
+
+#### Flat CSV Text (Option 2c)
+- **Pros:** Most compact (40% fewer tokens)
+- **Cons:** Positional fields error-prone, hard to navigate
+- **Verdict:** Rejected — trades clarity for token savings
+
+### Success Metrics
+
+#### Immediate (Week 1)
+- [ ] Hallucination rate <10% on test set (20 positions)
+- [ ] Zero contract-not-found errors when strikes exist
+- [ ] Agent successfully quotes source paths in verification
+
+#### Short-term (Month 1)
+- [ ] Hallucination rate <5% in production
+- [ ] Token usage reduced by 60%+ on typical chains
+- [ ] No roll recommendation rollbacks due to price errors
+
+#### Long-term
+- [ ] Zero hallucinated prices over 90-day rolling window
+- [ ] Agent autonomy preserved (can explore all available strikes)
+
+### Risk Mitigation
+
+#### Edge Case: Strike Not in Filtered Chain
+**Problem:** Agent wants to roll to $500, but filtering cut it off (current position $475, cutoff $513)  
+**Solution:** Agent response includes: "Strike 500.0 not available in filtered chain. Recommend $497.5 (highest available) or request full chain."
+
+#### Edge Case: Float Precision
+**Problem:** Strike 475 vs 475.0 vs 475.00  
+**Solution:** Use string keys: `"475.0"` (avoid JavaScript float precision issues)
+
+#### Edge Case: Missing Strike in Data
+**Problem:** TradingView didn't return a specific strike  
+**Solution:** Existing "contract not found" logic remains — format change doesn't affect this
+
+### Decision Timeline
+
+- **Week 1:** Implement parser + filtering
+- **Week 2:** Update agent instructions, test on sample positions
+- **Week 3:** Deploy to production with validation logging
+- **Week 4:** Measure hallucination rate, adjust if needed
+
+### References
+
+- Full analysis: `options_chain_format_analysis.md`
+- Related history: `.squad/agents/linus/history.md` (Anti-Hallucination Guardrails, July 2026)
+- Related code: `src/options_chain_parser.py`, `src/tv_open_call_instructions.py`, `src/tv_open_put_instructions.py`
+
+### Approval Status
+
+**Pending team review.**
+
+**Recommendation strength:** HIGH — This addresses a structural root cause, not a symptom. Prompt engineering has been exhausted; data format is the bottleneck.
+
+---
+
+## 3. Decision: Anti-Hallucination Guardrails for Roll Pricing
+
+**Author:** Linus (Quant Dev)  
+**Date:** 2026-07-22  
+**Status:** Implemented (not yet committed)
+
+### Context
+Monitor agents (open call + open put) were fabricating bid/ask prices when recommending rolls instead of reading actual values from the options chain JSON data.
+
+### Decision
+Added three layers of defense against price hallucination:
+
+1. **Schema-level guardrail** (`OPTIONS_CHAIN_SCHEMA_DESCRIPTION` in `options_chain_parser.py`): New "DATA INTEGRITY (MANDATORY)" section that explicitly forbids estimating, interpolating, or fabricating prices. Applies to ALL agents that receive options chain data.
+
+2. **Verification step** (both `tv_open_call_instructions.py` and `tv_open_put_instructions.py`): After Roll Economics Calculation, agents must now perform a 4-step verification: find current contract → read ask, find target contract → read bid, fail gracefully if either missing, quote exact values.
+
+### Rationale
+LLMs will confabulate plausible-looking numbers unless explicitly told not to AND given a concrete alternative behavior (e.g., "set roll_economics to null"). Both the prohibition and the fallback are required.
+
+### Impact
+- All agents receiving options chain data see the integrity constraint (via shared schema description)
+- Roll recommendations in both call and put monitors now require verifiable chain lookups
+- No code logic changed — only instruction string content
+
+---
+
+## 4. Decision: Strike-Keyed Dictionary Format for Options Chains
+
+**Date:** 2026-05-12  
+**Author:** Linus (Quant Dev)  
+**Status:** Implemented  
+**Impact:** Parser output format, agent instructions, agent_runner formatting
+
+### Summary
+
+Options chain data format changed from arrays-of-contracts to strike-keyed dictionaries. Monitor agents now receive position-filtered chains (±15 strikes).
+
+### Changes
+
+1. **`parse_options_chain()`** outputs `calls["exp"]["strike_key"] = {contract}` instead of `calls["exp"] = [{contract}, ...]`
+2. **`filter_options_chain_for_position()`** new function — trims chain to ±15 strikes around current position
+3. **`_format_options_chain()`** accepts optional `current_strike`/`option_type` — monitor agents pass these, analysis agents don't
+4. **Agent instructions** VERIFICATION sections use direct key-path syntax
+
+### Rationale
+
+- Direct key access eliminates array iteration errors by LLMs (hallucinated strike matching)
+- Position-relative filtering reduces token count by 60-75% for monitor agents
+- Expected hallucination rate drop from 30-40% to <5%
+
+### Team Notes
+
+- **Rusty**: No framework changes needed — this is purely data format + strategy logic
+- **Danny**: If adding new agent types that consume options chains, use `_format_options_chain()` — pass `current_strike` only if the agent monitors a specific position
+- Strike key format is `str(float(strike))` → always "475.0" style, never "475"

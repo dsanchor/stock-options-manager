@@ -74,7 +74,7 @@ The Open Call Monitor and Open Put Monitor watch **existing** short options posi
 
 Positions are managed via the web dashboard or API. Each position is stored within the symbol's `symbol_config` document in CosmosDB with type (call/put), strike, expiration, status, and notes. Position monitors only run for symbols with `status: "active"` positions.
 
-**Profit optimization (premium-first roll policy):** When ALL market indicators unanimously show the position is deeply OTM with no risk catalysts, the monitor may recommend tightening the strike to collect additional premium (ROLL_DOWN for calls, ROLL_UP for puts). This requires unanimous indicator agreement across 9 conditions — conservative by design. Profit-optimization rolls are tagged with a `"profit_optimization"` risk flag to distinguish them from defensive rolls. Monitor agents prioritize premium collection when rolling, considering whether to tighten strikes more aggressively when conditions allow.
+**Profit optimization (premium-first roll policy):** When market indicators show the position is deeply OTM with no risk catalysts, the monitor may recommend tightening the strike to collect additional premium (ROLL_DOWN for calls, ROLL_UP for puts). This requires 3 mandatory conditions (≥10 DTE, deeply OTM, net credit) plus at least 4 of 7 flexible conditions (super-majority gate) — conservative by design. The ultra-defensive roll threshold caps maximum debit at $1 ($100 per contract). Profit-optimization rolls are tagged with a `"profit_optimization"` risk flag to distinguish them from defensive rolls. Monitor agents prioritize premium collection when rolling, considering whether to tighten strikes more aggressively when conditions allow.
 
 **Roll types:**
 - **ROLL_UP** — Higher strike, same expiration (gives more room above for calls)
@@ -82,6 +82,25 @@ Positions are managed via the web dashboard or API. Each position is stored with
 - **ROLL_OUT** — Same strike, later expiration (more time value)
 - **ROLL_UP_AND_OUT** / **ROLL_DOWN_AND_OUT** — Combined strike + expiration adjustment
 - **CLOSE** — Buy back without re-selling (exit the position entirely)
+
+### Risk Rating (Sell-Side Agents)
+
+Every sell-side agent output (Covered Call and Cash Secured Put) includes a **risk rating** on a 0–10 scale, quantifying how risky the recommended action is.
+
+**Scoring:** 5 dimensions, each scored 0–2 (sum = 0–10):
+- **Covered Call:** Volatility, Assignment, Technical, Calendar, Sentiment
+- **Cash Secured Put:** Fundamental, Technical, Volatility, Calendar, Sentiment
+
+**Interpretation:**
+| Score | Level | Guidance |
+|-------|-------|----------|
+| 0–2 | Low | Strong setup, high conviction |
+| 3–4 | Moderate | Acceptable with awareness |
+| 5–6 | Elevated | Proceed with caution |
+| 7–8 | High | Likely should WAIT |
+| 9–10 | Very high | Definitely WAIT |
+
+The rating appears in JSON output (`risk_rating` integer + `risk_rating_breakdown` object) and in the SUMMARY line (`Risk X/10`). Telegram sell alerts also include `Risk: X/10`.
 
 ### Position Lifecycle
 
@@ -216,21 +235,29 @@ Each activity document in CosmosDB:
   "symbol": "MO",
   "exchange": "NYSE",
   "agent": "covered_call",
-  "activity": "WAIT",
-  "strike": null,
-  "expiration": null,
-  "iv": 25.0,
-  "reason": "IV Rank below threshold; waiting for elevated volatility",
-  "confidence": "medium",
-  "risk_flags": ["low_iv", "unknown_earnings_date"]
+  "activity": "SELL",
+  "strike": 60.0,
+  "expiration": "2026-04-17",
+  "iv": 32.5,
+  "reason": "IV Rank elevated with strong technical support; selling 30-delta call",
+  "confidence": "high",
+  "risk_flags": [],
+  "risk_rating": 3,
+  "risk_rating_breakdown": {
+    "volatility": 1,
+    "assignment": 0,
+    "technical": 1,
+    "calendar": 0,
+    "sentiment": 1
+  }
 }
 ```
 
-For `SELL` activities, `strike`, `expiration`, and premium fields are populated. A corresponding `alert` document is also created with the actionable subset of the activity data.
+For `SELL` activities, `strike`, `expiration`, premium, `risk_rating`, and `risk_rating_breakdown` fields are populated. A corresponding `alert` document is also created with the actionable subset of the activity data.
 
 ### Telegram Notifications
 
-When a `SELL`, `ROLL`, or `CLOSE` alert is generated, a Telegram notification is sent if enabled (see [Configuration](#configuration)). The message includes the symbol, action, and key details (strike, expiration, risk flags).
+When a `SELL`, `ROLL`, or `CLOSE` alert is generated, a Telegram notification is sent if enabled (see [Configuration](#configuration)). The message includes the symbol, action, and key details (strike, expiration, risk flags). Sell alerts additionally include the risk rating (`Risk: X/10`) for at-a-glance risk assessment.
 
 ## Dual-Mode Chat Experience
 

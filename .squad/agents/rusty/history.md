@@ -468,3 +468,9 @@ Added agent type dropdown filters to both the dashboard Recent Activity section 
 Added `POST /api/symbols/{symbol}/report` endpoint that generates a comprehensive LLM-powered position report in Spanish. The endpoint gathers all available data (CosmosDB symbol doc, last 3 activities per agent type, cached TradingView data) into a single context string, then calls Azure OpenAI with `max_completion_tokens=4096` and a structured system prompt specifying 7 report sections. Frontend uses a modal overlay with a simple markdown-to-HTML converter (handles headers, bold, tables, code). Uses cache only (no `force_refresh`) to avoid slow fetches during report generation. The report button sits next to the existing Chat link in the symbol detail header.
 
 **Files:** `web/app.py` (endpoint ~line 1086), `web/templates/symbol_detail.html` (button + modal + JS)
+
+### README Documentation Update — Risk Rating & Profit Optimization (2026-07)
+Updated README.md to document three recent changes:
+1. **Risk Rating (0-10)** — Added new subsection under Key Concepts explaining the 5-dimension scoring system for sell-side agents, plus updated the example activity JSON to show `risk_rating` and `risk_rating_breakdown` fields.
+2. **Profit Optimization gate change** — Updated from "unanimous 9 conditions" to "3 mandatory + 4/7 flexible (super-majority gate)" with DTE ≥10 days and $1 ultra-defensive roll threshold.
+3. **Telegram notifications** — Added that sell alerts now include `Risk: X/10`.
