@@ -51,10 +51,11 @@
             </colgroup>
             {% else %}
             <colgroup>
+                <col style="width:22%">
                 <col style="width:24%">
-                <col style="width:28%">
+                <col style="width:8%">
                 <col style="width:10%">
-                <col style="width:12%">
+                <col style="width:10%">
                 <col style="width:20%">
                 <col style="width:6%">
             </colgroup>
@@ -71,6 +72,7 @@
                     {% else %}
                     <th class="num">Strike</th>
                     <th>Expiry</th>
+                    <th class="num">Premium</th>
                     {% endif %}
                     <th>Flags</th>
                     <th></th>
@@ -104,6 +106,7 @@
                     {% else %}
                     <td class="num metric-value">{{ row.strike if row.strike else "—" }}</td>
                     <td>{{ row.expiration if row.expiration else "—" }}</td>
+                    <td class="num metric-value">{{ "$%.2f" | format(row.premium) if row.premium else "—" }}</td>
                     {% endif %}
                     <td>
                         {% for flag in (row.risk_flags or []) %}
