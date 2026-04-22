@@ -31,6 +31,34 @@
     </div>
 </div>
 
+<!-- Agent Options Chain View -->
+<div class="card settings-card">
+    <div class="card-header">
+        <h2>🤖 Agent Options Chain View</h2>
+    </div>
+    <div style="padding: 0.75rem 1.25rem;">
+        <p class="hint" style="margin-bottom:0.75rem;">See exactly what the agents receive after parsing and delta filtering (calls: 0.15–0.90 delta, puts: -0.60–-0.15 delta).</p>
+        <div style="display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap;">
+            <select id="agentChainSymbol" class="input-field" style="width:220px; padding:0.5rem 0.8rem;">
+                <option value="">— Select symbol —</option>
+                {% for sym in symbols %}
+                <option value="{{ sym.symbol }}">{{ sym.display_name }}</option>
+                {% endfor %}
+            </select>
+            <select id="agentChainType" class="input-field" style="width:120px; padding:0.5rem 0.8rem;">
+                <option value="call">Call</option>
+                <option value="put">Put</option>
+            </select>
+            <button class="btn btn-primary" id="btnAgentChain" disabled>👁 View</button>
+            <span id="agentChainSpinner" style="display:none;">
+                <span class="loading-dots">Loading<span>.</span><span>.</span><span>.</span></span>
+            </span>
+            <span id="agentChainStatus" class="mono" style="opacity:0.6; font-size:0.85rem;"></span>
+        </div>
+        <div id="agentChainResults" style="margin-top:1rem;"></div>
+    </div>
+</div>
+
 <!-- CosmosDB Diagnostics -->
 <div class="card settings-card">
     <div class="card-header">
@@ -124,6 +152,57 @@
                     + escapeHtml(r.text) + '</pre></div>';
             }
             results.innerHTML = html;
+        } catch(e) {
+            status.textContent = '❌ Network error: ' + e.message;
+        } finally {
+            btn.disabled = false;
+            spinner.style.display = 'none';
+        }
+    });
+})();
+
+(function() {
+    var sel = document.getElementById('agentChainSymbol');
+    var typeSel = document.getElementById('agentChainType');
+    var btn = document.getElementById('btnAgentChain');
+    var spinner = document.getElementById('agentChainSpinner');
+    var status = document.getElementById('agentChainStatus');
+    var results = document.getElementById('agentChainResults');
+
+    sel.addEventListener('change', function() {
+        btn.disabled = !this.value;
+    });
+
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    btn.addEventListener('click', async function() {
+        var symbol = sel.value;
+        var optType = typeSel.value;
+        if (!symbol) return;
+
+        btn.disabled = true;
+        spinner.style.display = 'inline';
+        status.textContent = '';
+        results.innerHTML = '';
+
+        try {
+            var res = await fetch('/api/debug/agent-chain/' + symbol + '?option_type=' + optType);
+            var data = await res.json();
+
+            if (!res.ok) {
+                status.textContent = '❌ ' + (data.error || 'Unknown error');
+                return;
+            }
+
+            status.textContent = '✅ ' + data.num_expirations + ' expirations, ' + data.num_contracts + ' contracts (cache: ' + data.cache_age_seconds + 's ago)';
+
+            results.innerHTML = '<div style="background:var(--bg-card, #222228); border:1px solid var(--border, #2d2d35); border-radius:8px; padding:1rem;">'
+                + '<pre style="background:var(--bg,#111); border:1px solid var(--border, #2d2d35); border-radius:4px; padding:0.75rem; max-height:600px; overflow:auto; white-space:pre-wrap; word-break:break-word; font-size:0.78rem; line-height:1.35; margin:0;">'
+                + escapeHtml(data.agent_text) + '</pre></div>';
         } catch(e) {
             status.textContent = '❌ Network error: ' + e.message;
         } finally {

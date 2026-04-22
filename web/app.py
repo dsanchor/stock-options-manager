@@ -1221,6 +1221,73 @@ async def api_symbol_options_chain(request: Request, symbol: str):
     })
 
 
+@app.get("/api/debug/agent-chain/{symbol}")
+async def api_debug_agent_chain(request: Request, symbol: str,
+                                 option_type: str = Query(default="call")):
+    """Return the exact options chain text that agents receive, with all filters applied."""
+    try:
+        cosmos = _get_cosmos(request)
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
+
+    doc = cosmos.get_symbol(symbol.upper())
+    if not doc:
+        return JSONResponse({"error": f"Symbol {symbol} not found"},
+                            status_code=404)
+
+    from src.tv_cache import get_tv_cache
+    from src.options_chain_parser import (
+        parse_options_chain, filter_options_chain_by_delta,
+        OPTIONS_CHAIN_SCHEMA_DESCRIPTION,
+    )
+    import json as _json
+
+    cache = get_tv_cache()
+    sym_upper = symbol.upper()
+    cache_key = doc.get("exchange", "NASDAQ") + "-" + sym_upper
+    entry = cache.get(cache_key, "options_chain")
+
+    if entry is None or not entry.data:
+        return JSONResponse(
+            {"error": "No cached options chain data available. Run an analysis or wait for the options chain scheduler.",
+             "symbol": sym_upper},
+            status_code=404,
+        )
+
+    raw = entry.data
+    structured = parse_options_chain(raw, sym_upper)
+
+    if not structured["calls"] and not structured["puts"]:
+        return JSONResponse(
+            {"error": "Failed to parse options chain data", "symbol": sym_upper},
+            status_code=404,
+        )
+
+    # Apply delta filter (same as agents get)
+    structured = filter_options_chain_by_delta(structured)
+
+    # Build the exact text agents receive
+    agent_text = (
+        OPTIONS_CHAIN_SCHEMA_DESCRIPTION + "\n"
+        + _json.dumps(structured, indent=2)
+    )
+
+    # Also return stats for the UI
+    side = "calls" if option_type == "call" else "puts"
+    chain_side = structured.get(side, {})
+    num_expirations = len(chain_side)
+    num_contracts = sum(len(strikes) for strikes in chain_side.values())
+
+    return JSONResponse({
+        "symbol": sym_upper,
+        "option_type": option_type,
+        "cache_age_seconds": round(time.time() - entry.timestamp, 1),
+        "num_expirations": num_expirations,
+        "num_contracts": num_contracts,
+        "agent_text": agent_text,
+    })
+
+
 @app.get("/api/symbols/{symbol}/fetch-preview")
 async def api_fetch_preview(request: Request, symbol: str):
     """Fetch raw TradingView data for a symbol and return as JSON.
