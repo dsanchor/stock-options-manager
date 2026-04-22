@@ -38,6 +38,25 @@
     {% if agent.rows %}
     <div class="table-wrap">
         <table>
+            {% if agent.is_position_monitor %}
+            <colgroup>
+                <col style="width:22%">
+                <col style="width:25%">
+                <col style="width:8%">
+                <col style="width:12%">
+                <col style="width:10%">
+                <col style="width:8%">
+                <col style="width:12%">
+                <col style="width:3%">
+            </colgroup>
+            {% else %}
+            <colgroup>
+                <col style="width:35%">
+                <col style="width:40%">
+                <col style="width:20%">
+                <col style="width:5%">
+            </colgroup>
+            {% endif %}
             <thead>
                 <tr>
                     <th>{{ "Position" if agent.is_position_monitor else "Symbol" }}</th>
