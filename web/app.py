@@ -714,6 +714,7 @@ def _build_dashboard_tables(cosmos, all_symbols, all_alerts, all_activities):
     """Build per-agent table data for the dashboard from CosmosDB data."""
     agent_tables = []
     grand_totals = {"today": 0, "week": 0, "month": 0, "total": 0}
+    sym_cfg_map = {s["symbol"]: s for s in all_symbols}
 
     for agent_key, agent_meta in AGENT_TYPES.items():
         is_pm = agent_meta["is_position_monitor"]
@@ -760,7 +761,10 @@ def _build_dashboard_tables(cosmos, all_symbols, all_alerts, all_activities):
                     )
             else:
                 key = sym
-                display_map.setdefault(key, sym)
+                if key not in groups:
+                    continue
+                display_map.setdefault(
+                    key, sym_cfg_map.get(sym, {}).get("display_name", sym))
             groups.setdefault(key, []).append(alert)
 
         # Latest activity per key — for health metrics and risk flags
