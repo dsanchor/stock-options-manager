@@ -9,6 +9,13 @@
 
 ## Learnings
 
+### Hard 45 DTE Cap for New Positions (2026-07)
+- User reported agents recommending expirations with DTE > 45 too frequently
+- Root cause: Instructions said "Avoid >60 DTE" — the 46-60 day gap had no prohibition. The earnings gate post-earnings path (≥14 days after earnings when >30 days out) could also push past 45 DTE.
+- Fix: Added explicit ⛔ HARD MAXIMUM 45 DTE in 6 places across both `src/tv_covered_call_instructions.py` and `src/tv_cash_secured_put_instructions.py`: Time Frame section, Theta description, Earnings gate post-earnings row, KEY PRINCIPLE, DTE Selection Priority, and WAIT triggers.
+- Key pattern: When instruction text says "optimal X" but "avoid Y" where Y > X, agents treat the gap as permitted. Always set the hard cap equal to the upper bound of the optimal range.
+- The same pattern likely exists in Alpha Vantage and Massive.com instruction files — those should be audited too.
+
 ### Telegram Settings UI (2026-03-29)
 - Added Telegram configuration endpoints to `web/app.py`:
   - `GET /settings` — Returns current config with token masked
