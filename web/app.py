@@ -821,6 +821,10 @@ def _build_dashboard_tables(cosmos, all_symbols, all_alerts, all_activities):
                 row["moneyness"] = dec.get("moneyness")
                 row["assignment_risk"] = dec.get("assignment_risk")
                 row["delta"] = dec.get("delta")
+            else:
+                dec = latest_by_key.get(key, {})
+                row["strike"] = dec.get("strike")
+                row["expiration"] = dec.get("expiration")
             rows.append(row)
 
         total_counts = _count_by_range(agent_alerts)
