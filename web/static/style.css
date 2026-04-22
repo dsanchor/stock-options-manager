@@ -309,6 +309,18 @@ tbody td:last-child, thead th:last-child { text-align: right; width: 1%; white-s
 .badge-info { background: rgba(73,79,223,0.2); color: var(--accent-blue); }
 .badge-waiting { background: rgba(236,126,0,0.15); color: var(--accent-orange); font-size: 0.75rem; }
 
+/* Trend timeline cells */
+.trend-cell { white-space: nowrap; }
+.trend-arrow {
+    color: var(--text-muted, #666);
+    margin: 0 0.15rem;
+    font-size: 0.7rem;
+    vertical-align: middle;
+}
+.trend-cell .badge { font-size: 0.65rem; padding: 0.15rem 0.4rem; }
+.trend-cell a.badge { text-decoration: none; }
+.trend-cell a.badge:hover { filter: brightness(1.2); }
+
 .badge-risk-low { background: rgba(0,168,126,0.2); color: var(--accent-green); }
 .badge-risk-medium, .badge-risk-moderate { background: rgba(236,126,0,0.2); color: var(--accent-orange); }
 .badge-risk-high { background: rgba(226,59,74,0.2); color: var(--accent-red); }

@@ -773,6 +773,7 @@ def _build_dashboard_tables(cosmos, all_symbols, all_alerts, all_activities):
                       if d.get("agent_type") == agent_key
                       and d.get("activity", "").upper() != "SKIPPED"]
         latest_by_key: Dict[str, Dict] = {}
+        recent_by_key: Dict[str, List[Dict]] = {}
         for d in agent_acts:
             sym = d.get("symbol", "")
             if is_pm:
@@ -787,20 +788,30 @@ def _build_dashboard_tables(cosmos, all_symbols, all_alerts, all_activities):
             if (prev is None
                     or d.get("timestamp", "") > prev.get("timestamp", "")):
                 latest_by_key[key] = d
+            recent_by_key.setdefault(key, []).append(d)
+
+        # Keep only last 3 activities per key (oldest→newest)
+        for k, acts in recent_by_key.items():
+            acts.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+            recent_by_key[k] = list(reversed(acts[:3]))
 
         rows = []
         for key, group in groups.items():
-            counts = _count_by_range(group)
             # Extract the base symbol from the key for linking
             base_symbol = key.split("_")[0] if "_" in key else key
+            recent = [
+                {
+                    "activity": a.get("activity", "N/A"),
+                    "timestamp": a.get("timestamp", ""),
+                    "id": a.get("id", ""),
+                }
+                for a in recent_by_key.get(key, [])
+            ]
             row: Dict[str, Any] = {
                 "key": key,
                 "symbol": base_symbol,
                 "display": display_map.get(key, key),
-                "today": counts["today"],
-                "week": counts["week"],
-                "month": counts["month"],
-                "total": counts["total"],
+                "recent_activities": recent,
                 "risk_flags": latest_by_key.get(key, {}).get(
                     "risk_flags", []),
             }

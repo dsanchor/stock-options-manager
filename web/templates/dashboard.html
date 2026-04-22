@@ -13,18 +13,6 @@
 <!-- Summary cards -->
 <div class="summary-row">
     <div class="summary-card">
-        <div class="summary-value">{{ grand_totals.today }}</div>
-        <div class="summary-label">Alerts Today</div>
-    </div>
-    <div class="summary-card">
-        <div class="summary-value">{{ grand_totals.week }}</div>
-        <div class="summary-label">Last 7 Days</div>
-    </div>
-    <div class="summary-card">
-        <div class="summary-value">{{ grand_totals.month }}</div>
-        <div class="summary-label">Last 30 Days</div>
-    </div>
-    <div class="summary-card">
         <div class="summary-value">{{ symbol_count }}</div>
         <div class="summary-label">Symbols Watched</div>
     </div>
@@ -53,9 +41,7 @@
             <thead>
                 <tr>
                     <th>{{ "Position" if agent.is_position_monitor else "Symbol" }}</th>
-                    <th class="num">Today</th>
-                    <th class="num">Last 7 Days</th>
-                    <th class="num">Last 30 Days</th>
+                    <th>Recent</th>
                     {% if agent.is_position_monitor %}
                     <th class="num">DTE</th>
                     <th>Moneyness</th>
@@ -70,9 +56,14 @@
                 {% for row in agent.rows %}
                 <tr class="clickable-row" data-href="/symbols/{{ row.symbol }}">
                     <td><strong>{{ row.display }}</strong></td>
-                    <td class="num">{{ row.today }}</td>
-                    <td class="num">{{ row.week }}</td>
-                    <td class="num">{{ row.month }}</td>
+                    <td class="trend-cell">
+                        {% if row.recent_activities %}
+                        {% for act in row.recent_activities %}
+                            {% if not loop.first %}<span class="trend-arrow">›</span>{% endif %}
+                            <a href="/activities/{{ act.id }}" class="badge badge-{{ act.activity | lower if act.activity else 'info' }}" title="{{ act.timestamp[:16] }}">{{ act.activity or "N/A" }}</a>
+                        {% endfor %}
+                        {% else %}—{% endif %}
+                    </td>
                     {% if agent.is_position_monitor %}
                     <td class="num metric-value">{{ row.dte if row.dte is not none else "—" }}</td>
                     <td>

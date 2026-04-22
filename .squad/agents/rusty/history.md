@@ -496,3 +496,10 @@ Added risk fields to Telegram alert notifications:
 Added `filter_options_chain_by_delta()` to `options_chain_parser.py` that strips contracts outside useful delta ranges before agents see them. Calls keep delta 0.15–0.90, puts keep -0.60 to -0.15, and contracts with missing delta are excluded. The filter runs in `agent_runner.py`'s `_format_options_chain()` after position filtering but before JSON serialization. This reduces noise from deep ITM/OTM contracts so agents can focus on actionable strikes.
 
 **Files:** `src/options_chain_parser.py`, `src/agent_runner.py`
+
+### Dashboard Timeline Badges Redesign (2026-07)
+Replaced the Today/7d/30d numeric count columns in dashboard agent tables with a "Recent" column showing the last 3 non-SKIPPED activity results as colored badge mini-timelines (oldest→newest, e.g. `[WAIT] › [WAIT] › [SELL]`). Badges link to activity detail pages and use the same CSS classes as the activity feed. Removed the top summary cards for Alerts Today/7d/30d, keeping only Symbols Watched, Open Positions, and Run Full Analysis.
+
+**Key pattern:** `recent_by_key` dict collects activities per row key during the same loop that builds `latest_by_key`, then trims to last 3 sorted oldest-first.
+
+**Files:** `web/app.py` (`_build_dashboard_tables`), `web/templates/dashboard.html`, `web/static/style.css`
