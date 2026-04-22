@@ -13,7 +13,7 @@ from agent_framework.azure import AzureOpenAIChatClient
 
 from .cosmos_db import CosmosDBService
 from .context import ContextProvider
-from .options_chain_parser import parse_options_chain, filter_options_chain_for_position, OPTIONS_CHAIN_SCHEMA_DESCRIPTION
+from .options_chain_parser import parse_options_chain, filter_options_chain_for_position, filter_options_chain_by_delta, OPTIONS_CHAIN_SCHEMA_DESCRIPTION
 from .tv_cache import get_tv_cache as _get_tv_cache
 
 # Canonical timestamp format — used for ALL activity and alert log entries.
@@ -68,6 +68,7 @@ class AgentRunner:
         if structured.get("calls") or structured.get("puts"):
             if current_strike is not None:
                 structured = filter_options_chain_for_position(structured, current_strike, option_type)
+            structured = filter_options_chain_by_delta(structured)
             return (
                 OPTIONS_CHAIN_SCHEMA_DESCRIPTION + "\n"
                 + json.dumps(structured, indent=2)

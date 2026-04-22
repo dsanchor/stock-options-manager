@@ -482,3 +482,17 @@ Added color-coded risk rating (0-10) display to three frontend views:
 - **symbol_detail.html**: New "Risk" column in activities table
 - **style.css**: 5-tier color scale (green→dark red) for `.risk-rating-*` classes
 All guarded with `{% if ... is not none %}` for backward compatibility with older activities.
+
+### Telegram Risk Info in Notifications (2026-07)
+Added risk fields to Telegram alert notifications:
+- **agent_runner.py**: Sell alert_data now passes `risk_rating`; roll alert_data now passes `assignment_risk`
+- **telegram_notifier.py**: `_format_roll_alert` displays assignment risk when present (capitalized)
+- **tv_summary_instructions.py**: Added "Risk indicators" guidance for summary agent (assignment risk for open positions, risk rating for sell signals)
+- **README.md**: Updated Telegram notification docs to mention assignment risk in roll alerts
+
+**Commit:** b9fad9a
+
+### Delta-Based Options Chain Filtering (2026-07)
+Added `filter_options_chain_by_delta()` to `options_chain_parser.py` that strips contracts outside useful delta ranges before agents see them. Calls keep delta 0.15–0.90, puts keep -0.60 to -0.15, and contracts with missing delta are excluded. The filter runs in `agent_runner.py`'s `_format_options_chain()` after position filtering but before JSON serialization. This reduces noise from deep ITM/OTM contracts so agents can focus on actionable strikes.
+
+**Files:** `src/options_chain_parser.py`, `src/agent_runner.py`

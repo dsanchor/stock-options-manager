@@ -269,3 +269,34 @@ def filter_options_chain_for_position(
     result["calls"] = _filter_bucket(chain.get("calls", {}))
     result["puts"] = _filter_bucket(chain.get("puts", {}))
     return result
+
+
+def filter_options_chain_by_delta(
+    chain: dict,
+    call_delta_range: tuple[float, float] = (0.15, 0.90),
+    put_delta_range: tuple[float, float] = (-0.60, -0.15),
+) -> dict:
+    """Filter a parsed options chain to keep only contracts within delta ranges.
+
+    Removes contracts with delta outside the specified ranges or with missing delta.
+    This reduces noise for agents by eliminating deep ITM/OTM contracts.
+    """
+    def _filter_bucket(bucket: dict, delta_min: float, delta_max: float) -> dict:
+        filtered = {}
+        for exp, strikes_dict in bucket.items():
+            kept = {}
+            for strike_key, contract in strikes_dict.items():
+                delta = contract.get("delta")
+                if delta is not None and delta_min <= delta <= delta_max:
+                    kept[strike_key] = contract
+            if kept:
+                filtered[exp] = kept
+        return filtered
+
+    return {
+        "symbol": chain.get("symbol", ""),
+        "timestamp": chain.get("timestamp"),
+        "calls": _filter_bucket(chain.get("calls", {}), *call_delta_range),
+        "puts": _filter_bucket(chain.get("puts", {}), *put_delta_range),
+        **({"current_position": chain["current_position"]} if "current_position" in chain else {}),
+    }
