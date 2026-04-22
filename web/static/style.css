@@ -264,8 +264,9 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 /* ── Tables ── */
-.table-wrap { overflow-x: auto; }
+.table-wrap { overflow-x: hidden; }
 .agent-card table { table-layout: fixed; width: 100%; }
+.agent-card td, .agent-card th { overflow: hidden; text-overflow: ellipsis; }
 table { width: 100%; border-collapse: collapse; }
 thead th {
     text-align: left;
@@ -311,7 +312,7 @@ tbody td:last-child, thead th:last-child { text-align: right; width: 1%; white-s
 .badge-waiting { background: rgba(236,126,0,0.15); color: var(--accent-orange); font-size: 0.75rem; }
 
 /* Trend timeline cells */
-.trend-cell { white-space: nowrap; }
+.trend-cell { white-space: normal; }
 .trend-arrow {
     color: var(--text-muted, #666);
     margin: 0 0.15rem;
