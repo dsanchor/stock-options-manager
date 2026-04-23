@@ -490,7 +490,7 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
     def _try_extract_handoff_json(response_text: str) -> Optional[Dict]:
         """Extract a handoff JSON block from Phase 1 output.
 
-        A handoff block contains ``action_needed`` (a ROLL_* or CLOSE action)
+        A handoff block contains ``action_needed`` (a ROLL_* action)
         signalling that Phase 2 (roll management) should run.  Returns *None*
         when the output is a WAIT activity or cannot be parsed.
         """
@@ -546,7 +546,7 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
         Returns:
             (response_text, activity_json, handoff_json)
             - activity_json is set when agent outputs a standard activity (WAIT).
-            - handoff_json is set when agent outputs an action_needed (ROLL/CLOSE).
+            - handoff_json is set when agent outputs an action_needed (ROLL).
             Exactly one of activity_json / handoff_json will be non-None on success.
         """
         full_symbol = f"{exchange}-{symbol}" if exchange else symbol
