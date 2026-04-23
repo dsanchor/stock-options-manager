@@ -269,8 +269,10 @@ Recommend CLOSE when:
 
 When recommending CLOSE due to no viable roll (#2):
 - Set `roll_economics.roll_tier = "no_viable_roll"`
+- Set `roll_economics.buyback_cost` to the ask price from the CURRENT POSITION block (this is the cost to close)
 - Add `"no_viable_roll"` to `risk_flags`
 - Set `new_strike`, `new_expiration`, `estimated_roll_cost` to `null`
+- Include the buyback cost in the `reason` field: "Buyback cost (ask): $X.XX"
 
 **ROLL Example:**
 ```json

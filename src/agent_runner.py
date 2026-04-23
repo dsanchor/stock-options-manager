@@ -819,6 +819,7 @@ Output your activity in the required JSON format. Use the timestamp above in you
                 # Apply direction-aware filtering so Phase 2 only sees
                 # strikes/expirations valid for the roll direction.
                 roll_type = handoff_json.get("action_needed", "")
+                _bb_cost = None  # buyback cost — used in error handler
                 if roll_type and (structured_chain.get("calls") or structured_chain.get("puts")):
                     direction_filtered = filter_options_chain_by_roll_direction(
                         structured_chain,
@@ -933,14 +934,16 @@ Output your activity in the required JSON format. Use the timestamp above in you
                             )
 
                 except Exception as phase2_err:
-                    # Phase 2 failed — persist Phase 1's handoff with error flag
+                    # Phase 2 failed — persist as CLOSE with error flag.
+                    # We CANNOT emit a ROLL without targets — Phase 2 is
+                    # the only agent that selects strike/expiration.
                     logger.error(
                         "Phase 2 (roll mgmt) FAILED for %s: %s\n%s",
                         full_symbol, phase2_err, traceback.format_exc(),
                     )
-                    print(f"⚠️ Phase 2 error for {full_symbol}: {phase2_err} — persisting Phase 1 output with error flag")
+                    print(f"⚠️ Phase 2 error for {full_symbol}: {phase2_err} — persisting as CLOSE with error flag")
 
-                    # Build a degraded activity from the handoff JSON
+                    # Build a degraded CLOSE activity from the handoff JSON
                     _raw_reason = handoff_json.get("reason", "")
                     # Sanitize internal "Agent 2" references — the reason is user-facing
                     _raw_reason = re.sub(
@@ -948,15 +951,21 @@ Output your activity in the required JSON format. Use the timestamp above in you
                     ).strip()
                     if not _raw_reason:
                         _raw_reason = "Roll was warranted but roll agent failed."
+
+                    # Include buyback cost if available
+                    _close_reason = _raw_reason + " [Roll agent unavailable — recommend closing position]"
+                    if _bb_cost is not None:
+                        _close_reason += f" Buyback cost (ask): ${_bb_cost:.2f}."
+
                     json_data = {
                         "symbol": handoff_json.get("symbol", symbol),
                         "exchange": handoff_json.get("exchange", exchange),
-                        "activity": handoff_json.get("action_needed", "CLOSE"),
+                        "activity": "CLOSE",
                         "current_strike": handoff_json.get("current_strike", strike),
                         "current_expiration": handoff_json.get("current_expiration", expiration),
                         "underlying_price": handoff_json.get("underlying_price"),
                         "assignment_risk": handoff_json.get("assignment_risk"),
-                        "reason": _raw_reason + " [Roll agent unavailable — manual review recommended]",
+                        "reason": _close_reason,
                         "confidence": handoff_json.get("confidence"),
                         "roll_economics": None,
                         "risk_flags": list(handoff_json.get("risk_flags", [])) + ["roll_agent_error"],
@@ -965,6 +974,27 @@ Output your activity in the required JSON format. Use the timestamp above in you
             else:
                 # Phase 1 returned WAIT — use directly
                 json_data = activity_json
+
+            # ── Final safety net: no ROLL without targets ──────────────
+            if json_data is not None:
+                _final_act = str(json_data.get("activity", "")).upper().strip()
+                if _final_act in VALID_ROLL_ACTIONS:
+                    if json_data.get("new_strike") is None or json_data.get("new_expiration") is None:
+                        logger.warning(
+                            "Safety net: %s for %s has no targets — converting to CLOSE",
+                            _final_act, full_symbol,
+                        )
+                        json_data["activity"] = "CLOSE"
+                        json_data["new_strike"] = None
+                        json_data["new_expiration"] = None
+                        json_data["estimated_roll_cost"] = None
+                        if "roll_economics" in json_data:
+                            json_data["roll_economics"] = None
+                        json_data["reason"] = (
+                            json_data.get("reason", "")
+                            + f" [Safety net: {_final_act} had no target"
+                            " strike/expiration — converted to CLOSE]"
+                        )
 
             # ── Persist activity (common path) ────────────────────────
             activity_line, json_data = self._extract_activity_line(full_symbol, response_text) if json_data is None else (
