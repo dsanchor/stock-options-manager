@@ -1239,8 +1239,11 @@ async def api_symbol_options_chain(request: Request, symbol: str):
 
 @app.get("/api/debug/agent-chain/{symbol}")
 async def api_debug_agent_chain(request: Request, symbol: str,
-                                 option_type: str = Query(default="call")):
-    """Return the exact options chain text that agents receive, with all filters applied."""
+                                 option_type: str = Query(default="call"),
+                                 strike: float = Query(default=None),
+                                 expiration: str = Query(default=None),
+                                 roll_type: str = Query(default=None)):
+    """Return the exact options chain text that agents receive, with all pipeline filters applied."""
     try:
         cosmos = _get_cosmos(request)
     except RuntimeError as e:
@@ -1254,7 +1257,8 @@ async def api_debug_agent_chain(request: Request, symbol: str,
     from src.tv_cache import get_tv_cache
     from src.options_chain_parser import (
         parse_options_chain, filter_options_chain_by_delta,
-        OPTIONS_CHAIN_SCHEMA_DESCRIPTION,
+        filter_options_chain_for_position, filter_options_chain_by_roll_direction,
+        format_roll_candidates_table, OPTIONS_CHAIN_SCHEMA_DESCRIPTION,
     )
     import json as _json
 
@@ -1279,29 +1283,118 @@ async def api_debug_agent_chain(request: Request, symbol: str,
             status_code=404,
         )
 
-    # Apply delta filter (same as agents get)
-    structured = filter_options_chain_by_delta(structured)
+    # Helper to count expirations/contracts for one side of a chain
+    def _chain_stats(chain_data, opt_type):
+        side = "calls" if opt_type == "call" else "puts"
+        bucket = chain_data.get(side, {})
+        n_exp = len(bucket)
+        n_con = sum(len(strikes) for strikes in bucket.values())
+        return n_exp, n_con
 
-    # Build the exact text agents receive
-    agent_text = (
-        OPTIONS_CHAIN_SCHEMA_DESCRIPTION + "\n"
-        + _json.dumps(structured, indent=2)
-    )
+    # --- Stage 1: Delta filter (always applied) ---
+    delta_filtered = filter_options_chain_by_delta(structured)
+    s1_exp, s1_con = _chain_stats(delta_filtered, option_type)
 
-    # Also return stats for the UI
-    side = "calls" if option_type == "call" else "puts"
-    chain_side = structured.get(side, {})
-    num_expirations = len(chain_side)
-    num_contracts = sum(len(strikes) for strikes in chain_side.values())
+    pipeline = {
+        "stage_1_delta_filtered": {
+            "num_expirations": s1_exp,
+            "num_contracts": s1_con,
+            "text": OPTIONS_CHAIN_SCHEMA_DESCRIPTION + "\n" + _json.dumps(delta_filtered, indent=2),
+        },
+    }
 
-    return JSONResponse({
+    # --- Underlying price (from cached technicals JSON) ---
+    underlying_price = 0.0
+    underlying_price_source = "not available"
+    tech_entry = cache.get(cache_key, "technicals")
+    if tech_entry and tech_entry.data:
+        try:
+            tech_data = _json.loads(tech_entry.data) if isinstance(tech_entry.data, str) else tech_entry.data
+            px = tech_data.get("price")
+            if px is not None:
+                underlying_price = float(px)
+                underlying_price_source = "technicals cache"
+        except (ValueError, TypeError, AttributeError):
+            pass
+
+    # --- Stage 2: Position filter (±15 strikes) ---
+    position_filtered = None
+    if strike is not None:
+        position_filtered = filter_options_chain_for_position(
+            delta_filtered, strike, option_type,
+        )
+        position_filtered = filter_options_chain_by_delta(position_filtered)
+        s2_exp, s2_con = _chain_stats(position_filtered, option_type)
+        pipeline["stage_2_position_filtered"] = {
+            "num_expirations": s2_exp,
+            "num_contracts": s2_con,
+            "text": OPTIONS_CHAIN_SCHEMA_DESCRIPTION + "\n" + _json.dumps(position_filtered, indent=2),
+        }
+
+    # --- Stage 3: Direction filter ---
+    direction_filtered = None
+    if strike is not None and expiration and roll_type and position_filtered is not None:
+        direction_filtered = filter_options_chain_by_roll_direction(
+            position_filtered,
+            current_strike=float(strike),
+            current_expiration=expiration,
+            roll_type=roll_type,
+            option_type=option_type,
+        )
+        s3_exp, s3_con = _chain_stats(direction_filtered, option_type)
+        pipeline["stage_3_direction_filtered"] = {
+            "num_expirations": s3_exp,
+            "num_contracts": s3_con,
+            "text": _json.dumps(direction_filtered, indent=2),
+        }
+
+    # --- Stage 4: Pre-computed candidate table ---
+    if direction_filtered is not None and position_filtered is not None:
+        # Get buyback cost from position-filtered chain (before direction filter)
+        bb_cost = None
+        bb_bucket_key = "calls" if option_type == "call" else "puts"
+        bb_bucket = position_filtered.get(bb_bucket_key, {})
+        bb_exp_key = expiration.replace("-", "")
+        bb_strike_key = str(float(strike))
+        if bb_exp_key in bb_bucket and bb_strike_key in bb_bucket[bb_exp_key]:
+            bb_ask = bb_bucket[bb_exp_key][bb_strike_key].get("ask")
+            if bb_ask is not None:
+                bb_cost = float(bb_ask)
+
+        candidate_table = format_roll_candidates_table(
+            chain=direction_filtered,
+            current_strike=float(strike),
+            current_expiration=expiration,
+            option_type=option_type,
+            underlying_price=underlying_price,
+            roll_type=roll_type,
+            buyback_cost=bb_cost,
+        )
+        pipeline["stage_4_candidate_table"] = {
+            "text": candidate_table,
+        }
+
+    # Build position context (when params provided)
+    position_context = None
+    if strike is not None:
+        position_context = {
+            "strike": strike,
+            "expiration": expiration,
+            "roll_type": roll_type,
+            "underlying_price": underlying_price,
+            "underlying_price_source": underlying_price_source,
+        }
+
+    result = {
         "symbol": sym_upper,
         "option_type": option_type,
         "cache_age_seconds": round(time.time() - entry.timestamp, 1),
-        "num_expirations": num_expirations,
-        "num_contracts": num_contracts,
-        "agent_text": agent_text,
-    })
+        "pipeline": pipeline,
+    }
+    if position_context:
+        result["position_context"] = position_context
+
+    return JSONResponse(result)
 
 
 @app.get("/api/symbols/{symbol}/fetch-preview")

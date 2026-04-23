@@ -31,14 +31,14 @@
     </div>
 </div>
 
-<!-- Agent Options Chain View -->
+<!-- Agent Chain Pipeline View -->
 <div class="card settings-card">
     <div class="card-header">
-        <h2>🤖 Agent Options Chain View</h2>
+        <h2>🤖 Agent Chain Pipeline View</h2>
     </div>
     <div style="padding: 0.75rem 1.25rem;">
-        <p class="hint" style="margin-bottom:0.75rem;">See exactly what the agents receive after parsing and delta filtering (calls: 0.15–0.90 delta, puts: -0.60–-0.15 delta).</p>
-        <div style="display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap;">
+        <p class="hint" style="margin-bottom:0.75rem;">See the full Phase 2 pipeline: delta filter → ±15 strike filter → direction filter → pre-computed candidate table.</p>
+        <div style="display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap; margin-bottom:0.5rem;">
             <select id="agentChainSymbol" class="input-field" style="width:220px; padding:0.5rem 0.8rem;">
                 <option value="">— Select symbol —</option>
                 {% for sym in symbols %}
@@ -49,12 +49,25 @@
                 <option value="call">Call</option>
                 <option value="put">Put</option>
             </select>
-            <button class="btn btn-primary" id="btnAgentChain" disabled>👁 View</button>
+            <button class="btn btn-primary" id="btnAgentChain" disabled>👁 View Pipeline</button>
             <span id="agentChainSpinner" style="display:none;">
                 <span class="loading-dots">Loading<span>.</span><span>.</span><span>.</span></span>
             </span>
             <span id="agentChainStatus" class="mono" style="opacity:0.6; font-size:0.85rem;"></span>
         </div>
+        <div style="display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap; margin-bottom:0.5rem;">
+            <input id="agentChainStrike" type="text" class="input-field" style="width:140px; padding:0.5rem 0.8rem;" placeholder="Strike (e.g. 475)">
+            <input id="agentChainExpiration" type="text" class="input-field" style="width:170px; padding:0.5rem 0.8rem;" placeholder="Exp (YYYY-MM-DD)">
+            <select id="agentChainRollType" class="input-field" style="width:200px; padding:0.5rem 0.8rem;">
+                <option value="">(no roll type)</option>
+                <option value="ROLL_DOWN">ROLL_DOWN</option>
+                <option value="ROLL_UP">ROLL_UP</option>
+                <option value="ROLL_OUT">ROLL_OUT</option>
+                <option value="ROLL_UP_AND_OUT">ROLL_UP_AND_OUT</option>
+                <option value="ROLL_DOWN_AND_OUT">ROLL_DOWN_AND_OUT</option>
+            </select>
+        </div>
+        <p class="hint" style="margin-bottom:0.5rem; font-size:0.78rem; opacity:0.5;">Strike + Expiration enable position filtering. Roll type enables direction filtering + candidate table (what Phase 2 receives).</p>
         <div id="agentChainResults" style="margin-top:1rem;"></div>
     </div>
 </div>
@@ -164,6 +177,9 @@
 (function() {
     var sel = document.getElementById('agentChainSymbol');
     var typeSel = document.getElementById('agentChainType');
+    var strikeInput = document.getElementById('agentChainStrike');
+    var expInput = document.getElementById('agentChainExpiration');
+    var rollSel = document.getElementById('agentChainRollType');
     var btn = document.getElementById('btnAgentChain');
     var spinner = document.getElementById('agentChainSpinner');
     var status = document.getElementById('agentChainStatus');
@@ -179,6 +195,27 @@
         return div.innerHTML;
     }
 
+    function stageBlock(title, data, opts) {
+        opts = opts || {};
+        var highlight = opts.highlight || false;
+        var borderColor = highlight ? '#f5a623' : 'var(--border, #2d2d35)';
+        var bgColor = highlight ? 'rgba(245,166,35,0.08)' : 'var(--bg-card, #222228)';
+        var stats = '';
+        if (data.num_expirations !== undefined) {
+            stats = '<span class="mono" style="font-size:0.8rem; opacity:0.6;">'
+                + data.num_expirations + ' exp, ' + data.num_contracts + ' contracts</span>';
+        }
+        var id = 'pipeline_' + title.replace(/[^a-zA-Z0-9]/g, '_');
+        var collapsed = opts.collapsed ? true : false;
+        return '<div style="background:' + bgColor + '; border:2px solid ' + borderColor + '; border-radius:8px; margin-bottom:0.75rem;">'
+            + '<div style="padding:0.75rem 1rem; cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onclick="var el=document.getElementById(\'' + id + '\'); el.style.display=el.style.display===\'none\'?\'block\':\'none\';">'
+            + '<strong>' + escapeHtml(title) + '</strong>' + stats
+            + '</div>'
+            + '<div id="' + id + '" style="display:' + (collapsed ? 'none' : 'block') + '; padding:0 1rem 0.75rem;">'
+            + '<pre style="background:var(--bg,#111); border:1px solid var(--border, #2d2d35); border-radius:4px; padding:0.75rem; max-height:500px; overflow:auto; white-space:pre-wrap; word-break:break-word; font-size:0.78rem; line-height:1.35; margin:0;">'
+            + escapeHtml(data.text) + '</pre></div></div>';
+    }
+
     btn.addEventListener('click', async function() {
         var symbol = sel.value;
         var optType = typeSel.value;
@@ -189,8 +226,16 @@
         status.textContent = '';
         results.innerHTML = '';
 
+        var params = 'option_type=' + optType;
+        var sv = strikeInput.value.trim();
+        if (sv) params += '&strike=' + encodeURIComponent(sv);
+        var ev = expInput.value.trim();
+        if (ev) params += '&expiration=' + encodeURIComponent(ev);
+        var rv = rollSel.value;
+        if (rv) params += '&roll_type=' + encodeURIComponent(rv);
+
         try {
-            var res = await fetch('/api/debug/agent-chain/' + symbol + '?option_type=' + optType);
+            var res = await fetch('/api/debug/agent-chain/' + symbol + '?' + params);
             var data = await res.json();
 
             if (!res.ok) {
@@ -198,11 +243,32 @@
                 return;
             }
 
-            status.textContent = '✅ ' + data.num_expirations + ' expirations, ' + data.num_contracts + ' contracts (cache: ' + data.cache_age_seconds + 's ago)';
+            var pl = data.pipeline;
+            var s1 = pl.stage_1_delta_filtered;
+            var cacheInfo = 'cache: ' + data.cache_age_seconds + 's ago';
+            var ctxInfo = '';
+            if (data.position_context) {
+                var pc = data.position_context;
+                ctxInfo = ' | strike: $' + pc.strike + ' | exp: ' + (pc.expiration || 'n/a')
+                    + ' | roll: ' + (pc.roll_type || 'n/a')
+                    + ' | price: $' + pc.underlying_price + ' (' + pc.underlying_price_source + ')';
+            }
+            status.textContent = '✅ ' + s1.num_expirations + ' exp, ' + s1.num_contracts + ' contracts (' + cacheInfo + ')' + ctxInfo;
 
-            results.innerHTML = '<div style="background:var(--bg-card, #222228); border:1px solid var(--border, #2d2d35); border-radius:8px; padding:1rem;">'
-                + '<pre style="background:var(--bg,#111); border:1px solid var(--border, #2d2d35); border-radius:4px; padding:0.75rem; max-height:600px; overflow:auto; white-space:pre-wrap; word-break:break-word; font-size:0.78rem; line-height:1.35; margin:0;">'
-                + escapeHtml(data.agent_text) + '</pre></div>';
+            var html = '';
+            html += stageBlock('Stage 1: Delta-filtered chain', s1, {collapsed: !!pl.stage_4_candidate_table});
+
+            if (pl.stage_2_position_filtered) {
+                html += stageBlock('Stage 2: Position-filtered (±15 strikes)', pl.stage_2_position_filtered, {collapsed: !!pl.stage_4_candidate_table});
+            }
+            if (pl.stage_3_direction_filtered) {
+                html += stageBlock('Stage 3: Direction-filtered (' + (rv || '') + ')', pl.stage_3_direction_filtered, {collapsed: !!pl.stage_4_candidate_table});
+            }
+            if (pl.stage_4_candidate_table) {
+                html += stageBlock('Stage 4: Pre-computed candidate table (Phase 2 input)', pl.stage_4_candidate_table, {highlight: true});
+            }
+
+            results.innerHTML = html;
         } catch(e) {
             status.textContent = '❌ Network error: ' + e.message;
         } finally {
