@@ -221,7 +221,7 @@
                             {% if pos.source.reason %}
                             <div style="margin-top:0.75rem; padding:0.75rem; background:rgba(255,255,255,0.03); border-radius:6px; border-left:3px solid var(--accent-blue, #494fdf);">
                                 <div style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted, #8d969e); margin-bottom:0.3rem;">Reason</div>
-                                <div style="color:var(--text, #ffffff); line-height:1.5;">{{ pos.source.reason }}</div>
+                                <div style="color:var(--text, #ffffff); line-height:1.5; word-break:break-word; overflow-wrap:anywhere; white-space:pre-wrap;">{{ pos.source.reason }}</div>
                             </div>
                             {% endif %}
                             {% else %}
@@ -326,7 +326,7 @@
                                 {% if pos.closing_source.reason %}
                                 <div style="margin-top:0.75rem; padding:0.75rem; background:rgba(255,255,255,0.03); border-radius:6px; border-left:3px solid var(--accent-orange, #ec7e00);">
                                     <div style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted, #8d969e); margin-bottom:0.3rem;">Closing Reason</div>
-                                    <div style="color:var(--text, #ffffff); line-height:1.5;">{{ pos.closing_source.reason }}</div>
+                                    <div style="color:var(--text, #ffffff); line-height:1.5; word-break:break-word; overflow-wrap:anywhere; white-space:pre-wrap;">{{ pos.closing_source.reason }}</div>
                                 </div>
                                 {% endif %}
                             </div>
