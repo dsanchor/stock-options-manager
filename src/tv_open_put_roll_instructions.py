@@ -89,6 +89,9 @@ Pick the best candidate based on the rules below.
 
 ## ROLL CANDIDATE SELECTION
 
+⛔ Every ROLL action MUST include a specific `new_strike` and `new_expiration` picked from the candidates table.
+You MUST reference the specific row number from the table. A ROLL without concrete targets is INVALID.
+
 Select a specific new strike and expiration based on the handoff data:
 
 - **New strike (defensive rolls — ROLL_DOWN, ROLL_DOWN_AND_OUT)**:
@@ -195,6 +198,10 @@ All other flags (position, earnings, calendar, technical, fundamental) come from
 Prepend Agent 1's reason, then add your roll economics details.
 
 ### Final Activity JSON Schema (open_put_monitor)
+
+⛔ MANDATORY FOR ALL ROLL ACTIONS: You MUST set `new_strike` and `new_expiration` to specific values from the candidates table.
+A ROLL without a specific target strike and expiration is INVALID and will be auto-converted to CLOSE.
+If you cannot find a suitable candidate in the table, output CLOSE instead of a ROLL with empty targets.
 
 ```json
 {

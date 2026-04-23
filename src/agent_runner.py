@@ -900,6 +900,38 @@ Output your activity in the required JSON format. Use the timestamp above in you
                             " converted to CLOSE]"
                         )
 
+                    # Validate that ROLL actions include specific target strike and expiration
+                    p2_activity = str(json_data.get("activity", "")).upper().strip()
+                    if p2_activity in VALID_ROLL_ACTIONS:
+                        new_strike = json_data.get("new_strike")
+                        new_expiration = json_data.get("new_expiration")
+                        if new_strike is None or new_expiration is None:
+                            logger.warning(
+                                "Phase 2 returned %s for %s without new_strike/new_expiration — converting to CLOSE",
+                                p2_activity, full_symbol,
+                            )
+                            json_data["activity"] = "CLOSE"
+                            json_data["reason"] = (
+                                json_data.get("reason", "")
+                                + f" [Auto-corrected: {p2_activity} had no specific target"
+                                " (new_strike/new_expiration missing) — converted to CLOSE]"
+                            )
+                            json_data["new_strike"] = None
+                            json_data["new_expiration"] = None
+                            json_data["estimated_roll_cost"] = None
+                            if "roll_economics" in json_data:
+                                json_data["roll_economics"] = None
+                        elif json_data.get("roll_economics") is None:
+                            logger.warning(
+                                "Phase 2 returned %s for %s without roll_economics — converting to CLOSE",
+                                p2_activity, full_symbol,
+                            )
+                            json_data["activity"] = "CLOSE"
+                            json_data["reason"] = (
+                                json_data.get("reason", "")
+                                + f" [Auto-corrected: {p2_activity} had no roll_economics — converted to CLOSE]"
+                            )
+
                 except Exception as phase2_err:
                     # Phase 2 failed — persist Phase 1's handoff with error flag
                     logger.error(
