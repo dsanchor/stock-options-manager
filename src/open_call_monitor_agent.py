@@ -19,6 +19,18 @@ async def run_open_call_monitor(config, runner: AgentRunner,
     """
     from .tv_open_call_instructions import TV_OPEN_CALL_INSTRUCTIONS
 
+    # 2-phase instruction imports — graceful fallback if Linus hasn't
+    # committed the new files yet.
+    assessment_instructions = None
+    roll_instructions = None
+    try:
+        from .tv_open_call_assessment_instructions import get_open_call_assessment_instructions
+        from .tv_open_call_roll_instructions import get_open_call_roll_instructions
+        assessment_instructions = get_open_call_assessment_instructions()
+        roll_instructions = get_open_call_roll_instructions()
+    except ImportError:
+        pass  # Fall back to single-agent path
+
     print(f"\n{'='*60}")
     print(f"Starting OpenCallMonitor monitoring" + (f" for {symbol}" if symbol else ""))
     print(f"{'='*60}")
@@ -64,6 +76,8 @@ async def run_open_call_monitor(config, runner: AgentRunner,
                     context_provider=context_provider,
                     max_activity_entries=config.max_activity_entries,
                     fetcher=fetcher,
+                    assessment_instructions=assessment_instructions,
+                    roll_instructions=roll_instructions,
                 )
 
     print(f"\n{'='*60}")

@@ -503,3 +503,33 @@ Replaced the Today/7d/30d numeric count columns in dashboard agent tables with a
 **Key pattern:** `recent_by_key` dict collects activities per row key during the same loop that builds `latest_by_key`, then trims to last 3 sorted oldest-first.
 
 **Files:** `web/app.py` (`_build_dashboard_tables`), `web/templates/dashboard.html`, `web/static/style.css`
+
+### 2-Phase Position Monitor Refactor (2026-07)
+**Status:** ✅ Completed
+**Scope:** Split `run_position_monitor()` into a 2-phase execution model per Danny's architecture decision (`danny-monitor-split.md`).
+
+**Changes:**
+- **`src/agent_runner.py`:**
+  - Added `_try_extract_handoff_json()` — detects Phase 1 handoff JSON (contains `action_needed` field) vs standard WAIT activity
+  - Added `_run_position_assessment()` — Phase 1 agent: runs with overview + technicals + forecast + previous context, NO options chain
+  - Added `_run_roll_management()` — Phase 2 agent: runs with handoff JSON + full filtered options chain + roll-specific instructions; agent name gets `_roll` suffix
+  - Refactored `run_position_monitor()` into orchestrator with `assessment_instructions` + `roll_instructions` optional params; falls back to single-agent path when not provided
+  - Phase 2 error handling: if Phase 2 fails, persists Phase 1 output with `roll_economics: null` and `roll_agent_error` in risk_flags
+  - Telemetry now includes `two_phase` flag
+- **`src/open_call_monitor_agent.py`:** Imports `get_open_call_assessment_instructions()` and `get_open_call_roll_instructions()` with try/except fallback (Linus writing the files in parallel); passes both to runner
+- **`src/open_put_monitor_agent.py`:** Same pattern for put assessment/roll instructions
+
+**Architecture:**
+- Phase 1 (assessment) receives: overview, technicals, forecast, previous context — NO chain data
+- Phase 2 (roll mgmt) receives: Phase 1 handoff JSON + full filtered chain + roll instructions
+- WAIT (~70-80% of runs): Phase 1 only → persist → done (saves chain tokens)
+- ROLL/CLOSE: Phase 1 → Phase 2 → persist final activity (same schema as before)
+- Backward compatible: when new instruction files don't exist, falls back to original single-agent path
+
+## Learnings
+
+### 2-Phase Handoff Detection Pattern
+Phase 1 outputs either a standard `activity` JSON (WAIT) or a `action_needed` handoff JSON (ROLL/CLOSE). Detection uses `_try_extract_handoff_json()` which looks for the `action_needed` key — distinct from `_try_extract_json()` which looks for `activity`. This separation avoids ambiguity between the two output formats.
+
+### Graceful Import Fallback for Parallel Work
+When teammates are writing files in parallel, use try/except ImportError with None fallback rather than hard imports. The runner checks `assessment_instructions is not None and roll_instructions is not None` to decide execution mode. This allows the code to merge and work even if instruction files arrive in a separate commit.

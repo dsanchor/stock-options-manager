@@ -430,6 +430,182 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
     # Position Monitor (single position, CosmosDB-backed)
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Phase 1 → Phase 2 handoff detection
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _try_extract_handoff_json(response_text: str) -> Optional[Dict]:
+        """Extract a handoff JSON block from Phase 1 output.
+
+        A handoff block contains ``action_needed`` (a ROLL_* or CLOSE action)
+        signalling that Phase 2 (roll management) should run.  Returns *None*
+        when the output is a WAIT activity or cannot be parsed.
+        """
+        # Check fenced ```json blocks first
+        for block in re.findall(r'```json\s*\n(.*?)```', response_text, re.DOTALL):
+            block = block.strip()
+            try:
+                data = json.loads(block)
+                if isinstance(data, dict) and "action_needed" in data:
+                    return data
+            except json.JSONDecodeError:
+                continue
+
+        # Fallback: raw JSON object containing "action_needed"
+        for match in re.finditer(r'\{[^{}]*"action_needed"\s*:', response_text):
+            start = match.start()
+            depth = 0
+            for i in range(start, len(response_text)):
+                if response_text[i] == '{':
+                    depth += 1
+                elif response_text[i] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        candidate = response_text[start:i + 1]
+                        try:
+                            data = json.loads(candidate)
+                            if isinstance(data, dict) and "action_needed" in data:
+                                return data
+                        except json.JSONDecodeError:
+                            break
+        return None
+
+    # ------------------------------------------------------------------
+    # Phase 1: Position Assessment
+    # ------------------------------------------------------------------
+
+    async def _run_position_assessment(
+        self,
+        name: str,
+        instructions: str,
+        symbol: str,
+        exchange: str,
+        position_type: str,
+        strike: float,
+        expiration: str,
+        data: dict,
+        previous_context: str,
+        analysis_ts: str,
+    ) -> Tuple[str, Optional[Dict], Optional[Dict]]:
+        """Run Phase 1 — position assessment agent.
+
+        Returns:
+            (response_text, activity_json, handoff_json)
+            - activity_json is set when agent outputs a standard activity (WAIT).
+            - handoff_json is set when agent outputs an action_needed (ROLL/CLOSE).
+            Exactly one of activity_json / handoff_json will be non-None on success.
+        """
+        full_symbol = f"{exchange}-{symbol}" if exchange else symbol
+
+        message = f"""Analyze open {position_type} position for {symbol}:
+- Current strike: ${strike}
+- Current expiration: {expiration}
+- Exchange: {exchange}
+
+=== PRE-FETCHED TRADINGVIEW DATA ===
+
+--- OVERVIEW PAGE ({exchange}:{symbol}) ---
+{data['overview']}
+
+--- TECHNICALS PAGE ({exchange}:{symbol}) ---
+{data['technicals']}
+
+--- FORECAST PAGE ({exchange}:{symbol}) ---
+{data['forecast']}
+
+=== END OF DATA ===
+
+Previous monitor activities for {symbol}:
+{previous_context}
+
+Current timestamp: {analysis_ts}
+Analyze the position risk and output your response in the required JSON format. Use the timestamp above in your JSON output; do NOT generate your own."""
+
+        agent = ChatAgent(
+            chat_client=self.client,
+            name=name,
+            instructions=instructions,
+        )
+        result = await agent.run(message)
+        response_text = result.text or str(result)
+
+        logger.info(
+            "Phase 1 (assessment) completed for %s – response length=%d",
+            full_symbol, len(response_text),
+        )
+        logger.debug(
+            "Phase 1 first 500 chars for %s: %s",
+            full_symbol, response_text[:500],
+        )
+        print(f"Phase 1 response: {response_text[:200]}...")
+
+        # Try handoff first (action_needed), then standard activity
+        handoff_json = self._try_extract_handoff_json(response_text)
+        if handoff_json is not None:
+            return response_text, None, handoff_json
+
+        # Standard activity (WAIT path)
+        activity_json = self._try_extract_json(response_text)
+        return response_text, activity_json, None
+
+    # ------------------------------------------------------------------
+    # Phase 2: Roll Management
+    # ------------------------------------------------------------------
+
+    async def _run_roll_management(
+        self,
+        name: str,
+        roll_instructions: str,
+        handoff_json: Dict,
+        filtered_chain_text: str,
+        analysis_ts: str,
+        full_symbol: str,
+    ) -> Tuple[str, Optional[Dict]]:
+        """Run Phase 2 — roll management agent.
+
+        Receives the Phase 1 handoff payload and the full filtered options
+        chain.  Returns (response_text, json_data) following the same
+        activity schema as the original single-agent output.
+        """
+        phase1_text = json.dumps(handoff_json, indent=2)
+
+        message = f"""POSITION ASSESSMENT RESULT:
+{phase1_text}
+
+OPTIONS CHAIN DATA:
+{filtered_chain_text}
+
+Based on the assessment above, determine the best roll candidate and calculate roll economics.
+
+Current timestamp: {analysis_ts}
+Output your activity in the required JSON format. Use the timestamp above in your JSON output; do NOT generate your own."""
+
+        agent = ChatAgent(
+            chat_client=self.client,
+            name=f"{name}_roll",
+            instructions=roll_instructions,
+        )
+        result = await agent.run(message)
+        response_text = result.text or str(result)
+
+        logger.info(
+            "Phase 2 (roll mgmt) completed for %s – response length=%d",
+            full_symbol, len(response_text),
+        )
+        logger.debug(
+            "Phase 2 first 500 chars for %s: %s",
+            full_symbol, response_text[:500],
+        )
+        print(f"Phase 2 response: {response_text[:200]}...")
+
+        json_data = self._try_extract_json(response_text)
+        return response_text, json_data
+
+    # ------------------------------------------------------------------
+    # Position Monitor — 2-phase orchestrator
+    # ------------------------------------------------------------------
+
     async def run_position_monitor(
         self,
         name: str,
@@ -442,12 +618,27 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
         context_provider: ContextProvider,
         max_activity_entries: int = 2,
         fetcher=None,
+        assessment_instructions: str = None,
+        roll_instructions: str = None,
     ):
         """Run position monitor for a single open position.
 
+        When *assessment_instructions* and *roll_instructions* are provided the
+        monitor executes in two phases:
+
+        * **Phase 1 (Position Assessment):** Evaluates position risk using
+          overview, technicals, forecast, and previous context — no full chain.
+          If the result is WAIT, persists and returns immediately.
+        * **Phase 2 (Roll Management):** Only invoked when Phase 1 decides
+          action ≠ WAIT.  Receives the Phase 1 handoff JSON plus the full
+          filtered options chain and roll-specific instructions.
+
+        When the new instruction sets are not provided, falls back to the
+        original single-agent path using *instructions*.
+
         Args:
             name: Agent name (e.g. "OpenCallMonitor")
-            instructions: System instructions for the monitor agent
+            instructions: Legacy single-agent instructions (fallback)
             symbol: Ticker symbol
             exchange: Exchange code
             position: Position dict with strike, expiration, position_id, type
@@ -456,6 +647,8 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
             context_provider: ContextProvider for history injection
             max_activity_entries: Max recent activities for context (0–5)
             fetcher: TradingViewFetcher instance (shared)
+            assessment_instructions: Phase 1 system instructions (optional)
+            roll_instructions: Phase 2 system instructions (optional)
         """
         full_symbol = f"{exchange}-{symbol}" if exchange else symbol
         strike = position["strike"]
@@ -463,9 +656,13 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
         position_id = position.get("position_id", "")
         position_type = position.get("type", "call")
 
-        print(f"\n--- Monitoring {symbol} ${strike} exp {expiration} ---")
+        # Decide execution mode
+        two_phase = assessment_instructions is not None and roll_instructions is not None
+
+        print(f"\n--- Monitoring {symbol} ${strike} exp {expiration} {'(2-phase)' if two_phase else ''} ---")
         logger.info(
-            "Position monitor pre-fetch + agent.run() for %s strike=%s exp=%s",
+            "Position monitor %s for %s strike=%s exp=%s",
+            "2-phase" if two_phase else "single-agent",
             full_symbol, strike, expiration,
         )
 
@@ -493,7 +690,78 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
                 )
                 print(f"⚠️ TradingView 403 on {failed} for {full_symbol} — continuing with partial data")
 
-            message = f"""Analyze open {position_type} position for {symbol}:
+            # Pre-compute the filtered chain text (needed for single-agent
+            # path and for Phase 2 in the two-phase path)
+            filtered_chain_text = self._format_options_chain(
+                data.get('options_chain', ''), symbol,
+                current_strike=float(strike), option_type=position_type,
+            )
+
+            # ── Two-phase execution path ──────────────────────────────
+            if two_phase:
+                response_text, activity_json, handoff_json = await self._run_position_assessment(
+                    name=name,
+                    instructions=assessment_instructions,
+                    symbol=symbol,
+                    exchange=exchange,
+                    position_type=position_type,
+                    strike=strike,
+                    expiration=expiration,
+                    data=data,
+                    previous_context=previous_context,
+                    analysis_ts=analysis_ts,
+                )
+
+                if handoff_json is not None:
+                    # Phase 1 says action needed → run Phase 2
+                    logger.info(
+                        "Phase 1 triggered action '%s' for %s — launching Phase 2",
+                        handoff_json.get("action_needed"), full_symbol,
+                    )
+                    print(f"↪ Phase 1 action: {handoff_json.get('action_needed')} — running roll management…")
+
+                    try:
+                        phase2_response, phase2_json = await self._run_roll_management(
+                            name=name,
+                            roll_instructions=roll_instructions,
+                            handoff_json=handoff_json,
+                            filtered_chain_text=filtered_chain_text,
+                            analysis_ts=analysis_ts,
+                            full_symbol=full_symbol,
+                        )
+                        # Use Phase 2 output as the final result
+                        response_text = phase2_response
+                        json_data = phase2_json
+                    except Exception as phase2_err:
+                        # Phase 2 failed — persist Phase 1's handoff with error flag
+                        logger.error(
+                            "Phase 2 (roll mgmt) FAILED for %s: %s\n%s",
+                            full_symbol, phase2_err, traceback.format_exc(),
+                        )
+                        print(f"⚠️ Phase 2 error for {full_symbol}: {phase2_err} — persisting Phase 1 output with error flag")
+
+                        # Build a degraded activity from the handoff JSON
+                        json_data = {
+                            "symbol": handoff_json.get("symbol", symbol),
+                            "exchange": handoff_json.get("exchange", exchange),
+                            "activity": handoff_json.get("action_needed", "ROLL"),
+                            "current_strike": handoff_json.get("current_strike", strike),
+                            "current_expiration": handoff_json.get("current_expiration", expiration),
+                            "underlying_price": handoff_json.get("underlying_price"),
+                            "assignment_risk": handoff_json.get("assignment_risk"),
+                            "reason": handoff_json.get("reason", ""),
+                            "confidence": handoff_json.get("confidence"),
+                            "roll_economics": None,
+                            "risk_flags": list(handoff_json.get("risk_flags", [])) + ["roll_agent_error"],
+                            "timestamp": analysis_ts,
+                        }
+                else:
+                    # Phase 1 returned WAIT — use directly
+                    json_data = activity_json
+
+            # ── Single-agent fallback (legacy path) ───────────────────
+            else:
+                message = f"""Analyze open {position_type} position for {symbol}:
 - Current strike: ${strike}
 - Current expiration: {expiration}
 - Exchange: {exchange}
@@ -510,7 +778,7 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
 {data['forecast']}
 
 --- OPTIONS CHAIN ({exchange}:{symbol}) ---
-{self._format_options_chain(data.get('options_chain', ''), symbol, current_strike=float(strike), option_type=position_type)}
+{filtered_chain_text}
 
 === END OF DATA ===
 
@@ -520,27 +788,30 @@ Previous monitor activities for {symbol}:
 Current timestamp: {analysis_ts}
 Analyze the position risk and output your activity in the required JSON format. Use the timestamp above in your JSON output; do NOT generate your own."""
 
-            agent = ChatAgent(
-                chat_client=self.client,
-                name=name,
-                instructions=instructions,
-            )
-            result = await agent.run(message)
-            response_text = result.text or str(result)
+                agent = ChatAgent(
+                    chat_client=self.client,
+                    name=name,
+                    instructions=instructions,
+                )
+                result = await agent.run(message)
+                response_text = result.text or str(result)
 
-            logger.info(
-                "agent.run() completed for %s – response length=%d",
-                full_symbol, len(response_text),
-            )
-            logger.debug(
-                "Response first 500 chars for %s: %s",
-                full_symbol, response_text[:500],
-            )
+                logger.info(
+                    "agent.run() completed for %s – response length=%d",
+                    full_symbol, len(response_text),
+                )
+                logger.debug(
+                    "Response first 500 chars for %s: %s",
+                    full_symbol, response_text[:500],
+                )
+                print(f"Response: {response_text[:200]}...")
 
-            print(f"Response: {response_text[:200]}...")
+                _, json_data = self._extract_activity_line(full_symbol, response_text)
 
-            # Parse activity
-            activity_line, json_data = self._extract_activity_line(full_symbol, response_text)
+            # ── Persist activity (common path) ────────────────────────
+            activity_line, json_data = self._extract_activity_line(full_symbol, response_text) if json_data is None else (
+                self._extract_summary_line(response_text) or "", json_data
+            )
 
             activity_payload: Dict = {}
             if json_data is not None:
@@ -660,6 +931,7 @@ Analyze the position risk and output your activity in the required JSON format. 
                 "symbol": symbol,
                 "agent_type": agent_type,
                 "duration_seconds": total_duration,
+                "two_phase": two_phase,
             })
         except Exception:
             logger.debug("Telemetry write skipped for %s", full_symbol)
