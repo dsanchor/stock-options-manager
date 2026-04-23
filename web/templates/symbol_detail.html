@@ -85,20 +85,20 @@
     </div>
 
     {% if symbol_doc.positions %}
-    <div class="table-wrap" style="overflow-x: hidden;">
-        <table id="positionsTable" style="table-layout: fixed;">
+    <div class="table-wrap" style="overflow-x: auto;">
+        <table id="positionsTable" style="table-layout: fixed; min-width: 900px;">
             <thead>
                 <tr>
                     <th style="width:2rem;"></th>
-                    <th>Type</th>
-                    <th>Strike</th>
-                    <th>Expiration</th>
-                    <th>Risk</th>
-                    <th>Moneyness</th>
-                    <th>Status</th>
-                    <th>Opened</th>
-                    <th>Notes</th>
-                    <th>Actions</th>
+                    <th style="width:5rem;">Type</th>
+                    <th style="width:5.5rem;">Strike</th>
+                    <th style="width:7rem;">Expiration</th>
+                    <th style="width:5.5rem;">Risk</th>
+                    <th style="width:6.5rem;">Moneyness</th>
+                    <th style="width:5rem;">Status</th>
+                    <th style="width:6.5rem;">Opened</th>
+                    <th style="width:auto;">Notes</th>
+                    <th style="width:13rem; text-align:right;">Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -130,7 +130,7 @@
                             </div>
                         </div>
                     </td>
-                    <td>
+                    <td style="text-align:right; white-space:nowrap;">
                         {% if pos.status == 'active' %}
                         <button class="btn-sm" data-close-pos="{{ pos.position_id }}">Close</button>
                         <button class="btn-sm" data-roll-pos="{{ pos.position_id }}" data-pos-idx="{{ loop.index0 }}">Roll</button>
