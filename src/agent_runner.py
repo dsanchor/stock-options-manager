@@ -941,6 +941,13 @@ Output your activity in the required JSON format. Use the timestamp above in you
                     print(f"⚠️ Phase 2 error for {full_symbol}: {phase2_err} — persisting Phase 1 output with error flag")
 
                     # Build a degraded activity from the handoff JSON
+                    _raw_reason = handoff_json.get("reason", "")
+                    # Sanitize internal "Agent 2" references — the reason is user-facing
+                    _raw_reason = re.sub(
+                        r'\s*;?\s*Agent\s*2\s+[^.]*\.?', '', _raw_reason,
+                    ).strip()
+                    if not _raw_reason:
+                        _raw_reason = "Roll was warranted but roll agent failed."
                     json_data = {
                         "symbol": handoff_json.get("symbol", symbol),
                         "exchange": handoff_json.get("exchange", exchange),
@@ -949,7 +956,7 @@ Output your activity in the required JSON format. Use the timestamp above in you
                         "current_expiration": handoff_json.get("current_expiration", expiration),
                         "underlying_price": handoff_json.get("underlying_price"),
                         "assignment_risk": handoff_json.get("assignment_risk"),
-                        "reason": handoff_json.get("reason", ""),
+                        "reason": _raw_reason + " [Roll agent unavailable — manual review recommended]",
                         "confidence": handoff_json.get("confidence"),
                         "roll_economics": None,
                         "risk_flags": list(handoff_json.get("risk_flags", [])) + ["roll_agent_error"],

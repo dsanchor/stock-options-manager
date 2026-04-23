@@ -195,7 +195,7 @@ All other flags (position, earnings, calendar, technical, fundamental) come from
 - "Net credit/debit: +$Z.ZZ (from Net Credit column)"
 - "Roll tier: Tier 1 (net credit)" or "Tier 2 (ultra-defensive, debit within $1 threshold)" or "Tier 3 (rejected, no viable roll found)"
 
-Prepend Agent 1's reason, then add your roll economics details.
+Write a user-facing reason that summarizes WHY the roll is needed (from Agent 1's context — paraphrase, do not copy verbatim) followed by your roll economics details. Do NOT reference "Agent 1" or "Agent 2" in the reason — it is displayed directly to the user.
 
 ### Final Activity JSON Schema (open_put_monitor)
 
@@ -227,7 +227,7 @@ If you cannot find a suitable candidate in the table, output CLOSE instead of a 
     "roll_tier": "credit or ultra_defensive or no_viable_roll",
     "candidates_evaluated": 1
   },
-  "reason": "Agent 1 reason + Roll economics details",
+  "reason": "Position assessment reason + Roll economics details",
   "confidence": "high, medium, or low",
   "risk_flags": [],
   "earnings_analysis": {

@@ -530,5 +530,5 @@ When you determine the position needs action (ROLL), output a **handoff JSON** i
 - `profit_optimization_constraints`: When gate is "eligible", include `next_earnings_date` and `next_ex_div_date` (or null if unknown) so Agent 2 can validate against the chosen expiration.
 - `roll_target_rules`: Summarize any earnings-driven constraints on roll targets so Agent 2 respects them.
 - Include ALL relevant risk flags — Agent 2 will carry them through to the final output.
-- The `reason` should explain WHY action is needed — Agent 2 handles the HOW (economics).
+- The `reason` MUST be a user-facing explanation of WHY action is needed (e.g., "Stock approaching strike with bearish momentum, delta -0.55, support broken"). Do NOT include instructions or references to "Agent 2" — the reason field is displayed directly to the user. Put any roll-targeting guidance in `roll_target_rules` instead.
 """
