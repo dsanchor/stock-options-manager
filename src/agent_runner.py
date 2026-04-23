@@ -26,6 +26,14 @@ from .tv_cache import get_tv_cache as _get_tv_cache
 # Canonical timestamp format — used for ALL activity and alert log entries.
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 
+# Valid action values for Phase 1 → Phase 2 handoff and Phase 2 output.
+# Bare "ROLL" is NEVER valid — a direction is always required.
+VALID_ROLL_ACTIONS = {
+    "ROLL_DOWN", "ROLL_UP", "ROLL_OUT",
+    "ROLL_UP_AND_OUT", "ROLL_DOWN_AND_OUT",
+}
+VALID_PHASE2_ACTIVITIES = VALID_ROLL_ACTIONS | {"WAIT", "CLOSE"}
+
 # ---------------------------------------------------------------------------
 # Debug logging setup – console only
 # ---------------------------------------------------------------------------
@@ -499,15 +507,38 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
 
         A handoff block contains ``action_needed`` (a ROLL_* action)
         signalling that Phase 2 (roll management) should run.  Returns *None*
-        when the output is a WAIT activity or cannot be parsed.
+        when the output is a WAIT activity, the action is invalid, or cannot
+        be parsed.
+
+        Invalid actions (bare ``ROLL`` or unknown values) are rejected here
+        with a warning so Phase 2 never runs with an ambiguous direction.
         """
+
+        def _validate_action(data: Dict) -> Optional[Dict]:
+            """Return *data* if action_needed is valid, else *None*."""
+            action = str(data.get("action_needed", "")).upper().strip()
+            if action in VALID_ROLL_ACTIONS:
+                return data
+            if action == "ROLL":
+                logger.warning(
+                    "Phase 1 returned bare 'ROLL' (no direction) — "
+                    "rejecting handoff (will treat as WAIT)",
+                )
+            else:
+                logger.warning(
+                    "Phase 1 returned invalid action_needed '%s' — "
+                    "rejecting handoff (will treat as WAIT)",
+                    action,
+                )
+            return None
+
         # Check fenced ```json blocks first
         for block in re.findall(r'```json\s*\n(.*?)```', response_text, re.DOTALL):
             block = block.strip()
             try:
                 data = json.loads(block)
                 if isinstance(data, dict) and "action_needed" in data:
-                    return data
+                    return _validate_action(data)
             except json.JSONDecodeError:
                 continue
 
@@ -525,7 +556,7 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
                         try:
                             data = json.loads(candidate)
                             if isinstance(data, dict) and "action_needed" in data:
-                                return data
+                                return _validate_action(data)
                         except json.JSONDecodeError:
                             break
         return None
@@ -844,6 +875,31 @@ Output your activity in the required JSON format. Use the timestamp above in you
                         print(f"⚠️ Phase 2 malformed output for {full_symbol} — degrading to error payload")
                         raise ValueError("Phase 2 returned no valid activity JSON")
 
+                    # Reject bare "ROLL" from Phase 2 — direction is required
+                    p2_activity = str(json_data.get("activity", "")).upper().strip()
+                    if p2_activity == "ROLL":
+                        logger.warning(
+                            "Phase 2 returned bare 'ROLL' for %s — converting to CLOSE",
+                            full_symbol,
+                        )
+                        json_data["activity"] = "CLOSE"
+                        json_data["reason"] = (
+                            json_data.get("reason", "")
+                            + " [Auto-corrected: bare ROLL converted to CLOSE"
+                            " — direction was required]"
+                        )
+                    elif p2_activity not in VALID_PHASE2_ACTIVITIES:
+                        logger.warning(
+                            "Phase 2 returned invalid activity '%s' for %s — converting to CLOSE",
+                            p2_activity, full_symbol,
+                        )
+                        json_data["activity"] = "CLOSE"
+                        json_data["reason"] = (
+                            json_data.get("reason", "")
+                            + f" [Auto-corrected: invalid activity '{p2_activity}'"
+                            " converted to CLOSE]"
+                        )
+
                 except Exception as phase2_err:
                     # Phase 2 failed — persist Phase 1's handoff with error flag
                     logger.error(
@@ -856,7 +912,7 @@ Output your activity in the required JSON format. Use the timestamp above in you
                     json_data = {
                         "symbol": handoff_json.get("symbol", symbol),
                         "exchange": handoff_json.get("exchange", exchange),
-                        "activity": handoff_json.get("action_needed", "ROLL"),
+                        "activity": handoff_json.get("action_needed", "CLOSE"),
                         "current_strike": handoff_json.get("current_strike", strike),
                         "current_expiration": handoff_json.get("current_expiration", expiration),
                         "underlying_price": handoff_json.get("underlying_price"),
