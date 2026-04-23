@@ -144,6 +144,7 @@ class TelegramNotifier:
         expiration = data.get("expiration", "N/A")
         confidence = data.get("confidence", "N/A")
         risk_rating = data.get("risk_rating")
+        premium = data.get("premium")
 
         lines = [
             f"\U0001f6a8 <b>SELL Alert: {symbol}</b>",
@@ -152,6 +153,8 @@ class TelegramNotifier:
             f"Expiration: {expiration}",
             f"Confidence: {confidence}",
         ]
+        if premium is not None:
+            lines.append(f"Premium: ${premium}")
         if risk_rating is not None:
             lines.append(f"Risk: {risk_rating}/10")
         return "\n".join(lines)
@@ -167,14 +170,38 @@ class TelegramNotifier:
 
         assignment_risk = data.get("assignment_risk")
 
-        lines = [
-            f"\U0001f504 <b>ROLL Alert: {symbol}</b>",
-            f"Agent: {agent_label}",
-            f"Action: {action}",
-            f"Current: ${current_strike} exp {current_exp}",
-            f"New: ${new_strike} exp {new_exp}",
-            f"Confidence: {confidence}",
-        ]
+        # Roll economics / close cost fields
+        buyback_cost = data.get("buyback_cost")
+        new_premium = data.get("new_premium")
+        net_credit_debit = data.get("net_credit_debit")
+
+        is_close = str(action).upper() == "CLOSE"
+
+        if is_close:
+            lines = [
+                f"\U0001f6d1 <b>CLOSE Alert: {symbol}</b>",
+                f"Agent: {agent_label}",
+                f"Position: ${current_strike} exp {current_exp}",
+            ]
+            if buyback_cost is not None:
+                lines.append(f"Buyback Cost: ${buyback_cost}")
+            lines.append(f"Confidence: {confidence}")
+        else:
+            lines = [
+                f"\U0001f504 <b>ROLL Alert: {symbol}</b>",
+                f"Agent: {agent_label}",
+                f"Action: {action}",
+                f"Current: ${current_strike} exp {current_exp}",
+                f"New: ${new_strike} exp {new_exp}",
+            ]
+            if buyback_cost is not None:
+                lines.append(f"Buyback Cost: ${buyback_cost}")
+            if new_premium is not None:
+                lines.append(f"New Premium: ${new_premium}")
+            if net_credit_debit is not None:
+                lines.append(f"Net Credit/Debit: ${net_credit_debit}")
+            lines.append(f"Confidence: {confidence}")
+
         if assignment_risk is not None:
             lines.append(f"Assignment Risk: {str(assignment_risk).capitalize()}")
         return "\n".join(lines)

@@ -446,6 +446,7 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
                         "confidence": json_data.get("confidence") if json_data else None,
                         "risk_rating": json_data.get("risk_rating") if json_data else None,
                         "risk_flags": json_data.get("risk_flags") if json_data else None,
+                        "premium": json_data.get("premium") if json_data else None,
                     }
                     self.telegram_notifier.send_alert(
                         symbol=symbol, agent_type=agent_type,
@@ -1055,7 +1056,8 @@ Output your activity in the required JSON format. Use the timestamp above in you
             if is_alert:
                 print(f"⚠️ ROLL ALERT logged for {full_symbol} ${strike} exp {expiration}")
                 if self.telegram_notifier:
-                    # Build display data for Telegram from the activity doc
+                    # Extract roll economics for Telegram notification
+                    _re = json_data.get("roll_economics") if json_data else None
                     alert_data = {
                         "timestamp": analysis_ts,
                         "symbol": symbol,
@@ -1069,6 +1071,9 @@ Output your activity in the required JSON format. Use the timestamp above in you
                         "confidence": json_data.get("confidence") if json_data else None,
                         "assignment_risk": json_data.get("assignment_risk") if json_data else None,
                         "risk_flags": json_data.get("risk_flags") if json_data else None,
+                        "buyback_cost": _re.get("buyback_cost") if isinstance(_re, dict) else None,
+                        "new_premium": _re.get("new_premium") if isinstance(_re, dict) else None,
+                        "net_credit_debit": _re.get("net_credit") if isinstance(_re, dict) else None,
                     }
                     # Normalize for templates
                     alert_data["activity"] = alert_data["action"]
