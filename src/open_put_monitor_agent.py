@@ -17,19 +17,10 @@ async def run_open_put_monitor(config, runner: AgentRunner,
         context_provider: ContextProvider for activity history
         symbol: Optional symbol to filter positions (e.g., 'NYSE-AAPL')
     """
-    from .tv_open_put_instructions import TV_OPEN_PUT_INSTRUCTIONS
-
-    # 2-phase instruction imports — graceful fallback if Linus hasn't
-    # committed the new files yet.
-    assessment_instructions = None
-    roll_instructions = None
-    try:
-        from .tv_open_put_assessment_instructions import get_open_put_assessment_instructions
-        from .tv_open_put_roll_instructions import get_open_put_roll_instructions
-        assessment_instructions = get_open_put_assessment_instructions()
-        roll_instructions = get_open_put_roll_instructions()
-    except ImportError:
-        pass  # Fall back to single-agent path
+    from .tv_open_put_assessment_instructions import get_open_put_assessment_instructions
+    from .tv_open_put_roll_instructions import get_open_put_roll_instructions
+    assessment_instructions = get_open_put_assessment_instructions()
+    roll_instructions = get_open_put_roll_instructions()
 
     print(f"\n{'='*60}")
     print(f"Starting OpenPutMonitor monitoring" + (f" for {symbol}" if symbol else ""))
@@ -67,7 +58,6 @@ async def run_open_put_monitor(config, runner: AgentRunner,
             for pos in sym_doc["_active_positions"]:
                 await runner.run_position_monitor(
                     name="OpenPutMonitor",
-                    instructions=TV_OPEN_PUT_INSTRUCTIONS,
                     symbol=sym_doc["symbol"],
                     exchange=sym_doc["exchange"],
                     position=pos,

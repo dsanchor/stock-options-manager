@@ -665,7 +665,6 @@ Output your activity in the required JSON format. Use the timestamp above in you
     async def run_position_monitor(
         self,
         name: str,
-        instructions: str,
         symbol: str,
         exchange: str,
         position: dict,
@@ -677,10 +676,7 @@ Output your activity in the required JSON format. Use the timestamp above in you
         assessment_instructions: str = None,
         roll_instructions: str = None,
     ):
-        """Run position monitor for a single open position.
-
-        When *assessment_instructions* and *roll_instructions* are provided the
-        monitor executes in two phases:
+        """Run position monitor for a single open position (2-phase).
 
         * **Phase 1 (Position Assessment):** Evaluates position risk using
           overview, technicals, forecast, and previous context — no full chain.
@@ -689,12 +685,8 @@ Output your activity in the required JSON format. Use the timestamp above in you
           action ≠ WAIT.  Receives the Phase 1 handoff JSON plus the full
           filtered options chain and roll-specific instructions.
 
-        When the new instruction sets are not provided, falls back to the
-        original single-agent path using *instructions*.
-
         Args:
             name: Agent name (e.g. "OpenCallMonitor")
-            instructions: Legacy single-agent instructions (fallback)
             symbol: Ticker symbol
             exchange: Exchange code
             position: Position dict with strike, expiration, position_id, type
@@ -703,8 +695,8 @@ Output your activity in the required JSON format. Use the timestamp above in you
             context_provider: ContextProvider for history injection
             max_activity_entries: Max recent activities for context (0–5)
             fetcher: TradingViewFetcher instance (shared)
-            assessment_instructions: Phase 1 system instructions (optional)
-            roll_instructions: Phase 2 system instructions (optional)
+            assessment_instructions: Phase 1 system instructions
+            roll_instructions: Phase 2 system instructions
         """
         full_symbol = f"{exchange}-{symbol}" if exchange else symbol
         strike = position["strike"]
@@ -712,13 +704,9 @@ Output your activity in the required JSON format. Use the timestamp above in you
         position_id = position.get("position_id", "")
         position_type = position.get("type", "call")
 
-        # Decide execution mode
-        two_phase = assessment_instructions is not None and roll_instructions is not None
-
-        print(f"\n--- Monitoring {symbol} ${strike} exp {expiration} {'(2-phase)' if two_phase else ''} ---")
+        print(f"\n--- Monitoring {symbol} ${strike} exp {expiration} (2-phase) ---")
         logger.info(
-            "Position monitor %s for %s strike=%s exp=%s",
-            "2-phase" if two_phase else "single-agent",
+            "Position monitor 2-phase for %s strike=%s exp=%s",
             full_symbol, strike, expiration,
         )
 
@@ -746,142 +734,91 @@ Output your activity in the required JSON format. Use the timestamp above in you
                 )
                 print(f"⚠️ TradingView 403 on {failed} for {full_symbol} — continuing with partial data")
 
-            # Pre-compute the filtered chain text (needed for single-agent
-            # path and for Phase 2 in the two-phase path)
+            # Pre-compute the filtered chain text (needed for Phase 2)
             filtered_chain_text = self._format_options_chain(
                 data.get('options_chain', ''), symbol,
                 current_strike=float(strike), option_type=position_type,
             )
 
-            # ── Two-phase execution path ──────────────────────────────
-            if two_phase:
-                # Phase 1 gets only the current contract's chain data
-                current_contract_chain = self._format_current_contract_chain(
-                    data.get('options_chain', ''), symbol,
-                    current_strike=float(strike),
-                    expiration=expiration,
-                    option_type=position_type,
-                )
+            # ── Two-phase execution ─────────────────────────────────
+            # Phase 1 gets only the current contract's chain data
+            current_contract_chain = self._format_current_contract_chain(
+                data.get('options_chain', ''), symbol,
+                current_strike=float(strike),
+                expiration=expiration,
+                option_type=position_type,
+            )
 
-                response_text, activity_json, handoff_json = await self._run_position_assessment(
-                    name=name,
-                    instructions=assessment_instructions,
-                    symbol=symbol,
-                    exchange=exchange,
-                    position_type=position_type,
-                    strike=strike,
-                    expiration=expiration,
-                    data=data,
-                    previous_context=previous_context,
-                    analysis_ts=analysis_ts,
-                    current_contract_chain=current_contract_chain,
-                )
+            response_text, activity_json, handoff_json = await self._run_position_assessment(
+                name=name,
+                instructions=assessment_instructions,
+                symbol=symbol,
+                exchange=exchange,
+                position_type=position_type,
+                strike=strike,
+                expiration=expiration,
+                data=data,
+                previous_context=previous_context,
+                analysis_ts=analysis_ts,
+                current_contract_chain=current_contract_chain,
+            )
 
-                if handoff_json is not None:
-                    # Phase 1 says action needed → run Phase 2
-                    logger.info(
-                        "Phase 1 triggered action '%s' for %s — launching Phase 2",
-                        handoff_json.get("action_needed"), full_symbol,
-                    )
-                    print(f"↪ Phase 1 action: {handoff_json.get('action_needed')} — running roll management…")
-
-                    try:
-                        phase2_response, phase2_json = await self._run_roll_management(
-                            name=name,
-                            roll_instructions=roll_instructions,
-                            handoff_json=handoff_json,
-                            filtered_chain_text=filtered_chain_text,
-                            analysis_ts=analysis_ts,
-                            full_symbol=full_symbol,
-                        )
-                        # Use Phase 2 output as the final result
-                        response_text = phase2_response
-                        json_data = phase2_json
-
-                        # Validate Phase 2 produced usable JSON
-                        if json_data is None or "activity" not in (json_data or {}):
-                            logger.warning(
-                                "Phase 2 returned malformed output for %s — degrading to error payload",
-                                full_symbol,
-                            )
-                            print(f"⚠️ Phase 2 malformed output for {full_symbol} — degrading to error payload")
-                            raise ValueError("Phase 2 returned no valid activity JSON")
-
-                    except Exception as phase2_err:
-                        # Phase 2 failed — persist Phase 1's handoff with error flag
-                        logger.error(
-                            "Phase 2 (roll mgmt) FAILED for %s: %s\n%s",
-                            full_symbol, phase2_err, traceback.format_exc(),
-                        )
-                        print(f"⚠️ Phase 2 error for {full_symbol}: {phase2_err} — persisting Phase 1 output with error flag")
-
-                        # Build a degraded activity from the handoff JSON
-                        json_data = {
-                            "symbol": handoff_json.get("symbol", symbol),
-                            "exchange": handoff_json.get("exchange", exchange),
-                            "activity": handoff_json.get("action_needed", "ROLL"),
-                            "current_strike": handoff_json.get("current_strike", strike),
-                            "current_expiration": handoff_json.get("current_expiration", expiration),
-                            "underlying_price": handoff_json.get("underlying_price"),
-                            "assignment_risk": handoff_json.get("assignment_risk"),
-                            "reason": handoff_json.get("reason", ""),
-                            "confidence": handoff_json.get("confidence"),
-                            "roll_economics": None,
-                            "risk_flags": list(handoff_json.get("risk_flags", [])) + ["roll_agent_error"],
-                            "timestamp": analysis_ts,
-                        }
-                else:
-                    # Phase 1 returned WAIT — use directly
-                    json_data = activity_json
-
-            # ── Single-agent fallback (legacy path) ───────────────────
-            else:
-                message = f"""Analyze open {position_type} position for {symbol}:
-- Current strike: ${strike}
-- Current expiration: {expiration}
-- Exchange: {exchange}
-
-=== PRE-FETCHED TRADINGVIEW DATA ===
-
---- OVERVIEW PAGE ({exchange}:{symbol}) ---
-{data['overview']}
-
---- TECHNICALS PAGE ({exchange}:{symbol}) ---
-{data['technicals']}
-
---- FORECAST PAGE ({exchange}:{symbol}) ---
-{data['forecast']}
-
---- OPTIONS CHAIN ({exchange}:{symbol}) ---
-{filtered_chain_text}
-
-=== END OF DATA ===
-
-Previous monitor activities for {symbol}:
-{previous_context}
-
-Current timestamp: {analysis_ts}
-Analyze the position risk and output your activity in the required JSON format. Use the timestamp above in your JSON output; do NOT generate your own."""
-
-                agent = ChatAgent(
-                    chat_client=self.client,
-                    name=name,
-                    instructions=instructions,
-                )
-                result = await agent.run(message)
-                response_text = result.text or str(result)
-
+            if handoff_json is not None:
+                # Phase 1 says action needed → run Phase 2
                 logger.info(
-                    "agent.run() completed for %s – response length=%d",
-                    full_symbol, len(response_text),
+                    "Phase 1 triggered action '%s' for %s — launching Phase 2",
+                    handoff_json.get("action_needed"), full_symbol,
                 )
-                logger.debug(
-                    "Response first 500 chars for %s: %s",
-                    full_symbol, response_text[:500],
-                )
-                print(f"Response: {response_text[:200]}...")
+                print(f"↪ Phase 1 action: {handoff_json.get('action_needed')} — running roll management…")
 
-                _, json_data = self._extract_activity_line(full_symbol, response_text)
+                try:
+                    phase2_response, phase2_json = await self._run_roll_management(
+                        name=name,
+                        roll_instructions=roll_instructions,
+                        handoff_json=handoff_json,
+                        filtered_chain_text=filtered_chain_text,
+                        analysis_ts=analysis_ts,
+                        full_symbol=full_symbol,
+                    )
+                    # Use Phase 2 output as the final result
+                    response_text = phase2_response
+                    json_data = phase2_json
+
+                    # Validate Phase 2 produced usable JSON
+                    if json_data is None or "activity" not in (json_data or {}):
+                        logger.warning(
+                            "Phase 2 returned malformed output for %s — degrading to error payload",
+                            full_symbol,
+                        )
+                        print(f"⚠️ Phase 2 malformed output for {full_symbol} — degrading to error payload")
+                        raise ValueError("Phase 2 returned no valid activity JSON")
+
+                except Exception as phase2_err:
+                    # Phase 2 failed — persist Phase 1's handoff with error flag
+                    logger.error(
+                        "Phase 2 (roll mgmt) FAILED for %s: %s\n%s",
+                        full_symbol, phase2_err, traceback.format_exc(),
+                    )
+                    print(f"⚠️ Phase 2 error for {full_symbol}: {phase2_err} — persisting Phase 1 output with error flag")
+
+                    # Build a degraded activity from the handoff JSON
+                    json_data = {
+                        "symbol": handoff_json.get("symbol", symbol),
+                        "exchange": handoff_json.get("exchange", exchange),
+                        "activity": handoff_json.get("action_needed", "ROLL"),
+                        "current_strike": handoff_json.get("current_strike", strike),
+                        "current_expiration": handoff_json.get("current_expiration", expiration),
+                        "underlying_price": handoff_json.get("underlying_price"),
+                        "assignment_risk": handoff_json.get("assignment_risk"),
+                        "reason": handoff_json.get("reason", ""),
+                        "confidence": handoff_json.get("confidence"),
+                        "roll_economics": None,
+                        "risk_flags": list(handoff_json.get("risk_flags", [])) + ["roll_agent_error"],
+                        "timestamp": analysis_ts,
+                    }
+            else:
+                # Phase 1 returned WAIT — use directly
+                json_data = activity_json
 
             # ── Persist activity (common path) ────────────────────────
             activity_line, json_data = self._extract_activity_line(full_symbol, response_text) if json_data is None else (
@@ -1006,7 +943,7 @@ Analyze the position risk and output your activity in the required JSON format. 
                 "symbol": symbol,
                 "agent_type": agent_type,
                 "duration_seconds": total_duration,
-                "two_phase": two_phase,
+                "two_phase": True,
             })
         except Exception:
             logger.debug("Telemetry write skipped for %s", full_symbol)
