@@ -18,6 +18,7 @@ from .options_chain_parser import (
     filter_options_chain_for_position,
     filter_options_chain_by_delta,
     filter_options_chain_by_roll_direction,
+    format_roll_candidates_table,
     OPTIONS_CHAIN_SCHEMA_DESCRIPTION,
 )
 from .tv_cache import get_tv_cache as _get_tv_cache
@@ -635,10 +636,11 @@ Analyze the position risk and output your response in the required JSON format. 
         message = f"""POSITION ASSESSMENT RESULT:
 {phase1_text}
 
-OPTIONS CHAIN DATA:
+ROLL CANDIDATES:
 {filtered_chain_text}
 
-Based on the assessment above, determine the best roll candidate and calculate roll economics.
+Based on the assessment and candidates above, select the best roll candidate and produce the final activity JSON.
+Pick a candidate by its row number. Use the pre-computed values (net credit, DTE, etc.) directly — do NOT recalculate.
 
 Current timestamp: {analysis_ts}
 Output your activity in the required JSON format. Use the timestamp above in your JSON output; do NOT generate your own."""
@@ -794,9 +796,30 @@ Output your activity in the required JSON format. Use the timestamp above in you
                         roll_type=roll_type,
                         option_type=position_type,
                     )
-                    filtered_chain_text = (
-                        OPTIONS_CHAIN_SCHEMA_DESCRIPTION + "\n"
-                        + json.dumps(direction_filtered, indent=2)
+                    # Pre-compute candidates as a readable table.
+                    # Look up buyback cost from the pre-direction-filtered chain
+                    # because direction filtering usually excludes the current contract.
+                    _bb_cost = None
+                    _bb_bucket_key = "calls" if position_type == "call" else "puts"
+                    _bb_bucket = structured_chain.get(_bb_bucket_key, {})
+                    _bb_exp_key = expiration.replace("-", "")
+                    _bb_strike_key = str(float(strike))
+                    if _bb_exp_key in _bb_bucket and _bb_strike_key in _bb_bucket[_bb_exp_key]:
+                        _bb_ask = _bb_bucket[_bb_exp_key][_bb_strike_key].get("ask")
+                        if _bb_ask is not None:
+                            _bb_cost = float(_bb_ask)
+
+                    underlying_px = float(
+                        handoff_json.get("underlying_price", 0) or 0
+                    )
+                    filtered_chain_text = format_roll_candidates_table(
+                        chain=direction_filtered,
+                        current_strike=float(strike),
+                        current_expiration=expiration,
+                        option_type=position_type,
+                        underlying_price=underlying_px,
+                        roll_type=roll_type,
+                        buyback_cost=_bb_cost,
                     )
 
                 try:

@@ -4,6 +4,7 @@ Extracts structured, agent-friendly option contract data from raw
 TradingView scanner API responses stored in the cache layer.
 """
 
+import datetime
 import json
 import logging
 import re
@@ -420,3 +421,199 @@ def filter_options_chain_by_roll_direction(
     if "current_position" in chain:
         result["current_position"] = chain["current_position"]
     return result
+
+
+# ---------------------------------------------------------------------------
+# Pre-computed roll candidate table for Phase 2
+# ---------------------------------------------------------------------------
+
+def _fmt_exp(exp: str) -> str:
+    """Convert YYYYMMDD → YYYY-MM-DD for display."""
+    if len(exp) == 8 and exp.isdigit():
+        return f"{exp[:4]}-{exp[4:6]}-{exp[6:]}"
+    return exp
+
+
+def format_roll_candidates_table(
+    chain: dict,
+    current_strike: float,
+    current_expiration: str,
+    option_type: str,
+    underlying_price: float,
+    roll_type: str,
+    buyback_cost: float | None = None,
+) -> str:
+    """Build a flat markdown table of roll candidates with pre-computed economics.
+
+    Parameters
+    ----------
+    chain : dict
+        Direction-filtered chain (output of ``filter_options_chain_by_roll_direction``).
+    current_strike : float
+        Strike of the position being rolled.
+    current_expiration : str
+        Expiration of the current position (YYYY-MM-DD or YYYYMMDD).
+    option_type : str
+        ``"call"`` or ``"put"``.
+    underlying_price : float
+        Current price of the underlying stock.
+    roll_type : str
+        Roll action from Phase 1 (e.g. ``ROLL_DOWN``).
+    buyback_cost : float | None
+        Ask price of the current contract (cost to buy-to-close).  Pass this
+        explicitly because the direction-filtered chain usually excludes the
+        current contract.  When *None*, the function attempts a fallback
+        lookup in ``chain`` but this will often miss.
+
+    Returns
+    -------
+    str
+        Human-readable text block with current position summary and candidate table.
+    """
+    bucket_key = "calls" if option_type == "call" else "puts"
+    bucket = chain.get(bucket_key, {})
+    symbol = chain.get("symbol", "")
+    today = datetime.date.today()
+
+    # Normalise current expiration to YYYYMMDD for chain lookup
+    exp_key = current_expiration.replace("-", "")
+    strike_key = str(float(current_strike))
+
+    # --- Find current position contract (may be absent after direction filter) ---
+    current_contract = None
+    if exp_key in bucket and strike_key in bucket[exp_key]:
+        current_contract = bucket[exp_key][strike_key]
+
+    # Use explicitly-provided buyback_cost; fall back to chain lookup only if needed
+    if buyback_cost is None and current_contract and current_contract.get("ask") is not None:
+        buyback_cost = float(current_contract["ask"])
+
+    # --- Current position summary ---
+    current_exp_display = _fmt_exp(exp_key)
+    try:
+        current_exp_date = datetime.date(int(exp_key[:4]), int(exp_key[4:6]), int(exp_key[6:]))
+        current_dte = (current_exp_date - today).days
+    except (ValueError, IndexError):
+        current_dte = None
+
+    lines = [f"CURRENT POSITION:"]
+    lines.append(f"  Symbol: {symbol} | Type: {option_type}")
+    dte_str = f" ({current_dte} DTE)" if current_dte is not None else ""
+    lines.append(f"  Strike: ${current_strike:.1f} | Expiration: {current_exp_display}{dte_str}")
+
+    if current_contract:
+        bid_str = f"${current_contract.get('bid', 'N/A')}" if current_contract.get('bid') is not None else "N/A"
+        ask_str = f"${current_contract.get('ask', 'N/A')}" if current_contract.get('ask') is not None else "N/A"
+        delta_str = f"{current_contract.get('delta', 'N/A')}" if current_contract.get('delta') is not None else "N/A"
+        theta_str = f"{current_contract.get('theta', 'N/A')}" if current_contract.get('theta') is not None else "N/A"
+        lines.append(f"  Bid: {bid_str} | Ask: {ask_str} | Delta: {delta_str} | Theta: {theta_str}")
+    if buyback_cost is not None:
+        lines.append(f"  Buyback cost (ask): ${buyback_cost:.2f} per share (${buyback_cost * 100:.2f} per contract)")
+    else:
+        lines.append("  Buyback cost: NOT AVAILABLE — current contract not in chain data. Use the buyback cost from Phase 1 handoff if available.")
+
+    # --- Build candidate rows ---
+    candidates = []
+    for exp, strikes_dict in sorted(bucket.items()):
+        for sk, contract in sorted(strikes_dict.items(), key=lambda kv: float(kv[0])):
+            # Skip the current position itself
+            if exp == exp_key and sk == strike_key:
+                continue
+            bid = contract.get("bid")
+            if bid is None or bid == 0:
+                continue
+
+            bid = float(bid)
+            ask_val = float(contract["ask"]) if contract.get("ask") is not None else None
+            delta = contract.get("delta")
+            theta = contract.get("theta")
+            strike_val = float(sk)
+            exp_display = _fmt_exp(exp)
+
+            try:
+                exp_date = datetime.date(int(exp[:4]), int(exp[4:6]), int(exp[6:]))
+                dte = (exp_date - today).days
+            except (ValueError, IndexError):
+                dte = 0
+
+            net_credit = (bid - buyback_cost) if buyback_cost is not None else None
+
+            if option_type == "call" and underlying_price > 0:
+                premium_pct = (bid / underlying_price) * 100
+            elif option_type == "put" and strike_val > 0:
+                premium_pct = (bid / strike_val) * 100
+            else:
+                premium_pct = 0.0
+
+            ann_ret = (premium_pct * 365 / dte) if dte > 0 else 0.0
+
+            candidates.append({
+                "strike": strike_val,
+                "exp": exp_display,
+                "dte": dte,
+                "delta": delta,
+                "theta": theta,
+                "bid": bid,
+                "ask": ask_val,
+                "net_credit": net_credit,
+                "premium_pct": premium_pct,
+                "ann_ret": ann_ret,
+            })
+
+    # Sort by net_credit descending (best credit first); fall back to bid desc if no buyback
+    if buyback_cost is not None:
+        candidates.sort(key=lambda c: c["net_credit"] if c["net_credit"] is not None else -9999, reverse=True)
+    else:
+        candidates.sort(key=lambda c: c["bid"], reverse=True)
+
+    if not candidates:
+        lines.append("")
+        lines.append(f"NO VALID CANDIDATES found for {roll_type}. Consider CLOSE.")
+        return "\n".join(lines)
+
+    # --- Format table ---
+    lines.append("")
+    lines.append(f"ROLL CANDIDATES ({roll_type} — {len(candidates)} candidates, sorted by net credit):")
+    header = "| #  | Strike | Expiration | DTE | Delta |  Bid  |  Ask  | New Prem | Buyback | Net Credit | Prem% | Ann.Ret% |"
+    sep    = "|----|--------|------------|-----|-------|-------|-------|----------|---------|------------|-------|----------|"
+    lines.append(header)
+    lines.append(sep)
+
+    for i, c in enumerate(candidates, 1):
+        delta_s = f"{c['delta']:.2f}" if c["delta"] is not None else "  -  "
+        ask_s = f"{c['ask']:.2f}" if c["ask"] is not None else "  -  "
+        buyback_s = f"{buyback_cost:.2f}" if buyback_cost is not None else "  N/A "
+        if c["net_credit"] is not None:
+            nc_s = f"{c['net_credit']:+.2f}"
+        else:
+            nc_s = "  N/A "
+        row = (
+            f"| {i:>2} "
+            f"| {c['strike']:<6.1f} "
+            f"| {c['exp']:>10} "
+            f"| {c['dte']:>3} "
+            f"| {delta_s:>5} "
+            f"| {c['bid']:>5.2f} "
+            f"| {ask_s:>5} "
+            f"| {c['bid']:>8.2f} "
+            f"| {buyback_s:>7} "
+            f"| {nc_s:>10} "
+            f"| {c['premium_pct']:>4.1f}% "
+            f"| {c['ann_ret']:>7.1f}% |"
+        )
+        lines.append(row)
+
+    # --- Notes ---
+    lines.append("")
+    lines.append("NOTES:")
+    if buyback_cost is not None:
+        lines.append(f"- Buyback cost is FIXED at ${buyback_cost:.2f} (current contract ask) for all candidates")
+    lines.append("- Net Credit = New Premium (bid) - Buyback Cost (ask). Positive = you collect, negative = you pay")
+    lines.append("- All prices are per share. Multiply by 100 for per-contract amounts")
+    if option_type == "call":
+        lines.append("- Premium% for calls = bid / underlying_price × 100")
+    else:
+        lines.append("- Premium% for puts = bid / strike × 100")
+    lines.append("- Ann.Ret% = Premium% × 365 / DTE")
+
+    return "\n".join(lines)
