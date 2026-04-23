@@ -75,6 +75,58 @@ class AgentRunner:
             )
         return raw_chain
 
+    @staticmethod
+    def _format_current_contract_chain(
+        raw_chain: str,
+        symbol: str,
+        current_strike: float,
+        expiration: str,
+        option_type: str,
+    ) -> str:
+        """Extract only the current contract from the options chain.
+
+        Returns the chain schema description plus a minimal JSON containing
+        just the single strike/expiration being monitored.  This gives
+        Phase 1 (assessment) the delta, IV, gamma, theta etc. for the
+        current position without the full chain noise.
+        """
+        structured = parse_options_chain(raw_chain, symbol)
+        bucket_key = "calls" if option_type == "call" else "puts"
+        bucket = structured.get(bucket_key, {})
+
+        # Normalise expiration to YYYYMMDD (the chain key format)
+        exp_key = expiration.replace("-", "")
+        strike_key = str(current_strike)
+        # Try common float representations (72 → "72.0", 72.5 → "72.5")
+        contract = None
+        for sk in (strike_key, f"{current_strike:.1f}", f"{current_strike:.2f}"):
+            contract = bucket.get(exp_key, {}).get(sk)
+            if contract is not None:
+                strike_key = sk
+                break
+
+        if contract is None:
+            return f"(current contract {option_type} ${current_strike} exp {expiration} not found in chain)"
+
+        minimal_chain = {
+            "symbol": structured.get("symbol", symbol),
+            "timestamp": structured.get("timestamp", ""),
+            "current_position": {
+                "strike": current_strike,
+                "expiration": expiration,
+                "type": option_type,
+            },
+            bucket_key: {
+                exp_key: {
+                    strike_key: contract,
+                },
+            },
+        }
+        return (
+            OPTIONS_CHAIN_SCHEMA_DESCRIPTION + "\n"
+            + json.dumps(minimal_chain, indent=2)
+        )
+
     # ── JSON / SUMMARY extraction ──────────────────────────────────────
 
     @staticmethod
@@ -487,6 +539,7 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
         data: dict,
         previous_context: str,
         analysis_ts: str,
+        current_contract_chain: str = "",
     ) -> Tuple[str, Optional[Dict], Optional[Dict]]:
         """Run Phase 1 — position assessment agent.
 
@@ -513,6 +566,9 @@ All market data has been pre-fetched above. Do NOT use any browser tools — ana
 
 --- FORECAST PAGE ({exchange}:{symbol}) ---
 {data['forecast']}
+
+--- CURRENT CONTRACT ({position_type.upper()} ${strike} exp {expiration}) ---
+{current_contract_chain}
 
 === END OF DATA ===
 
@@ -699,6 +755,14 @@ Output your activity in the required JSON format. Use the timestamp above in you
 
             # ── Two-phase execution path ──────────────────────────────
             if two_phase:
+                # Phase 1 gets only the current contract's chain data
+                current_contract_chain = self._format_current_contract_chain(
+                    data.get('options_chain', ''), symbol,
+                    current_strike=float(strike),
+                    expiration=expiration,
+                    option_type=position_type,
+                )
+
                 response_text, activity_json, handoff_json = await self._run_position_assessment(
                     name=name,
                     instructions=assessment_instructions,
@@ -710,6 +774,7 @@ Output your activity in the required JSON format. Use the timestamp above in you
                     data=data,
                     previous_context=previous_context,
                     analysis_ts=analysis_ts,
+                    current_contract_chain=current_contract_chain,
                 )
 
                 if handoff_json is not None:
@@ -732,6 +797,16 @@ Output your activity in the required JSON format. Use the timestamp above in you
                         # Use Phase 2 output as the final result
                         response_text = phase2_response
                         json_data = phase2_json
+
+                        # Validate Phase 2 produced usable JSON
+                        if json_data is None or "activity" not in (json_data or {}):
+                            logger.warning(
+                                "Phase 2 returned malformed output for %s — degrading to error payload",
+                                full_symbol,
+                            )
+                            print(f"⚠️ Phase 2 malformed output for {full_symbol} — degrading to error payload")
+                            raise ValueError("Phase 2 returned no valid activity JSON")
+
                     except Exception as phase2_err:
                         # Phase 2 failed — persist Phase 1's handoff with error flag
                         logger.error(

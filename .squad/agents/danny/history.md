@@ -261,3 +261,26 @@ tradingview:
 - **Basher:** Testing (403 simulation, retry verification, symbol randomization check)
 - **Linus:** No action required (agent instructions unchanged)
 
+### 2026-04-22: Monitor Agent Split Assessment — Position Monitor + Roll Management
+
+**Context:** User (dsanchor) reported monitor agents miscalculating credits / not reading option chain correctly. Proposed splitting each monitor agent into 2 sequential agents: (1) Position Monitor (WAIT vs action decision) and (2) Roll Management (chain reading + roll economics).
+
+**Assessment Result: ✅ RECOMMENDED**
+
+**Root Cause Analysis:**
+- Current monitor instructions are ~590-600 lines each (call/put)
+- Agent must process: 25-row earnings matrix + 8 analysis dimensions + profit optimization gate + premium-first roll policy + roll search algorithm — ALL in one context window
+- The chain reading task (exact JSON key-path navigation + bid/ask arithmetic) is buried at line ~340 of 590, after heavy analysis work
+- Context dilution is the likely cause: model attention degrades on precise arithmetic tasks when competing with 600 lines of multi-dimensional analysis
+
+**Key Design Points:**
+- Agent 1 (Position Monitor): ~350-400 lines. Gets overview/technicals/forecast + current contract delta/IV only. Handles earnings gate, 8 analysis dimensions, WAIT/ROLL decision, profit optimization gate.
+- Agent 2 (Roll Management): ~200-250 lines. Gets full filtered chain + Agent 1's output + pivot points. Handles roll types, premium-first policy, roll search algorithm, verification.
+- ~70-80% of runs are WAIT → Agent 2 never invoked → token savings
+- Handoff via structured JSON intermediate format
+- Runner becomes 2-phase: `_run_position_assessment()` → conditional `_run_roll_management()`
+- Activity/alert persistence model unchanged
+
+**Decision doc:** `.squad/decisions/inbox/danny-monitor-split.md`
+**Status:** Recommended — awaiting user approval
+
