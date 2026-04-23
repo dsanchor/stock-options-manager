@@ -135,7 +135,6 @@
                         <button class="btn-sm" data-close-pos="{{ pos.position_id }}">Close</button>
                         <button class="btn-sm" data-roll-pos="{{ pos.position_id }}" data-pos-idx="{{ loop.index0 }}">Roll</button>
                         {% endif %}
-                        <button class="btn-sm btn-danger" data-delete-pos="{{ pos.position_id }}">Delete</button>
                     </td>
                 </tr>
                 <tr class="pos-detail-row" data-pos-idx="{{ loop.index0 }}" style="display:none;">
@@ -342,6 +341,10 @@
                                 {% endif %}
                             </div>
                             {% endif %}
+
+                            <div style="margin-top:1rem; padding-top:0.75rem; border-top:1px dashed var(--border, #2d2d35); text-align:right;">
+                                <button class="btn-sm btn-danger" data-delete-pos="{{ pos.position_id }}">🗑 Delete Position</button>
+                            </div>
                         </div>
                     </td>
                 </tr>
