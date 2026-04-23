@@ -269,20 +269,50 @@ The gate has already determined the earnings-driven action for this position. Ap
 - **Falling IV**: Option value decreasing (good for short put holder) — favors WAIT
 - Post-earnings IV crush is favorable if you survived the earnings event
 
+## NEAR-ATM STABILITY BUFFER
+
+Positions that are only slightly ITM often oscillate back to OTM on the next monitoring run. To prevent noisy ROLL/WAIT flip-flopping, apply this stability buffer before deciding WAIT vs ROLL for near-ATM positions.
+
+### Stability Zone Definition (Puts)
+A put position is in the **stability zone** when the underlying price is below the strike but within 2% below it. In other words: `strike * 0.98 <= price < strike`. The position is technically ITM, but only barely — it may revert to OTM on normal fluctuations.
+
+### Rule: Default to WAIT When in the Stability Zone with Favorable Technicals
+
+If ALL of the following are true, recommend **WAIT** (not ROLL) and note the position is in the stability zone:
+1. Price is below strike but within 2% below it (stability zone)
+2. Technical oscillator summary is Neutral or Buy (favorable for put seller — suggests price may recover upward)
+3. MA summary is NOT Strong Sell (no sustained bearish breakdown signal)
+4. |Delta| is below 0.60 (not deep ITM)
+
+Add `"near_atm_stability"` to `risk_flags` and include in the reason: "Position is in the near-ATM stability zone (price X% below strike). Technicals suggest the move may be temporary — defaulting to WAIT."
+
+### Override the Stability Buffer — ROLL Anyway When:
+Even if the position is in the stability zone, recommend ROLL if ANY of these apply:
+- **|Delta| > 0.60**: Position is clearly deep ITM regardless of how close to the strike — assignment risk is material
+- **Strong directional momentum against the position**: Oscillator summary is Strong Sell AND MA summary is Strong Sell — sustained bearish breakdown confirmed, price unlikely to recover
+- **Earnings imminent**: The MANDATORY EARNINGS GATE already handles this — if earnings override triggers ROLL, it takes priority over the stability buffer
+- **DTE < 7 and ITM**: No time for the position to recover — ROLL to avoid assignment
+
+### Interaction with Other Rules
+- The stability buffer does NOT override the earnings gate, ROLL_OUT guardrail, or profit optimization gate — those are independent
+- The stability buffer applies ONLY to the WAIT vs ROLL assessment decision in Phase 1
+- If the earnings gate says ROLL, ROLL regardless of stability zone status
+
 ## ACTIVITY CRITERIA
 
 ### WAIT (hold position, no action needed):
 - Position is OTM with comfortable margin (price at least 3% above strike)
+- Position is in the near-ATM stability zone with favorable technicals (see NEAR-ATM STABILITY BUFFER above)
 - DTE is appropriate (not trapped with no extrinsic value)
 - No earnings risk per MANDATORY EARNINGS GATE: gate returned HOLD (position expires before earnings with safe buffer, earnings passed, or no upcoming earnings)
 - Technical signals are neutral or bullish (favorable for short puts)
-- |Delta| < 0.35
+- |Delta| < 0.35 (or < 0.60 if in stability zone with favorable technicals)
 - You would still want to own the stock at the strike price (fundamental quality intact)
 
 ### ROLL Triggers (ANY of these warrants action — hand off to Phase 2):
 
-1. **Approaching ITM**: Price within 2% of strike with bearish momentum
-2. **Already ITM**: Price below strike — assignment risk is real
+1. **Approaching ITM with momentum**: Price within 2% of strike with bearish momentum (oscillators + MAs confirming downward trend). Note: proximity alone is not sufficient — there must be directional momentum toward the strike.
+2. **Already ITM beyond stability zone**: Price more than 2% below strike, OR price below strike with unfavorable technicals (Strong Sell oscillators + MAs confirming sustained downward move). See NEAR-ATM STABILITY BUFFER — positions only slightly ITM with favorable technicals should WAIT.
 3. **Earnings Risk**: Earnings Gate returned ROLL_RECOMMENDED, ROLL_URGENTLY, or CLOSE_OR_ROLL (position spans earnings AND near ATM/ITM — see MANDATORY EARNINGS GATE above). FLAG results (OTM positions) are informational — factor into decision but do not force ROLL.
 4. **Fundamental Deterioration**: Analyst downgrades, earnings miss, sector weakness
 5. **Technical Breakdown**: Price breaking support, heading toward strike with volume
@@ -341,6 +371,7 @@ You will receive previous monitor activities. Use them to:
 1. **Track Trend**: Is the position getting safer or riskier over time?
 2. **Avoid Flip-Flopping**: If conditions haven't materially changed, maintain the same activity
 3. **Detect Escalation**: Multiple consecutive WAITs with rising |delta| → approaching roll territory
+4. **Anti-flip-flop rule for near-ATM positions**: If the previous activity was WAIT and conditions have not materially worsened (|delta| change < 0.10, price change < 1%), maintain WAIT. Do not switch to ROLL unless there is a clear deterioration trend across multiple data points. A single monitoring run showing slightly worse numbers is not sufficient to reverse a WAIT — look for consistent adverse movement across consecutive readings.
 
 ## OUTPUT FORMAT
 
@@ -353,7 +384,7 @@ Output a **JSON activity block** inside a fenced code block, followed by a **SUM
 #### Unified Risk Flag Taxonomy
 
 Use consistent risk flag names. Key flags for open put monitors:
-- `approaching_itm`, `high_delta`, `low_extrinsic` (position)
+- `approaching_itm`, `high_delta`, `low_extrinsic`, `near_atm_stability` (position)
 - `earnings_before_expiry`, `earnings_approaching`, `earnings_soon`, `earnings_imminent`, `earnings_within_dte`, `unknown_earnings` (earnings — all defined in the MANDATORY EARNINGS GATE)
 - `catalyst_pending` (calendar)
 - `breakdown_momentum`, `support_break` (technical)
