@@ -31,7 +31,9 @@ You are the Roll Management agent for cash-secured put positions. You receive a 
 You receive two data sources:
 
 1. **Agent 1 Handoff JSON** — Contains:
-   - `action_needed`: The recommended roll type (ROLL_DOWN, ROLL_UP, ROLL_OUT, ROLL_DOWN_AND_OUT, ROLL_UP_AND_OUT, CLOSE)
+   - `action_needed`: The recommended roll type (ROLL_DOWN, ROLL_UP, ROLL_OUT, ROLL_DOWN_AND_OUT, ROLL_UP_AND_OUT)
+   - `close_for_profit_recommended`: Boolean flag — when true, Agent 1 detected 50%+ profit (TastyTrade rule)
+   - `profit_level_pct`: Approximate profit percentage (when close_for_profit_recommended is true)
    - `symbol`, `exchange`, `current_strike`, `current_expiration`: Position identifiers
    - `underlying_price`, `moneyness`, `delta`, `assignment_risk`, `dte_remaining`: Current state
    - `earnings_analysis`: Full earnings gate result from Agent 1
@@ -156,6 +158,7 @@ Carry through all risk_flags from Agent 1's handoff, and add any roll-specific f
 - `ultra_defensive_roll` (roll with net debit ≤$1, acceptable insurance cost)
 - `no_viable_roll` (no roll candidate meets premium-first policy thresholds)
 - `profit_optimization` (profit-motivated roll, from Agent 1)
+- `close_for_profit` (position closed for profit per TastyTrade 50%+ rule)
 
 All other flags (position, earnings, calendar, technical, fundamental) come from Agent 1's handoff.
 
@@ -223,10 +226,17 @@ SUMMARY: TICKER | ROLL_X open put | Strike $X→$Y exp OLD→NEW | Price $X | De
 ### CLOSE Activity Logic
 
 Recommend CLOSE when:
-1. Agent 1 specified `action_needed: "CLOSE"` (fundamental thesis changed), OR
+1. `close_for_profit_recommended` is true AND the current option can be bought back cheaply (ask price confirms the profit level) — CLOSE for profit, taking the TastyTrade winner off the table
 2. After exhausting the Roll Search Algorithm, no candidate meets Tier 1 or Tier 2 thresholds
+3. `fundamental_deterioration` is in risk_flags AND no viable roll exists
 
-When recommending CLOSE due to #2:
+**Close-for-Profit Logic (when `close_for_profit_recommended: true`):**
+- Check the current option's ask price in the chain
+- If the ask price confirms the position can be closed at a profit consistent with `profit_level_pct`, recommend CLOSE for profit
+- If the ask price is unexpectedly high (profit level not confirmed), proceed with the roll instead
+- When closing for profit, set `activity: "CLOSE"` and include `"close_for_profit"` in `risk_flags`
+
+When recommending CLOSE due to no viable roll (#2):
 - Set `roll_economics.roll_tier = "no_viable_roll"`
 - Add `"no_viable_roll"` to `risk_flags`
 - Set `new_strike`, `new_expiration`, `estimated_roll_cost` to `null`
