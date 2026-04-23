@@ -536,3 +536,35 @@ When teammates are writing files in parallel, use try/except ImportError with No
 
 ### Legacy Single-Agent Fallback Removal (2026-07)
 Removed all legacy single-agent fallback code from the position monitor flow. The 2-phase instruction files (assessment + roll) are now committed and always present, so the try/except ImportError wrappers, the `instructions` parameter on `run_position_monitor`, and the entire single-agent `else` branch in `agent_runner.py` were dead code. Cleaning this out reduces ~80 lines of unused code paths, simplifies the control flow, and prevents accidental regression to single-phase execution. The `two_phase` telemetry field is hard-coded to `True`.
+
+### Direction-Aware Chain Filtering for Phase 2 (2026-07)
+Added `filter_options_chain_by_roll_direction()` in `options_chain_parser.py` as a third filtering stage. The chain now flows through: ±15 strikes → delta range → roll direction. Each roll type (ROLL_DOWN, ROLL_UP, ROLL_OUT, ROLL_UP_AND_OUT, ROLL_DOWN_AND_OUT) has directional strike and expiration constraints. ROLL_OUT keeps ±1 adjacent strikes. "OUT" rolls require strictly later expirations. Unknown roll types pass through unchanged (safe fallback). In `agent_runner.py`, the structured chain dict is now stored pre-Phase-1 and direction-filtered when Phase 2 triggers.
+
+### Pre-Computed Markdown Candidate Tables for Phase 2 (2026-07)
+Added `format_roll_candidates_table()` in `options_chain_parser.py`. Instead of sending raw JSON chain to Phase 2, Python now pre-computes buyback cost, net credit, DTE, premium%, and annualized return for every candidate and formats as a flat markdown table. The agent just picks a row — no JSON navigation or arithmetic. The `_run_roll_management()` message template was updated from "OPTIONS CHAIN DATA:" to "ROLL CANDIDATES:" and tells the agent to use pre-computed values directly. Both roll instruction files (call + put) had `OPTIONS_CHAIN_SCHEMA_DESCRIPTION` replaced with table format documentation. Edge cases handled: missing current contract (notes "NOT AVAILABLE"), zero-bid contracts (skipped), empty candidate set ("NO VALID CANDIDATES — Consider CLOSE").
+
+### Debug Pipeline Endpoint Upgrade (2026-07)
+**Status:** ✅ Completed  
+**Files:** web/app.py, web/templates/settings_debug.html  
+**Commit:** fe99833
+
+Upgraded `/api/debug/agent-chain/{symbol}` from showing only delta-filtered JSON to showing the full 4-stage Phase 2 pipeline. New query params: `strike`, `expiration`, `roll_type`. Response now returns a `pipeline` dict with `stage_1_delta_filtered`, `stage_2_position_filtered`, `stage_3_direction_filtered`, and `stage_4_candidate_table`. Underlying price sourced from cached technicals JSON (`price` field). Buyback cost extracted from position-filtered chain before direction filtering (same pattern as `agent_runner.py`). Template updated with strike/expiration/roll_type inputs and collapsible stage sections. Stage 4 (candidate table) highlighted with orange border as the primary Phase 2 input.
+
+### Action Value Validation Guards (2026-07)
+**Status:** ✅ Completed  
+**Files:** src/agent_runner.py
+
+Added `VALID_ROLL_ACTIONS` and `VALID_PHASE2_ACTIVITIES` constant sets near the top of `agent_runner.py`. Bare "ROLL" (no direction) is never valid. Validation enforced at three points:
+1. `_try_extract_handoff_json()` — inner `_validate_action()` rejects invalid `action_needed` values before returning the handoff dict (falls through to WAIT)
+2. After `_run_roll_management()` returns — bare "ROLL" activity converted to "CLOSE" with auto-correction note in reason field; other invalid activities also converted to CLOSE
+3. Degraded fallback in Phase 2 error handler — default changed from "ROLL" to "CLOSE"
+4. (2026-07) ROLL actions with missing `new_strike`/`new_expiration` auto-converted to CLOSE; also validates `roll_economics` presence. Instruction files strengthened with ⛔ MANDATORY notes in both ROLL CANDIDATE SELECTION and JSON schema sections.
+
+### ROLL Target Validation (2026-07)
+**Status:** ✅ Completed
+**Commit:** 2086e07
+**Files:** src/agent_runner.py, src/tv_open_call_roll_instructions.py, src/tv_open_put_roll_instructions.py
+
+Phase 2 sometimes outputs a roll type (e.g. ROLL_UP_AND_OUT) without selecting a specific candidate from the table — `new_strike` and `new_expiration` left null. Added two-layer fix:
+1. **Code validation** in agent_runner.py: after existing bare-ROLL/invalid-activity checks, validates that ROLL actions have non-null `new_strike`, `new_expiration`, and `roll_economics`. Incomplete rolls auto-convert to CLOSE with audit trail in reason field.
+2. **Instruction hardening** in both call and put roll instruction files: added ⛔ MANDATORY constraint notes before the JSON schema and at the top of the ROLL CANDIDATE SELECTION section.
