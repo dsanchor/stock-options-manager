@@ -1356,3 +1356,22 @@ Set to `null` for WAIT, populated for all ROLL and CLOSE activities.
 - **Schema description**: Updated `OPTIONS_CHAIN_SCHEMA_DESCRIPTION` — HOW TO LOOK UP section now shows direct key-path access, DATA INTEGRITY requires stating full path.
 - **Instruction files**: VERIFICATION sections in `tv_open_call_instructions.py` and `tv_open_put_instructions.py` now use key-path syntax: `calls["exp"]["strike"]["ask"]` / `puts["exp"]["strike"]["bid"]`.
 - **Cleanup**: Deleted `options_chain_format_analysis.md` (analysis artifact, not production code).
+
+### Monitor Agent Instruction Split (2026-07-22)
+- **Task**: Split each monitor agent's instructions (call + put) into Assessment (Agent 1) + Roll Management (Agent 2) per Danny's architecture decision.
+- **Files created**: 4 new instruction files:
+  - `src/tv_open_call_assessment_instructions.py` (463 lines) — exports `get_open_call_assessment_instructions()`
+  - `src/tv_open_call_roll_instructions.py` (298 lines) — exports `get_open_call_roll_instructions()`
+  - `src/tv_open_put_assessment_instructions.py` (462 lines) — exports `get_open_put_assessment_instructions()`
+  - `src/tv_open_put_roll_instructions.py` (300 lines) — exports `get_open_put_roll_instructions()`
+- **Split pattern**: Assessment agents use functions (not module-level constants) for consistency with the new split pattern. Each function returns the instruction string.
+- **Agent 1 (Assessment)** owns: Role/strategy intro, earnings gate (full 25-row matrix), earnings override + roll target rules, position context, 8-dimension analysis framework, WAIT/ROLL criteria, profit optimization gate (pass/fail decision only). Outputs final JSON for WAIT, handoff JSON for non-WAIT.
+- **Agent 2 (Roll Management)** owns: Roll types, roll candidate selection, premium-first roll policy (3-tier system), roll search algorithm, options chain schema (imports OPTIONS_CHAIN_SCHEMA_DESCRIPTION from options_chain_parser.py). Receives handoff JSON + filtered chain, outputs final activity JSON (same schema as today).
+- **Handoff schema**: Intermediate JSON with action_needed, position state, earnings_analysis, pivot_points, risk_flags, profit_optimization_gate, roll_target_rules. Designed so Agent 2 never needs to re-derive analysis.
+- **Key design decisions**:
+  - Agent 1 does NOT receive the full options chain — only position context delta/IV
+  - Roll instructions import OPTIONS_CHAIN_SCHEMA_DESCRIPTION via f-string injection
+  - Output JSON schema for Agent 2 is IDENTICAL to the current unified schema — no migration needed
+  - Put roll instructions use support levels (S1/S2/S3) for strike targeting; call roll instructions use resistance levels (R1/R2/R3)
+  - Roll search algorithm for puts steps DOWN (-1 strike increment); for calls steps UP (+1 strike increment)
+- **Original files untouched**: tv_open_call_instructions.py and tv_open_put_instructions.py remain as-is
