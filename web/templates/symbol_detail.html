@@ -457,17 +457,8 @@
                         <span class="badge badge-risk-{{ d.assignment_risk | lower }}">{{ d.assignment_risk }}</span>
                         {% else %}—{% endif %}
                     </td>
-                    <td style="max-width:400px;">
-                        {% if d.reason %}
-                        <details {% if d.reason | length <= 120 %}open{% endif %}>
-                            <summary style="cursor:pointer; list-style:none;">
-                                {{ d.reason[:120] }}{% if d.reason | length > 120 %}… <span style="color:var(--accent, #4493f8); font-size:0.75rem;">[more]</span>{% endif %}
-                            </summary>
-                            {% if d.reason | length > 120 %}
-                            <div style="margin-top:6px; white-space:pre-wrap; line-height:1.5; font-size:0.85rem;">{{ d.reason }}</div>
-                            {% endif %}
-                        </details>
-                        {% else %}—{% endif %}
+                    <td>
+                        {{ d.reason[:120] ~ ("…" if d.reason | length > 120 else "") if d.reason else "—" }}
                         {% for flag in (d.risk_flags or []) %}
                         <span class="flag">{{ flag }}</span>
                         {% endfor %}
