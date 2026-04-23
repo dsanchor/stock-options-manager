@@ -533,3 +533,6 @@ Phase 1 outputs either a standard `activity` JSON (WAIT) or a `action_needed` ha
 
 ### Graceful Import Fallback for Parallel Work
 When teammates are writing files in parallel, use try/except ImportError with None fallback rather than hard imports. The runner checks `assessment_instructions is not None and roll_instructions is not None` to decide execution mode. This allows the code to merge and work even if instruction files arrive in a separate commit.
+
+### Legacy Single-Agent Fallback Removal (2026-07)
+Removed all legacy single-agent fallback code from the position monitor flow. The 2-phase instruction files (assessment + roll) are now committed and always present, so the try/except ImportError wrappers, the `instructions` parameter on `run_position_monitor`, and the entire single-agent `else` branch in `agent_runner.py` were dead code. Cleaning this out reduces ~80 lines of unused code paths, simplifies the control flow, and prevents accidental regression to single-phase execution. The `two_phase` telemetry field is hard-coded to `True`.
