@@ -1574,3 +1574,320 @@ The dashboard agent tables previously showed Today/7d/30d alert count columns wh
 - web/templates/dashboard.html
 - web/app.py
 - web/static/style.css
+
+---
+
+# Decision: Monitor Agent Split — Position Monitor + Roll Management
+
+**Date:** 2026-04-22
+**Author:** Danny (Lead)
+**Status:** Recommended — awaiting user approval
+**Impact:** Agent instructions, agent_runner.py, runner execution flow, instruction files
+
+## Proposal (from dsanchor)
+
+Split each monitor agent (open_call_monitor, open_put_monitor) into two sequential agents:
+1. **Position Monitor** — Decides WAIT vs action (CLOSE/ROLL). Ends at WAIT.
+2. **Roll Management** — When action ≠ WAIT, takes over to determine specific strike, expiration, premium using the option chain.
+
+Goal: Simplify each agent's context so the roll agent focuses on reading the chain correctly, fixing credit miscalculations.
+
+## Assessment
+
+### Root Cause of Credit Miscalculation
+
+The current monitor instructions are **589 lines (call) / 603 lines (put)**. A single agent must:
+
+1. Run a 25-row earnings decision matrix (lines 62–100)
+2. Execute 8 analysis dimensions (moneyness, DTE, delta/gamma, volume, ex-div, earnings, technicals, IV — lines 174–258)
+3. Apply profit optimization gates (3 mandatory + 4-of-7 flexible conditions — lines 294–323)
+4. **Then**, for ROLL decisions, correctly look up specific contracts by JSON key path (e.g., `calls["20260427"]["475.0"]["ask"]`)
+5. Calculate roll economics arithmetic (buyback_cost - new_premium) per the premium-first policy (lines 331–393)
+6. If initial candidate fails, run the roll search algorithm across multiple strikes/expirations (lines 369–378)
+
+The options chain schema description (`OPTIONS_CHAIN_SCHEMA_DESCRIPTION` in `options_chain_parser.py`, 75 lines) is prepended to the chain JSON in the user message. The roll economics verification rules are buried at line ~340 of 589 total instruction lines.
+
+**Diagnosis:** The model's attention is diluted across ~600 lines of instruction covering 8+ analysis dimensions. By the time it gets to the chain lookup (the most precise, arithmetic-heavy task), it has already consumed significant context processing the earnings matrix, fundamentals, technicals, and WAIT/ROLL decision logic. The chain reading task requires exact key-path navigation and bid/ask arithmetic — precisely the type of task that degrades under context pressure.
+
+### Instruction Content Breakdown (Open Call Monitor)
+
+| Section | Lines | Agent 1 needs? | Agent 2 needs? |
+|---------|-------|----------------|----------------|
+| Role + Strategy + Data Source | ~60 | ✅ | Partial (role only) |
+| Earnings Gate (25-row matrix) | ~100 | ✅ | ❌ (receives result) |
+| Earnings override + roll target rules | ~60 | ✅ | ✅ (roll target rules only) |
+| Position context | ~10 | ✅ | ✅ (receives from Agent 1) |
+| Analysis framework (8 dimensions) | ~100 | ✅ | ❌ |
+| WAIT/ROLL criteria + triggers | ~30 | ✅ | ❌ |
+| Roll types | ~15 | Partial | ✅ |
+| Profit optimization gate | ~40 | ✅ | ❌ (Agent 1 decides) |
+| Premium-first roll policy + search algo | ~70 | ❌ | ✅ |
+| Output format + examples | ~130 | ~60 (WAIT only) | ~100 (ROLL + economics) |
+
+**Agent 1 estimated size: ~350-400 lines** (everything except roll economics/search, reduced output examples)
+**Agent 2 estimated size: ~200-250 lines** (roll types, premium-first policy, search algo, chain schema, output format)
+
+### Data Flow Analysis
+
+Current flow (`agent_runner.py` lines 433–528):
+```
+fetch_all() → [overview + technicals + forecast + options_chain] → single agent → activity JSON
+```
+
+Options chain is filtered by `filter_options_chain_for_position()` (±15 strikes) and `filter_options_chain_by_delta()` before injection.
+
+Proposed flow:
+```
+fetch_all() → [overview + technicals + forecast + minimal chain*] → Agent 1 → WAIT? done
+                                                                               → ROLL? → [chain + Agent 1 output + pivot points] → Agent 2 → activity JSON
+```
+
+*Agent 1 still needs the current contract's delta/IV for its analysis (single contract lookup). Could pass just the current expiration's row rather than the full filtered chain.
+
+### Token Economics
+
+~70-80% of monitor runs result in WAIT. For those runs:
+- **Current:** Full chain processed, all 600 lines consumed, full response generated → wasted chain tokens
+- **Proposed:** Agent 1 runs with minimal chain context, produces WAIT → done. Agent 2 never invoked.
+
+For the ~20-30% that result in ROLL:
+- **Current:** 1 API call
+- **Proposed:** 2 API calls, but Agent 2's context is ~60% smaller instruction-wise
+
+Net: likely token savings overall, with slightly higher latency for ROLL cases (~5-10s extra).
+
+### Technical Handoff Design
+
+Agent 1 output (when action ≠ WAIT) becomes Agent 2 input:
+
+```json
+{
+  "action_needed": "ROLL_UP_AND_OUT",
+  "symbol": "MO",
+  "exchange": "NYSE",
+  "current_strike": 72,
+  "current_expiration": "2026-04-24",
+  "underlying_price": 73.80,
+  "moneyness": "ITM",
+  "delta": 0.62,
+  "assignment_risk": "critical",
+  "earnings_analysis": { ... },
+  "risk_flags": ["approaching_itm", "earnings_soon"],
+  "reason": "Stock broke through $72 strike with bullish momentum...",
+  "confidence": "high",
+  "pivot_points": { ... }
+}
+```
+
+Agent 2 receives this + the full filtered options chain + roll-specific instructions. Produces the final activity JSON (same schema as today, with `roll_economics` populated).
+
+### Runner Impact (`agent_runner.py`)
+
+`run_position_monitor()` (lines 433–665) becomes a 2-phase method:
+
+```python
+async def run_position_monitor(self, ...):
+    # Phase 1: Position assessment
+    phase1_result = await self._run_position_assessment(...)
+    
+    if phase1_result["activity"] in self._NON_ALERT_ACTIVITIES:
+        # WAIT — persist and return
+        cosmos.write_activity(...)
+        return
+    
+    # Phase 2: Roll management
+    final_result = await self._run_roll_management(
+        phase1_output=phase1_result,
+        options_chain=chain_data,
+        ...
+    )
+    cosmos.write_activity(...)
+```
+
+Activity/alert persistence model is unchanged — the final JSON (whether from Agent 1 for WAIT or Agent 2 for ROLL) follows the same schema and gets written the same way.
+
+### Pros
+
+1. **Directly addresses the credit problem**: Agent 2 has ~200-250 lines focused purely on chain reading, roll economics, and search. No earnings matrix, no 8-dimension analysis, no fundamental checks competing for attention.
+2. **Token savings on majority case**: ~70-80% of runs are WAIT → Agent 2 never invoked → chain tokens saved.
+3. **Easier debugging**: Credit wrong? It's Agent 2. Decision wrong? It's Agent 1. Clean separation.
+4. **Independent instruction tuning**: Can refine roll economics instructions without touching the position assessment logic.
+5. **Extensible**: Agent 2 could eventually handle more complex multi-leg strategies without bloating the monitor.
+
+### Cons / Risks
+
+1. **Latency for ROLL cases**: Extra API call adds ~5-10s for non-WAIT decisions.
+2. **Handoff contract maintenance**: Two instruction files per strategy (call/put) × 2 agents = 4 new files. Handoff schema must stay in sync.
+3. **Agent 1 still needs some chain data**: Current delta/IV requires at least the current contract. Solution: pass only the current expiration+strike row to Agent 1, not the full chain.
+4. **Agent 2 may need some technicals**: Roll candidate selection references pivot points (R1/R2/R3 for calls, S1/S2/S3 for puts). Solution: extract pivot points from technicals and pass to Agent 2 (small payload).
+5. **Profit optimization complexity**: The ROLL_DOWN/ROLL_UP optimization gate (3+4 conditions) straddles both agents — Agent 1 runs the gate conditions, Agent 2 does the economics. Need clean ownership split.
+
+### Gotchas
+
+1. **JSON schema consistency**: Agent 2 must produce the exact same output schema as the current unified format. No schema migration needed if done right.
+2. **Error handling**: If Agent 2 fails/errors, need to persist Agent 1's output with a "roll_economics_unavailable" flag rather than losing the entire run.
+3. **Profit optimization gate**: Currently lives entirely in the monitor instructions. Under the split, the gate decision (ROLL_DOWN/ROLL_UP for premium capture) should stay in Agent 1, with Agent 2 only executing the economics.
+
+## Recommendation
+
+**✅ SUPPORT the split.** The instruction complexity is the most likely cause of credit miscalculation, and the split directly addresses it by isolating the chain-reading task into a focused ~200-line agent. The 70-80% WAIT case saves tokens, and the 2-agent overhead for ROLL cases is acceptable.
+
+### Suggested Implementation Approach
+
+1. **New instruction files**: `tv_open_call_assessment_instructions.py` + `tv_open_call_roll_instructions.py` (same for put)
+2. **Agent 1 gets**: Overview, technicals, forecast, current contract delta/IV only, previous context
+3. **Agent 2 gets**: Full filtered chain, Agent 1's decision output, pivot points subset, roll-specific instructions
+4. **Handoff format**: Define a strict intermediate JSON schema (above)
+5. **Runner refactor**: Split `run_position_monitor()` into `_run_position_assessment()` + `_run_roll_management()` with conditional chaining
+6. **Fallback**: If Agent 2 fails, persist Agent 1's output with `roll_economics: null` + `"roll_agent_error"` flag
+
+### Team Assignment (proposed)
+
+- **Linus**: Write the split instruction files (4 files: call_assessment, call_roll, put_assessment, put_roll)
+- **Rusty**: Refactor `agent_runner.py` for 2-phase execution, define handoff schema
+- **Basher**: Test end-to-end with known positions, verify credit calculations match chain data
+- **Danny**: Review instruction split for coverage gaps, approve handoff schema
+
+---
+
+# Decision: Monitor Instruction Split — Implementation Details
+
+**Date:** 2026-07-22
+**Author:** Linus (Quant Dev)
+**Status:** Implemented — pending Rusty's runner integration
+**Relates to:** danny-monitor-split.md
+
+## What Was Done
+
+Created 4 new instruction files per Danny's architecture decision, splitting each monitor agent into Assessment (Agent 1) + Roll Management (Agent 2).
+
+## Design Decisions
+
+### 1. Function-based exports (not module-level constants)
+The new files use `get_open_call_assessment_instructions()` functions instead of `TV_OPEN_CALL_INSTRUCTIONS` constants. This allows future parameterization if needed (e.g., passing position-specific context into the prompt template).
+
+### 2. Roll instructions import OPTIONS_CHAIN_SCHEMA_DESCRIPTION
+Agent 2 files do `from src.options_chain_parser import OPTIONS_CHAIN_SCHEMA_DESCRIPTION` and inject it via f-string. This keeps the chain schema DRY — single source of truth in options_chain_parser.py.
+
+### 3. Handoff schema includes roll_target_rules
+Added a `roll_target_rules` field to the handoff JSON so Agent 2 can respect earnings-driven expiration constraints without needing the full earnings gate logic. Agent 1 pre-computes which expirations are blocked.
+
+### 4. Profit optimization gate stays in Agent 1
+Agent 1 evaluates the 3+4 gate conditions and reports `profit_optimization_gate: "passed"/"failed"/null`. Agent 2 trusts this and only handles the economics (finding the right strike, calculating net credit).
+
+## Team Impact
+
+- **Rusty**: Needs to wire up `agent_runner.py` to use the new instruction functions. The 2-phase flow: call `get_open_call_assessment_instructions()` for Agent 1, parse its output, and if non-WAIT, call `get_open_call_roll_instructions()` for Agent 2 with the handoff JSON + chain.
+- **Basher**: Can test each agent independently — Agent 1 with mock position data, Agent 2 with mock handoff + chain.
+- **Danny**: Review the handoff schema for completeness before Rusty integrates.
+
+## Files
+
+| File | Lines | Role |
+|------|-------|------|
+| `src/tv_open_call_assessment_instructions.py` | 463 | Call position assessment (Agent 1) |
+| `src/tv_open_call_roll_instructions.py` | 298 | Call roll management (Agent 2) |
+| `src/tv_open_put_assessment_instructions.py` | 462 | Put position assessment (Agent 1) |
+| `src/tv_open_put_roll_instructions.py` | 300 | Put roll management (Agent 2) |
+
+---
+
+# Decision: Roll Cost Sign Convention + Profit Optimization Gate Split
+
+**Author:** Linus (Quant Dev)
+**Date:** 2026-07
+**Status:** Implemented
+**Files:** tv_open_call_roll_instructions.py, tv_open_put_roll_instructions.py, tv_open_call_assessment_instructions.py, tv_open_put_assessment_instructions.py
+
+## Context
+Rubber duck review of the monitor agent split found 3 issues in the instruction files.
+
+## Decisions
+
+### 1. estimated_roll_cost = new_premium - buyback_cost (always)
+Examples in both roll files showed negative roll cost alongside positive net credit — contradictory. Fixed all examples so `estimated_roll_cost` equals the net credit/debit math. Positive = credit, negative = debit, consistent with the rules text.
+
+### 2. Profit optimization gate: "eligible" (not "passed")
+Agent 1 (assessment) was checking conditions it cannot evaluate — specifically "no earnings/ex-div before new expiration" — because Agent 2 (roll management) selects the expiration. Changed:
+- Gate result from "passed" → "eligible" (Agent 1's checks passed, but Agent 2 must validate)
+- Removed 2 candidate-dependent flexible conditions from assessment; now 5 stock-level conditions, need 3 of 5
+- Added `profit_optimization_constraints` to handoff JSON so Agent 2 gets earnings/ex-div dates
+- Added PROFIT OPTIMIZATION VALIDATION section to both roll files
+
+### 3. Mandatory JSON output in roll agents
+Added explicit warning: roll agents MUST always produce a JSON activity block. If no viable roll, output CLOSE with `roll_tier: "no_viable_roll"`.
+
+## Team Impact
+- **Rusty**: agent_runner.py should handle "eligible" in addition to "passed" if it inspects `profit_optimization_gate`. The null JSON issue (Finding 3) needs a framework-level guard in agent_runner.py too — instructions alone aren't sufficient.
+- **Danny**: No direct frontend impact, but the `profit_optimization_gate` value in decision logs will now show "eligible" instead of "passed" for profit optimization rolls.
+
+---
+
+# Decision: Runner 2-Phase Execution — Implementation Details
+
+**Date:** 2026-07-22
+**Author:** Rusty (Agent Dev)
+**Status:** Implemented
+**Implements:** danny-monitor-split.md
+
+## What was done
+
+Refactored `agent_runner.py` and both monitor wrappers to support the 2-phase Position Assessment → Roll Management execution model.
+
+## Key design decisions
+
+### 1. Backward-compatible opt-in via optional params
+`run_position_monitor()` gained `assessment_instructions` and `roll_instructions` as optional kwargs. When both are `None`, the original single-agent path runs unchanged. This means the refactor is safe to merge even before Linus's instruction files land.
+
+### 2. Handoff detection via `action_needed` key
+Phase 1's output format diverges from the standard activity format:
+- **WAIT path:** `{ "activity": "WAIT", ... }` → standard `_try_extract_json()` picks it up
+- **Action path:** `{ "action_needed": "ROLL_UP_AND_OUT", ... }` → new `_try_extract_handoff_json()` picks it up
+
+Using a distinct key (`action_needed` vs `activity`) avoids ambiguity and makes the detection reliable.
+
+### 3. Phase 2 error resilience
+If Phase 2 (roll management) fails for any reason, the runner persists Phase 1's handoff as a degraded activity with `roll_economics: null` and `"roll_agent_error"` appended to `risk_flags`. The run never crashes — the user sees the assessment result even if roll economics are unavailable.
+
+### 4. Try/except import for parallel development
+Monitor wrappers import Linus's instruction functions inside a try/except ImportError block. If the files don't exist yet, `assessment_instructions` and `roll_instructions` stay `None`, and the runner falls back to single-agent mode.
+
+## Files changed
+- `src/agent_runner.py` — new methods: `_try_extract_handoff_json`, `_run_position_assessment`, `_run_roll_management`; refactored `run_position_monitor`
+- `src/open_call_monitor_agent.py` — imports + passes assessment/roll instructions
+- `src/open_put_monitor_agent.py` — same pattern for puts
+
+## Dependencies
+- **Linus:** 4 instruction files must be committed for 2-phase mode to activate:
+  - `src/tv_open_call_assessment_instructions.py`
+  - `src/tv_open_call_roll_instructions.py`
+  - `src/tv_open_put_assessment_instructions.py`
+  - `src/tv_open_put_roll_instructions.py`
+- Until those exist, the runner operates in single-agent fallback mode.
+
+---
+
+# Decision: Remove Legacy Single-Agent Fallback from Position Monitors
+
+**Date:** 2026-04-23
+**Author:** Rusty (Agent Dev)
+**Status:** Implemented
+**Commit:** 7f04db7
+
+## Context
+The 2-phase position monitor flow (Phase 1: assessment, Phase 2: roll management) was introduced with a try/except ImportError fallback so the code could merge before Linus committed the instruction files. Both call and put instruction files are now committed and stable.
+
+## Decision
+Remove all legacy single-agent fallback paths:
+- `open_call_monitor_agent.py` / `open_put_monitor_agent.py`: Direct imports instead of try/except; drop `instructions=` parameter from `run_position_monitor` calls.
+- `agent_runner.py`: Drop `instructions` parameter from `run_position_monitor` signature; remove `two_phase` boolean check; delete the ~50-line single-agent `else` branch; hard-code `two_phase: True` in telemetry.
+
+## Rationale
+- Dead code: the single-agent path was unreachable since the instruction files are committed.
+- Simpler control flow: one execution path instead of two branching conditionally.
+- Prevents accidental regression to the less capable single-agent mode.
+- Net deletion of ~80 lines.
+
+## Impact
+- No runtime behavior change — the 2-phase path was already the only path executed.
+- Any future instruction file changes must keep the assessment/roll module pattern.
