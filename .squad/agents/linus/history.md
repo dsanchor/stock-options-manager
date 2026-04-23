@@ -1375,3 +1375,9 @@ Set to `null` for WAIT, populated for all ROLL and CLOSE activities.
   - Put roll instructions use support levels (S1/S2/S3) for strike targeting; call roll instructions use resistance levels (R1/R2/R3)
   - Roll search algorithm for puts steps DOWN (-1 strike increment); for calls steps UP (+1 strike increment)
 - **Original files untouched**: tv_open_call_instructions.py and tv_open_put_instructions.py remain as-is
+
+### Rubber Duck Review Fixes (2026-07)
+- **Finding 1 (BLOCKING): Roll cost sign convention fix** — In both roll instruction files, the schema and ROLL examples showed `estimated_roll_cost: -0.45` (negative) alongside `net_credit: 1.30` (positive). This was contradictory since positive = credit per the rules. Fixed all examples to use `estimated_roll_cost = new_premium - buyback_cost` (e.g., 4.50 - 3.20 = 1.30). Profit optimization examples were already correct.
+- **Finding 2 (HIGH): Profit optimization gate responsibility split** — Assessment files had flexible conditions 6/7 checking "no earnings/ex-div before new expiration" but Agent 1 doesn't choose the expiration. Changed gate result from "passed" to "eligible", removed candidate-dependent conditions (now 5 stock-level flexible, need 3 of 5), added `profit_optimization_constraints` field to handoff JSON with `next_earnings_date`/`next_ex_div_date`. Added new PROFIT OPTIMIZATION VALIDATION section to both roll files so Agent 2 validates these before proceeding.
+- **Finding 3 (HIGH): Mandatory JSON output** — Added explicit warning to both roll files: output MUST contain a valid JSON block with `activity` field. If no viable roll, output CLOSE with `roll_tier: "no_viable_roll"`. Never output without JSON.
+- Key learning: When splitting agents, re-examine which conditions each agent CAN evaluate. Candidate-dependent checks belong with the agent that selects the candidate.

@@ -38,7 +38,8 @@ You receive two data sources:
    - `risk_flags`: Accumulated risk flags to carry through
    - `reason`: Agent 1's rationale for why action is needed
    - `confidence`: Agent 1's confidence level
-   - `profit_optimization_gate`: "passed", "failed", or null
+   - `profit_optimization_gate`: "eligible", "failed", or null
+    - `profit_optimization_constraints`: `next_earnings_date`, `next_ex_div_date` (when gate is "eligible")
    - `pivot_points`: Classic pivot R1-R3, S1-S3 for strike targeting
    - `roll_target_rules`: Earnings-driven constraints on allowed expirations
 
@@ -53,7 +54,7 @@ You receive two data sources:
   - This is the DEFENSIVE roll for puts (equivalent to ROLL_UP for calls)
 - **ROLL_UP**: Move to a higher strike (same expiration) — capture more premium on rising stock
   - When: Stock has risen significantly, current put is nearly worthless, resell at higher strike
-  - If `profit_optimization_gate` = "passed": this is a profit-motivated roll. Target |delta| 0.25-0.30, new strike must be OTM by ≥1.5-2% below current price.
+  - If `profit_optimization_gate` = "eligible": this is a profit-motivated roll, pending your validation of candidate-dependent conditions (see PROFIT OPTIMIZATION VALIDATION below). Target |delta| 0.25-0.30, new strike must be OTM by ≥1.5-2% below current price.
 - **ROLL_OUT**: Move to a later expiration (same strike) — buy more time
   - When: Position is borderline but you want to keep the same strike; collect additional premium
 - **ROLL_DOWN_AND_OUT**: Lower strike + later expiration — most common defensive roll for puts
@@ -133,7 +134,19 @@ Track how many candidates you evaluated in `roll_economics.candidates_evaluated`
 
 **Respect earnings constraints**: When `roll_target_rules` blocks certain expirations (0-13 days after earnings), skip those expirations in the search.
 
+## PROFIT OPTIMIZATION VALIDATION
+
+When `profit_optimization_gate` is `"eligible"` (from Agent 1), you MUST validate candidate-dependent conditions before proceeding with the profit optimization roll:
+
+1. **No earnings before new expiration**: If `profit_optimization_constraints.next_earnings_date` is set and falls on or before your chosen new expiration → validation FAILS
+2. **No ex-dividend before new expiration**: If `profit_optimization_constraints.next_ex_div_date` is set and falls on or before your chosen new expiration → validation FAILS
+
+If BOTH checks pass → proceed with the profit optimization roll (ROLL_UP).
+If EITHER check fails → downgrade to standard roll logic. Remove `profit_optimization` from risk_flags and treat as a normal position (typically WAIT or the next-best defensive action). Do NOT proceed with ROLL_UP for premium capture.
+
 ## OUTPUT FORMAT
+
+⚠️ **MANDATORY**: Your output MUST contain a valid JSON block with the `activity` field. If you cannot find a viable roll candidate, output a CLOSE activity with `roll_tier: "no_viable_roll"`. NEVER output a response without the JSON activity block.
 
 Produce the **final activity JSON** inside a fenced code block, followed by a **SUMMARY** line. This JSON uses the same schema as the unified open_put_monitor output.
 
@@ -172,7 +185,7 @@ Prepend Agent 1's reason, then add your roll economics details.
   "assignment_risk": "low or medium or high or critical",
   "new_strike": 195.0,
   "new_expiration": "YYYY-MM-DD",
-  "estimated_roll_cost": -0.30,
+  "estimated_roll_cost": 1.15,
   "roll_economics": {{
     "buyback_cost": 4.10,
     "new_premium": 5.25,
@@ -235,7 +248,7 @@ When recommending CLOSE due to #2:
   "assignment_risk": "high",
   "new_strike": 195,
   "new_expiration": "2026-05-22",
-  "estimated_roll_cost": -0.30,
+  "estimated_roll_cost": 1.15,
   "roll_economics": {{
     "buyback_cost": 4.10,
     "new_premium": 5.25,

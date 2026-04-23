@@ -287,21 +287,21 @@ When the current put is deep OTM and nearly worthless, you may recommend ROLL_UP
    - Note: Puts have negative delta; use absolute value for comparison
 3. **DTE ≥ 10**: Enough time remaining for the roll to be worthwhile
 
-**FLEXIBLE CONDITIONS (need at least 4 of 7):**
+**FLEXIBLE CONDITIONS (need at least 3 of 5 stock-level conditions):**
 
 4. **Technicals neutral/bullish**: Oscillator summary is Buy or Neutral (NOT Sell)
 5. **Moving averages neutral/bullish**: MA summary is Buy or Neutral (NOT Sell)
-6. **No earnings before new expiration**: No earnings fall before the new expiration date — CRITICAL for puts due to gap-down risk asymmetry
-7. **No ex-dividend before new expiration**: No dividend dates fall before new expiration
-8. **Analyst sentiment not bearish**: No recent downgrades or Sell consensus
-9. **IV stable or declining**: IV is not elevated or spiking
-10. **Position stable**: No recent ROLL alerts or flip-flopping in the activity log
+6. **Analyst sentiment not bearish**: No recent downgrades or Sell consensus
+7. **IV stable or declining**: IV is not elevated or spiking
+8. **Position stable**: No recent ROLL alerts or flip-flopping in the activity log
+
+**Note:** Candidate-dependent conditions (no earnings before new expiration, no ex-dividend before new expiration) cannot be evaluated here because Agent 2 selects the target expiration. Agent 2 will validate these before proceeding with the roll. This is especially critical for puts due to gap-down risk asymmetry on earnings misses.
 
 **CRITICAL OVERRIDE:** Even if all conditions pass, the MANDATORY EARNINGS GATE takes absolute priority. If the earnings gate blocks the roll, do not proceed. Put positions face asymmetric gap-down risk on earnings misses — this gate is NON-NEGOTIABLE for puts.
 
-**Gate Logic: 3 mandatory + 4 of 7 flexible = PASS**
+**Gate Logic: 3 mandatory + 3 of 5 stock-level flexible = ELIGIBLE**
 
-Report the gate result as `"profit_optimization_gate": "passed"` or `"profit_optimization_gate": "failed"` in your handoff output. If passed, set the action to ROLL_UP with `"profit_optimization"` in risk_flags.
+Report the gate result as `"profit_optimization_gate": "eligible"` or `"profit_optimization_gate": "failed"` in your handoff output. "eligible" means this agent's checks passed — Agent 2 will validate the remaining candidate-dependent conditions. If eligible, set the action to ROLL_UP with `"profit_optimization"` in risk_flags. Include `profit_optimization_constraints` in the handoff with `next_earnings_date` and `next_ex_div_date` so Agent 2 can validate against the chosen expiration.
 
 ## INTERPRETING PREVIOUS ACTIVITY LOG
 
@@ -440,7 +440,11 @@ When you determine the position needs action (ROLL or CLOSE), output a **handoff
   "risk_flags": ["approaching_itm", "earnings_approaching", "earnings_within_dte"],
   "reason": "Stock broke below $200 strike on sector weakness...",
   "confidence": "high",
-  "profit_optimization_gate": "passed or failed or null",
+  "profit_optimization_gate": "eligible or failed or null",
+  "profit_optimization_constraints": {
+    "next_earnings_date": "YYYY-MM-DD or null",
+    "next_ex_div_date": "YYYY-MM-DD or null"
+  },
   "pivot_points": {
     "classic": { "R1": 218.00, "R2": 222.00, "R3": 228.00, "S1": 205.00, "S2": 198.00, "S3": 193.00 }
   },
@@ -455,7 +459,8 @@ When you determine the position needs action (ROLL or CLOSE), output a **handoff
 **Handoff Rules:**
 - `action_needed`: The roll type you recommend based on your analysis. For profit optimization, use ROLL_UP. For CLOSE, the Roll Management agent will verify no viable roll exists.
 - `pivot_points`: Extract the Classic pivot points from the technicals data (R1-R3, S1-S3). Agent 2 uses S1/S2/S3 for put strike targeting (defensive rolls move to lower strikes near support).
-- `profit_optimization_gate`: Set to "passed" if the profit optimization gate passed (ROLL_UP for premium capture), "failed" if evaluated but failed, or `null` if not applicable (defensive roll).
+- `profit_optimization_gate`: Set to "eligible" if the profit optimization gate passed (ROLL_UP for premium capture), "failed" if evaluated but failed, or `null` if not applicable (defensive roll). Agent 2 will validate candidate-dependent conditions.
+- `profit_optimization_constraints`: When gate is "eligible", include `next_earnings_date` and `next_ex_div_date` (or null if unknown) so Agent 2 can validate against the chosen expiration.
 - `roll_target_rules`: Summarize any earnings-driven constraints on roll targets so Agent 2 respects them.
 - Include ALL relevant risk flags — Agent 2 will carry them through to the final output.
 - The `reason` should explain WHY action is needed — Agent 2 handles the HOW (economics).
