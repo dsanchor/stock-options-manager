@@ -13,7 +13,13 @@ from agent_framework.azure import AzureOpenAIChatClient
 
 from .cosmos_db import CosmosDBService
 from .context import ContextProvider
-from .options_chain_parser import parse_options_chain, filter_options_chain_for_position, filter_options_chain_by_delta, OPTIONS_CHAIN_SCHEMA_DESCRIPTION
+from .options_chain_parser import (
+    parse_options_chain,
+    filter_options_chain_for_position,
+    filter_options_chain_by_delta,
+    filter_options_chain_by_roll_direction,
+    OPTIONS_CHAIN_SCHEMA_DESCRIPTION,
+)
 from .tv_cache import get_tv_cache as _get_tv_cache
 
 # Canonical timestamp format — used for ALL activity and alert log entries.
@@ -734,11 +740,17 @@ Output your activity in the required JSON format. Use the timestamp above in you
                 )
                 print(f"⚠️ TradingView 403 on {failed} for {full_symbol} — continuing with partial data")
 
-            # Pre-compute the filtered chain text (needed for Phase 2)
-            filtered_chain_text = self._format_options_chain(
-                data.get('options_chain', ''), symbol,
-                current_strike=float(strike), option_type=position_type,
-            )
+            # Pre-compute the structured filtered chain (for Phase 2)
+            structured_chain = parse_options_chain(data.get('options_chain', ''), symbol)
+            if structured_chain.get("calls") or structured_chain.get("puts"):
+                structured_chain = filter_options_chain_for_position(
+                    structured_chain, float(strike), position_type,
+                )
+                structured_chain = filter_options_chain_by_delta(structured_chain)
+            filtered_chain_text = (
+                OPTIONS_CHAIN_SCHEMA_DESCRIPTION + "\n"
+                + json.dumps(structured_chain, indent=2)
+            ) if (structured_chain.get("calls") or structured_chain.get("puts")) else data.get('options_chain', '')
 
             # ── Two-phase execution ─────────────────────────────────
             # Phase 1 gets only the current contract's chain data
@@ -770,6 +782,22 @@ Output your activity in the required JSON format. Use the timestamp above in you
                     handoff_json.get("action_needed"), full_symbol,
                 )
                 print(f"↪ Phase 1 action: {handoff_json.get('action_needed')} — running roll management…")
+
+                # Apply direction-aware filtering so Phase 2 only sees
+                # strikes/expirations valid for the roll direction.
+                roll_type = handoff_json.get("action_needed", "")
+                if roll_type and (structured_chain.get("calls") or structured_chain.get("puts")):
+                    direction_filtered = filter_options_chain_by_roll_direction(
+                        structured_chain,
+                        current_strike=float(strike),
+                        current_expiration=expiration,
+                        roll_type=roll_type,
+                        option_type=position_type,
+                    )
+                    filtered_chain_text = (
+                        OPTIONS_CHAIN_SCHEMA_DESCRIPTION + "\n"
+                        + json.dumps(direction_filtered, indent=2)
+                    )
 
                 try:
                     phase2_response, phase2_json = await self._run_roll_management(

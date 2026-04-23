@@ -300,3 +300,123 @@ def filter_options_chain_by_delta(
         "puts": _filter_bucket(chain.get("puts", {}), *put_delta_range),
         **({"current_position": chain["current_position"]} if "current_position" in chain else {}),
     }
+
+
+# ---------------------------------------------------------------------------
+# Roll-direction filtering — narrows chain for Phase 2 based on roll type
+# ---------------------------------------------------------------------------
+
+# Roll types and their directional semantics (same for calls and puts)
+_ROLL_STRIKE_FILTERS = {
+    "ROLL_DOWN":         "below",
+    "ROLL_UP":           "above",
+    "ROLL_OUT":          "same",       # ±1 adjacent strike
+    "ROLL_UP_AND_OUT":   "above_eq",
+    "ROLL_DOWN_AND_OUT": "below_eq",
+}
+
+# Rolls containing "OUT" require strictly later expirations
+_STRICT_LATER_ROLLS = {"ROLL_OUT", "ROLL_UP_AND_OUT", "ROLL_DOWN_AND_OUT"}
+
+
+def filter_options_chain_by_roll_direction(
+    chain: dict,
+    current_strike: float,
+    current_expiration: str,
+    roll_type: str,
+    option_type: str,
+) -> dict:
+    """Filter an already-filtered chain based on the roll direction from Phase 1.
+
+    Narrows strikes and expirations so Phase 2 only sees candidates that are
+    valid for the given roll type.  Unrecognised roll types pass the chain
+    through unchanged (safe fallback).
+
+    Parameters
+    ----------
+    chain : dict
+        Structured chain dict (output of ``filter_options_chain_by_delta``).
+    current_strike : float
+        The strike of the current position being rolled.
+    current_expiration : str
+        Expiration of the current position (``YYYY-MM-DD`` or ``YYYYMMDD``).
+    roll_type : str
+        Roll action from Phase 1 (e.g. ``ROLL_DOWN``, ``ROLL_UP_AND_OUT``).
+    option_type : str
+        ``"call"`` or ``"put"``.
+    """
+    direction = _ROLL_STRIKE_FILTERS.get(roll_type)
+    if direction is None:
+        logger.warning(
+            "filter_options_chain_by_roll_direction: unknown roll_type '%s' — returning chain unchanged",
+            roll_type,
+        )
+        return chain
+
+    # Normalise expiration to YYYYMMDD for chain-key comparison
+    exp_key = current_expiration.replace("-", "")
+    strict_later = roll_type in _STRICT_LATER_ROLLS
+
+    # Determine which bucket to filter based on option_type
+    bucket_key = "calls" if option_type == "call" else "puts"
+    bucket = chain.get(bucket_key, {})
+
+    # Pre-compute adjacent strikes for ROLL_OUT (±1 nearest)
+    all_strikes: set[float] = set()
+    for strikes_dict in bucket.values():
+        all_strikes.update(float(k) for k in strikes_dict)
+    sorted_strikes = sorted(all_strikes)
+
+    adjacent_strikes: set[float] = set()
+    if direction == "same" and sorted_strikes:
+        # Find index of the closest strike to current_strike
+        closest_idx = min(
+            range(len(sorted_strikes)),
+            key=lambda i: abs(sorted_strikes[i] - current_strike),
+        )
+        adjacent_strikes.add(sorted_strikes[closest_idx])
+        if closest_idx > 0:
+            adjacent_strikes.add(sorted_strikes[closest_idx - 1])
+        if closest_idx < len(sorted_strikes) - 1:
+            adjacent_strikes.add(sorted_strikes[closest_idx + 1])
+
+    def _strike_ok(strike_val: float) -> bool:
+        if direction == "below":
+            return strike_val < current_strike
+        elif direction == "above":
+            return strike_val > current_strike
+        elif direction == "below_eq":
+            return strike_val <= current_strike
+        elif direction == "above_eq":
+            return strike_val >= current_strike
+        elif direction == "same":
+            return strike_val in adjacent_strikes
+        return True  # fallback: keep
+
+    def _exp_ok(exp: str) -> bool:
+        if strict_later:
+            return exp > exp_key
+        return exp >= exp_key
+
+    filtered_bucket: dict = {}
+    for exp, strikes_dict in bucket.items():
+        if not _exp_ok(exp):
+            continue
+        kept = {
+            k: v for k, v in strikes_dict.items()
+            if _strike_ok(float(k))
+        }
+        if kept:
+            filtered_bucket[exp] = kept
+
+    # Preserve the other bucket untouched and keep chain metadata
+    other_key = "puts" if bucket_key == "calls" else "calls"
+    result = {
+        "symbol": chain.get("symbol", ""),
+        "timestamp": chain.get("timestamp"),
+        bucket_key: filtered_bucket,
+        other_key: chain.get(other_key, {}),
+    }
+    if "current_position" in chain:
+        result["current_position"] = chain["current_position"]
+    return result
