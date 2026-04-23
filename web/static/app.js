@@ -124,6 +124,27 @@ document.addEventListener('DOMContentLoaded', function() {
                 });
         });
     }
+    // ── Hamburger menu toggle ──
+    var hamburger = document.querySelector('.hamburger');
+    var topnav = document.querySelector('.topnav');
+    if (hamburger && topnav) {
+        hamburger.addEventListener('click', function() {
+            topnav.classList.toggle('nav-open');
+        });
+    }
+
+    // ── Settings dropdown tap handler for touch devices ──
+    var dropdownTrigger = document.querySelector('.nav-dropdown-trigger');
+    var dropdown = document.querySelector('.nav-dropdown');
+    if (dropdownTrigger && dropdown) {
+        dropdownTrigger.addEventListener('click', function(e) {
+            e.stopPropagation();
+            dropdown.classList.toggle('dropdown-open');
+        });
+        document.addEventListener('click', function() {
+            dropdown.classList.remove('dropdown-open');
+        });
+    }
 });
 
 /* ── Filtering ─────────────────────────────────────────────────── */

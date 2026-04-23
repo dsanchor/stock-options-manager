@@ -264,7 +264,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 /* ── Tables ── */
-.table-wrap { overflow-x: hidden; }
+.table-wrap { overflow-x: auto; }
 .agent-card table { table-layout: fixed; width: 100%; }
 .agent-card td, .agent-card th { overflow: hidden; text-overflow: ellipsis; }
 table { width: 100%; border-collapse: collapse; }
@@ -782,8 +782,72 @@ input:checked + .slider::before { transform: translateX(16px); background: #fff;
     margin-bottom: 0.5rem;
 }
 
+/* ── Hamburger button (hidden on desktop) ── */
+.hamburger {
+    display: none;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 1.4rem;
+    padding: 0.2rem 0.5rem;
+    cursor: pointer;
+    line-height: 1;
+}
+
+/* ── Dropdown open via tap (touch devices) ── */
+.nav-dropdown.dropdown-open .nav-dropdown-content {
+    display: block;
+}
+
 /* ── Responsive additions ── */
 @media (max-width: 640px) {
     .form-inline-row { flex-direction: column; }
     .form-inline-row .input-field { width: 100% !important; }
+
+    /* Hamburger nav */
+    .hamburger { display: block; margin-left: auto; }
+    .nav-links {
+        display: none;
+        flex-direction: column;
+        width: 100%;
+        gap: 0.25rem;
+    }
+    .topnav.nav-open .nav-links { display: flex; }
+    .nav-links a, .nav-dropdown-trigger {
+        width: 100%;
+        box-sizing: border-box;
+    }
+    .nav-dropdown { width: 100%; }
+    .nav-dropdown-content {
+        position: static;
+        border: none;
+        margin-top: 0;
+        padding-left: 1rem;
+    }
+
+    /* Stacked filter controls */
+    .filter-group { flex-wrap: wrap; gap: 0.4rem; }
+    .card-header { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+
+    /* Larger touch targets */
+    .btn-trigger, .btn-trigger-row, .btn-sm {
+        min-height: 44px;
+        padding: 0.4rem 0.8rem;
+    }
+    .switch { width: 44px; height: 24px; }
+    .switch .slider::before { height: 18px; width: 18px; }
+    input:checked + .slider::before { transform: translateX(20px); }
+    .pill { padding: 0.35rem 0.8rem; }
+    .filter-select { min-height: 36px; padding: 0.35rem 0.6rem; }
+
+    /* Activity feed readability */
+    .activity-item { flex-wrap: wrap; gap: 0.3rem; }
+    .activity-body { width: 100%; }
+
+    /* Font size bumps */
+    .badge, .card-badge { font-size: 0.8rem; }
+    .summary-label { font-size: 0.78rem; }
+    thead th { font-size: 0.78rem; }
+    tbody td { font-size: 0.85rem; }
 }
