@@ -227,6 +227,33 @@ def parse_options_chain(raw: str, symbol: str = "") -> dict:
     }
 
 
+def filter_options_chain_by_type(chain: dict, option_type: str) -> dict:
+    """Filter a parsed options chain to keep only calls or only puts.
+
+    This is the FIRST filter in the pipeline — it strips the irrelevant side
+    immediately so downstream filters process less data.
+
+    Parameters
+    ----------
+    chain : dict
+        Structured chain dict (output of ``parse_options_chain``).
+    option_type : str
+        ``"call"`` to keep only calls, ``"put"`` to keep only puts.
+    """
+    result = {k: v for k, v in chain.items() if k not in ("calls", "puts")}
+    if option_type == "call":
+        result["calls"] = chain.get("calls", {})
+        result["puts"] = {}
+    elif option_type == "put":
+        result["calls"] = {}
+        result["puts"] = chain.get("puts", {})
+    else:
+        # Unknown type — pass through unchanged
+        result["calls"] = chain.get("calls", {})
+        result["puts"] = chain.get("puts", {})
+    return result
+
+
 def filter_options_chain_for_position(
     chain: dict,
     current_strike: float,

@@ -1256,7 +1256,8 @@ async def api_debug_agent_chain(request: Request, symbol: str,
 
     from src.tv_cache import get_tv_cache
     from src.options_chain_parser import (
-        parse_options_chain, filter_options_chain_by_delta,
+        parse_options_chain, filter_options_chain_by_type,
+        filter_options_chain_by_delta,
         filter_options_chain_for_position, filter_options_chain_by_roll_direction,
         format_roll_candidates_table, OPTIONS_CHAIN_SCHEMA_DESCRIPTION,
     )
@@ -1291,16 +1292,26 @@ async def api_debug_agent_chain(request: Request, symbol: str,
         n_con = sum(len(strikes) for strikes in bucket.values())
         return n_exp, n_con
 
-    # --- Stage 1: Delta filter (always applied) ---
-    delta_filtered = filter_options_chain_by_delta(structured)
-    s1_exp, s1_con = _chain_stats(delta_filtered, option_type)
+    # --- Stage 0: Type filter (calls or puts only) ---
+    type_filtered = filter_options_chain_by_type(structured, option_type)
+    s0_exp, s0_con = _chain_stats(type_filtered, option_type)
 
     pipeline = {
-        "stage_1_delta_filtered": {
-            "num_expirations": s1_exp,
-            "num_contracts": s1_con,
-            "text": OPTIONS_CHAIN_SCHEMA_DESCRIPTION + "\n" + _json.dumps(delta_filtered, indent=2),
+        "stage_0_type_filtered": {
+            "num_expirations": s0_exp,
+            "num_contracts": s0_con,
+            "text": OPTIONS_CHAIN_SCHEMA_DESCRIPTION + "\n" + _json.dumps(type_filtered, indent=2),
         },
+    }
+
+    # --- Stage 1: Delta filter (applied to type-filtered chain) ---
+    delta_filtered = filter_options_chain_by_delta(type_filtered)
+    s1_exp, s1_con = _chain_stats(delta_filtered, option_type)
+
+    pipeline["stage_1_delta_filtered"] = {
+        "num_expirations": s1_exp,
+        "num_contracts": s1_con,
+        "text": OPTIONS_CHAIN_SCHEMA_DESCRIPTION + "\n" + _json.dumps(delta_filtered, indent=2),
     }
 
     # --- Underlying price (from cached technicals JSON) ---
