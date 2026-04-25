@@ -1429,3 +1429,12 @@ This orchestration event consolidates all pending team decisions from 2026-04-23
 - Linus entries include stability buffer (decision 8), bare ROLL prohibition (decision 6), phase-2-only CLOSE (decision 7), markdown tables (decision 9) — all already implemented and now recorded in team memory
 
 **Why this matters:** Team decisions are now canonical and immutable in the decisions archive. Future sprints will consult this record for precedent on action format validation, snapping behavior, and two-phase agent architecture.
+
+### Option Type Filter — Stage 0 Filter Pipeline (2026-04-25)
+- **Task**: Add option type filter (calls/puts) as the first stage of the chain filter pipeline
+- **Implementation**: New `filter_options_chain_by_type()` function in `src/options_chain_parser.py` separates call and put options
+- **Integration points**: Applied in `src/agent_runner.py` (2 locations) and `web/app.py` (debug endpoint Stage 0)
+- **Decision**: Type filter is Stage 0 of the pipeline — strips irrelevant option side before any other filtering logic executes
+- **Commit**: 8cdfb99
+- **Key insight**: Early filtering on immutable characteristics (call vs put) streamlines downstream processing and reduces token overhead in later stages
+

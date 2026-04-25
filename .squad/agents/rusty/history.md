@@ -96,6 +96,22 @@ Converted Quick Analysis chat from JSON/structured output to natural language re
 **Summary:**
 Integrated live TradingView symbol info widget into symbol detail page. Replaced static "Market:Symbol" text label with interactive widget displaying real-time trading data.
 
+### Option Type Filter Pipeline Stage (2026-07)
+**Status:** ✅ Completed  
+**Scope:** Add `filter_options_chain_by_type()` as first filter in options chain pipeline
+
+**Changes:**
+- **src/options_chain_parser.py:** New `filter_options_chain_by_type(chain, option_type)` function placed before `filter_options_chain_for_position`. Strips irrelevant side (calls when monitoring puts, puts when monitoring calls).
+- **src/agent_runner.py:** Applied in `_format_options_chain()` (conditional on option_type) and `run_position_monitor()` Phase 2 chain prep (always applied).
+- **web/app.py:** Added as Stage 0 in debug endpoint pipeline, before delta filter. Updated import.
+
+**Architecture:**
+- Pipeline order: parse → type filter → position filter → delta filter → direction filter
+- Pure optimization — no behavior change, just less noise flowing through downstream stages
+- The function preserves all non-calls/puts keys (symbol, timestamp, current_position, etc.)
+
+**Commit:** 8cdfb99
+
 ## Key Learnings & Patterns
 
 ### Unified Schema Query Pattern (2026-04-01)
