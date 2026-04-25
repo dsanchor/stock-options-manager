@@ -92,13 +92,18 @@ Pick the best candidate based on the rules below.
 ⛔ Every ROLL action MUST include a specific `new_strike` and `new_expiration` picked from the candidates table.
 You MUST reference the specific row number from the table. A ROLL without concrete targets is INVALID.
 
+⛔ **NEVER invent or interpolate strike prices. Only strikes appearing in the candidates table exist in the market.**
+Pivot points, delta targets, and calculated values are _guidance_ for choosing among actual table rows — they are NOT literal strike values.
+
 Select a specific new strike and expiration based on the handoff data:
 
 - **New strike (defensive rolls — ROLL_DOWN, ROLL_DOWN_AND_OUT)**:
-  - Use support levels from `pivot_points` (S1, S2, S3) as strike targets
-  - Alternative: target |delta| 0.20-0.30 at the new strike
+  - Use support levels from `pivot_points` (S1, S2, S3) as a **target zone** — find the row(s) in the candidates table nearest to that level
+  - **Snapping rule**: If a pivot level falls between two available strikes, snap **DOWN** to the next lower available strike (more safety for puts)
+  - Alternative: scan the candidates table for rows with |delta| 0.20-0.30 and pick the best match
+  - If neither the pivot-nearest nor the delta-target row exists, scan nearby rows in the table and pick the closest one that satisfies tier thresholds, DTE, and earnings constraints
 - **New strike (profit optimization — ROLL_UP)**:
-  - Target |delta| 0.25-0.30 at the new higher strike
+  - Scan the candidates table for rows with |delta| 0.25-0.30 and pick the best match
   - New strike must be OTM by ≥1.5-2% below current price
 - **New expiration**:
   - Default target: 30-45 DTE from today for optimal theta decay
@@ -153,8 +158,8 @@ Before reporting roll economics, you MUST:
 When your initial roll candidate fails Tier 1 or exceeds the Tier 2 threshold, systematically search the candidates table for better alternatives in this order:
 
 1. **Same strike, later expiration**: Look for a row with the same strike but a later expiration date (more time = more premium)
-2. **Lower strike, same expiration**: Look for a row with a strike $1-$2.50 lower (puts roll down for safety), same expiration
-3. **Lower strike AND later expiration**: Look for a row combining both — lower strike and more time
+2. **Lower strike, same expiration**: Look for the next lower available strike(s) in the table (puts roll down for safety), same expiration
+3. **Lower strike AND later expiration**: Look for a row combining both — the next lower available strike and more time
 4. **If no table row meets thresholds → CLOSE**: No viable roll exists
 
 Scan the table rows sorted by Net Credit (descending). The table is already sorted this way. Pick the first row that passes all constraints (|delta| range, DTE ≤ 45, earnings rules, tier thresholds).

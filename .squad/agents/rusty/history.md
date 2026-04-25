@@ -568,3 +568,13 @@ Added `VALID_ROLL_ACTIONS` and `VALID_PHASE2_ACTIVITIES` constant sets near the 
 Phase 2 sometimes outputs a roll type (e.g. ROLL_UP_AND_OUT) without selecting a specific candidate from the table — `new_strike` and `new_expiration` left null. Added two-layer fix:
 1. **Code validation** in agent_runner.py: after existing bare-ROLL/invalid-activity checks, validates that ROLL actions have non-null `new_strike`, `new_expiration`, and `roll_economics`. Incomplete rolls auto-convert to CLOSE with audit trail in reason field.
 2. **Instruction hardening** in both call and put roll instruction files: added ⛔ MANDATORY constraint notes before the JSON schema and at the top of the ROLL CANDIDATE SELECTION section.
+
+### Strike Snapping — Pivot Points as Guidance (2026-07)
+**Status:** ✅ Completed
+**Files:** src/tv_open_call_roll_instructions.py, src/tv_open_put_roll_instructions.py
+
+Bug: Phase 2 agent used pivot point values (R1/R2/R3, S1/S2/S3) as literal strike prices. These calculated levels rarely match actual chain strikes, causing failed lookups and unnecessary CLOSE fallbacks. Fix:
+1. Rewrote ROLL CANDIDATE SELECTION in both files: pivot points and delta targets are now explicitly labeled as guidance/target zones, not literal values
+2. Added snapping rule: calls snap UP, puts snap DOWN to nearest available strike when pivot falls between strikes
+3. Added ⛔ warning: "NEVER invent or interpolate strike prices"
+4. Updated ROLL SEARCH ALGORITHM: replaced "$1-$2.50 higher/lower" with "next available strike(s) in the table"
