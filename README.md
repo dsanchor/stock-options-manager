@@ -38,11 +38,12 @@ Scheduler (main.py)
   │    for each position:
   │      1. Load position details from symbol_config
   │      2. Pre-fetch TradingView data
-  │      3. LLM assesses assignment risk → WAIT or ROLL activity
-  │      4. Write activity to CosmosDB; if ROLL/CLOSE → also write alert
+  │      3. Phase 1 (Assessment): LLM evaluates assignment risk → WAIT or handoff to Phase 2
+  │      4. Phase 2 (Roll Management): Selects specific roll targets from filtered options chain, calculates economics
+  │      5. Write activity to CosmosDB; if ROLL/CLOSE → also write alert
   │
   └─ Query CosmosDB for symbols with active put positions
-       (same loop, different agent instructions)
+       (same two-phase pipeline, different agent instructions)
 ```
 
 **Data gathering:** Python pre-fetches ALL TradingView data deterministically from `tv_data_fetcher.py`. Overview, technicals, forecast, and dividends are fetched via `requests` + `BeautifulSoup` + TradingView scanner API (`scanner.tradingview.com/america/scan2`) — no browser needed. Options chain still uses Playwright (headless Chromium) with `page.on("response")` interception because it requires browser authentication. The LLM never touches the browser or makes HTTP requests. It receives the data as text and only performs analysis. See [Pre-fetch Architecture](#pre-fetch-architecture-tradingview) below.
@@ -73,6 +74,19 @@ The Open Call Monitor and Open Put Monitor watch **existing** short options posi
 | **Focus** | "Should I open a new position?" | "Is my existing position safe?" |
 
 Positions are managed via the web dashboard or API. Each position is stored within the symbol's `symbol_config` document in CosmosDB with type (call/put), strike, expiration, status, and notes. Position monitors only run for symbols with `status: "active"` positions.
+
+**Two-phase pipeline:** Position monitors use a two-phase architecture. **Phase 1 (Assessment)** evaluates assignment risk and produces a structured handoff JSON if action is needed. **Phase 2 (Roll Management)** receives the handoff plus a filtered options chain (see below) and selects specific roll targets (strike/expiration) with full roll economics (buyback cost, new premium, net credit/debit).
+
+#### Options Chain Filter Pipeline
+
+Before Phase 2 receives the options chain, a 4-stage filter pipeline narrows it to relevant contracts:
+
+1. **Type filter** — Strips the irrelevant option side (puts when monitoring calls, calls when monitoring puts)
+2. **Position filter** — ±15 strikes around the current position
+3. **Delta filter** — Removes deep ITM/OTM contracts outside configured delta ranges
+4. **Direction filter** — Narrows to strikes/expirations valid for the roll direction (e.g., only higher strikes for ROLL_UP)
+
+After filtering, a pre-computed **candidates table** with roll economics (buyback cost, new premium, net credit) is generated and included in the Phase 2 prompt.
 
 **Profit optimization (premium-first roll policy):** When market indicators show the position is deeply OTM with no risk catalysts, the monitor may recommend tightening the strike to collect additional premium (ROLL_DOWN for calls, ROLL_UP for puts). This requires 3 mandatory conditions (≥10 DTE, deeply OTM, net credit) plus at least 4 of 7 flexible conditions (super-majority gate) — conservative by design. The ultra-defensive roll threshold caps maximum debit at $1 ($100 per contract). Profit-optimization rolls are tagged with a `"profit_optimization"` risk flag to distinguish them from defensive rolls. Monitor agents prioritize premium collection when rolling, considering whether to tighten strikes more aggressively when conditions allow.
 
@@ -257,7 +271,7 @@ For `SELL` activities, `strike`, `expiration`, premium, `risk_rating`, and `risk
 
 ### Telegram Notifications
 
-When a `SELL`, `ROLL`, or `CLOSE` alert is generated, a Telegram notification is sent if enabled (see [Configuration](#configuration)). The message includes the symbol, action, and key details (strike, expiration, risk flags). Sell alerts additionally include the risk rating (`Risk: X/10`) for at-a-glance risk assessment. Roll alerts include the assignment risk level (e.g., `Assignment Risk: High`) when available from the monitor agent analysis.
+When a `SELL`, `ROLL`, or `CLOSE` alert is generated, a Telegram notification is sent if enabled (see [Configuration](#configuration)). The message includes the symbol, action, and key details (strike, expiration, risk flags). Sell alerts include the risk rating (`Risk: X/10`) and premium. Roll alerts include roll economics (buyback cost, new premium, net credit/debit) and assignment risk level. Close alerts show the buyback cost for the position exit.
 
 ## Dual-Mode Chat Experience
 
@@ -388,8 +402,11 @@ stock-options-manager/
 │   ├── report_agent.py                   # Report generation agent wrapper
 │   ├── tv_covered_call_instructions.py   # TradingView covered call instructions (no-tools variant)
 │   ├── tv_cash_secured_put_instructions.py # TradingView cash secured put instructions (no-tools variant)
-│   ├── tv_open_call_instructions.py      # TradingView open call monitor instructions
-│   ├── tv_open_put_instructions.py       # TradingView open put monitor instructions
+│   ├── tv_open_call_assessment_instructions.py  # Open call monitor Phase 1 (assessment)
+│   ├── tv_open_call_roll_instructions.py        # Open call monitor Phase 2 (roll management)
+│   ├── tv_open_put_assessment_instructions.py   # Open put monitor Phase 1 (assessment)
+│   ├── tv_open_put_roll_instructions.py         # Open put monitor Phase 2 (roll management)
+│   ├── options_chain_parser.py           # Options chain parser — filter pipeline + candidates table
 │   ├── tv_open_call_chat_instructions.py # Chat instructions for open call analysis
 │   ├── tv_open_put_chat_instructions.py  # Chat instructions for open put analysis
 │   ├── tv_report_instructions.py         # Report agent system prompt
@@ -432,7 +449,7 @@ stock-options-manager/
   - **Portfolio Chat** — Analyze tracked symbols using CosmosDB data (watchlists, positions, recent activities). Click "Portfolio Chat" to ask questions about your tracked symbols.
   - **Quick Analysis** — Analyze any symbol (tracked or not) by fetching live TradingView data without saving to the database. Click "Quick Analysis", select a market (NASDAQ/NYSE/AMEX/OTC), and get instant analysis without committing to tracking.
   - Mode selector on the chat page lets you switch between modes at any time.
-- **Settings** (`/settings`) — Scheduler config, Telegram notifications toggle & test button, Summarization Agent config (cron schedule & activity count), runtime stats (today/7d/30d telemetry), TradingView error tracking and anti-403 stats, and a Debug TradingView Fetch tool for testing data fetching per symbol. Settings are persisted to CosmosDB and survive application restarts and deployments. Changes made in the Settings UI are immediately available to all components (scheduler, telegram notifier, summarization agent, etc.) without requiring a restart.
+- **Settings** (`/settings`) — Scheduler config, Telegram notifications toggle & test button, Summarization Agent config (cron schedule & activity count), runtime stats (today/7d/30d telemetry), TradingView error tracking and anti-403 stats, a Debug TradingView Fetch tool for testing data fetching per symbol, and an **Agent Chain Pipeline** debug view (`/api/debug/agent-chain/{symbol}`) for inspecting the full two-phase monitor pipeline per symbol. Settings are persisted to CosmosDB and survive application restarts and deployments. Changes made in the Settings UI are immediately available to all components (scheduler, telegram notifier, summarization agent, etc.) without requiring a restart.
 
 ---
 
