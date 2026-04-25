@@ -2417,3 +2417,313 @@ Options chain data format changed from arrays-of-contracts to strike-keyed dicti
 - **Rusty**: No framework changes needed — this is purely data format + strategy logic
 - **Danny**: If adding new agent types that consume options chains, use `_format_options_chain()` — pass `current_strike` only if the agent monitors a specific position
 - Strike key format is `str(float(strike))` → always "475.0" style, never "475"
+
+## 5. Decision: Pivot Points Are Guidance, Not Literal Strike Values
+
+**Author:** Rusty  
+**Date:** 2026-07  
+**Status:** Applied  
+
+### Context
+Phase 2 roll management treated pivot point levels (R1/R2/R3 for calls, S1/S2/S3 for puts) as literal strike prices to look up in the candidates table. These calculated values almost never match actual option chain strikes, causing failed lookups and unnecessary CLOSE recommendations.
+
+### Decision
+- Pivot points and delta targets are **guidance for choosing among actual table rows**, not literal strike values.
+- When a target falls between available strikes, snap in the safe direction: **UP for calls, DOWN for puts**.
+- The agent must ONLY select strikes that exist as rows in the candidates table.
+- The ROLL SEARCH ALGORITHM references "next available strike(s)" instead of fixed dollar offsets.
+
+### Impact
+Both `tv_open_call_roll_instructions.py` and `tv_open_put_roll_instructions.py` updated. No code changes needed — this is instruction-level guidance that the LLM agent follows at runtime.
+
+### Commit
+c0034bf: `fix: pivot points as guidance, not literal strikes in roll instructions`
+
+---
+
+## 6. Decision: Bare ROLL Prohibition + ROLL_OUT Guardrail
+
+**Date:** 2026-07  
+**Author:** Linus (Quant Dev)  
+**Status:** Implemented  
+**Impact:** All four monitor instruction files (Phase 1 assessment + Phase 2 roll management, calls + puts)
+
+### Problem
+
+1. **Bare ROLL bug**: Phase 1 assessment agents sometimes output `"action_needed": "ROLL"` without a direction suffix. This is invalid — downstream parsing and Phase 2 handoff expects a specific roll type.
+
+2. **ROLL_OUT → immediate CLOSE loop**: Phase 1 recommends ROLL_OUT (same strike, later expiry), the roll fires, position updates. Next monitoring cycle sees the same bad strike and recommends CLOSE. The ROLL_OUT was pointless — it delayed close by one cycle.
+
+### Decisions
+
+#### 1. Explicit Valid Actions Enumeration
+- Added `⛔ VALID ACTIONS — ENUMERATED LIST` section near the top of all four files
+- Phase 1: WAIT, ROLL_DOWN, ROLL_UP, ROLL_OUT, ROLL_UP_AND_OUT, ROLL_DOWN_AND_OUT
+- Phase 2: CLOSE, ROLL_DOWN, ROLL_UP, ROLL_OUT, ROLL_UP_AND_OUT, ROLL_DOWN_AND_OUT
+- Explicit rejection: "Never output bare ROLL — always include the direction suffix"
+- Added constraint on `action_needed` field in Phase 1 handoff JSON schema
+- Added constraint on `activity` field in Phase 2 output JSON schema
+
+#### 2. ROLL_OUT Guardrail (Phase 1 only)
+- ROLL_OUT only when: strike still near-the-money (calls: delta 0.30–0.60; puts: |delta| 0.25–0.50), position ≤5 DTE, no directional signal
+- NOT when: deep ITM/OTM, directional breakout, or position would be CLOSE regardless of expiration
+- Default to compound rolls (ROLL_UP_AND_OUT, ROLL_DOWN_AND_OUT) when both strike and time need adjustment
+- This is ADDITIVE — no existing logic was removed
+
+### Files Changed
+- `src/tv_open_call_assessment_instructions.py`
+- `src/tv_open_put_assessment_instructions.py`
+- `src/tv_open_call_roll_instructions.py`
+- `src/tv_open_put_roll_instructions.py`
+
+---
+
+## 7. Decision: CLOSE is a Phase 2-only action
+
+**Author:** Linus (Quant Dev)
+**Date:** 2026-07
+**Status:** Implemented
+
+### Context
+
+Phase 1 (Position Assessment) was producing `action_needed: "CLOSE"` in the handoff JSON. However, Phase 1 only has the current contract's delta/IV — it does NOT have the full options chain. The CLOSE decision requires evaluating whether ANY viable roll exists, which demands chain data for buyback costs, new premiums, and roll tier calculations.
+
+### Decision
+
+Phase 1 now only outputs WAIT or a ROLL type. CLOSE is exclusively a Phase 2 determination.
+
+#### Specific changes:
+1. Removed `CLOSE` from `action_needed` enum in both assessment handoff schemas
+2. Added `close_for_profit_recommended` (boolean) and `profit_level_pct` (float) to handoff JSON for TastyTrade 50%+ profit scenarios
+3. Phase 2 handles CLOSE via three paths:
+   - `close_for_profit_recommended: true` + ask price confirms profit → CLOSE for profit
+   - Roll Search Algorithm exhausted with no Tier 1/2 candidate → CLOSE (no_viable_roll)
+   - `fundamental_deterioration` in risk_flags + no viable roll → CLOSE
+4. Earnings gate result names (CLOSE_OR_ROLL, etc.) are preserved as risk labels — only the ACTION changes
+
+### Rationale
+
+The agent making a decision must have the data to justify it. CLOSE requires full chain economics that only Phase 2 possesses. This separation of concerns prevents Phase 1 from making economically uninformed closure decisions.
+
+### Files Changed
+- `src/tv_open_call_assessment_instructions.py`
+- `src/tv_open_put_assessment_instructions.py`
+- `src/tv_open_call_roll_instructions.py`
+- `src/tv_open_put_roll_instructions.py`
+
+---
+
+## 8. Decision: Near-ATM Stability Buffer for Phase 1 Assessment
+
+**Date:** 2026-07  
+**Author:** Linus (Quant Dev)  
+**Status:** Implemented  
+**Impact:** Phase 1 call + put assessment instructions (tv_open_call_assessment_instructions.py, tv_open_put_assessment_instructions.py)
+
+### Problem
+
+Positions that go slightly ITM (price barely crosses the strike) immediately get a ROLL recommendation. On the next monitoring run, the stock may pull back to OTM and get WAIT. This creates noisy oscillating ROLL/WAIT recommendations that aren't actionable.
+
+### Decision
+
+Added a **stability zone** (0-3% ITM) where Phase 1 defaults to WAIT when technicals are favorable, instead of immediately recommending ROLL. This provides hysteresis to prevent flip-flopping.
+
+#### Key Design Choices
+
+1. **3% threshold**: Wide enough to absorb normal intraday/inter-day fluctuations, narrow enough that truly ITM positions still get ROLL.
+2. **Technicals gate**: The buffer only applies when oscillators and MAs suggest the move may be temporary. If technicals confirm the adverse move, ROLL fires immediately.
+3. **Delta 0.60 hard cap**: Even in the stability zone, delta > 0.60 means deep ITM — always ROLL.
+4. **Anti-flip-flop rule**: Added to activity log interpretation — require delta change > 0.10 or price change > 1% to switch from WAIT to ROLL.
+5. **No impact on other gates**: Earnings gate, ROLL_OUT guardrail, and profit optimization gate are untouched and take priority.
+
+### Scope
+
+- Phase 1 assessment only — does not affect Phase 2 roll economics
+- Both call and put variants, with correctly inverted logic for puts
+- New risk flag `near_atm_stability` added to taxonomy
+
+---
+
+## 9. Decision: Pre-Computed Markdown Tables for Phase 2 Roll Instructions
+
+**Date:** 2026-07
+**Author:** Linus (Quant Dev)
+**Status:** Implemented
+**Impact:** Phase 2 roll instruction files (call + put)
+
+### Context
+
+LLM agents consistently misread raw JSON options chain data in Phase 2 roll management. The nested dict format (`calls["20260520"]["475.0"]["bid"]`) caused wrong strikes, wrong bids, and fabricated prices.
+
+### Decision
+
+Replace JSON chain input with pre-computed markdown tables. Python calculates all economics (Net Credit, Premium%, Ann.Ret%) before the agent sees the data. The agent's job is now *selection* from a sorted table, not *navigation and calculation* of a JSON tree.
+
+#### Key Design Choices
+
+1. **Table columns include all economics** — Net Credit, Premium%, Ann.Ret% are pre-computed so the agent never calculates
+2. **CURRENT POSITION block** — Provides buyback cost and current contract details separately from the table
+3. **Table is pre-sorted by Net Credit descending** — Agent reads top-down for best candidates
+4. **VERIFICATION simplified** — From "state the full JSON path" to "cite the row number and values"
+5. **All decision logic preserved** — Premium-First tiers, 45 DTE cap, delta constraints, earnings gates, CLOSE logic unchanged
+
+### Files Changed
+
+- `src/tv_open_call_roll_instructions.py` — Removed import, updated INPUT/VERIFICATION/SEARCH/examples
+- `src/tv_open_put_roll_instructions.py` — Same changes, put-specific (Premium% = bid/strike, roll directions inverted)
+
+### Note for Rusty
+
+The instruction files no longer import `OPTIONS_CHAIN_SCHEMA_DESCRIPTION` from `options_chain_parser.py`. The new table format is injected by `agent_runner.py` (Rusty's domain). Instruction files just describe how to read it.
+
+---
+
+## 10. Decision: Reject bare "ROLL" at code level
+
+**Author:** Rusty  
+**Date:** 2026-07  
+**Status:** Implemented
+
+### Context
+Phase 1 agents occasionally output `"action_needed": "ROLL"` without a direction suffix. This is ambiguous — Phase 2 needs a direction (DOWN/UP/OUT/etc.) to filter the options chain correctly. Running Phase 2 with bare ROLL means no direction filtering, leading to incorrect candidate sets.
+
+### Decision
+Validate action values in code, not just in prompts:
+
+- **Phase 1 handoff:** `_try_extract_handoff_json()` now validates `action_needed` against `VALID_ROLL_ACTIONS`. Bare "ROLL" or unknown values → handoff rejected → treated as WAIT (Phase 2 does not run).
+- **Phase 2 output:** After `_run_roll_management()`, bare "ROLL" activity → auto-corrected to "CLOSE" with reason annotation. Unknown activities → same treatment.
+- **Degraded fallback:** Default in Phase 2 error handler changed from "ROLL" to "CLOSE".
+
+### Rationale
+- Prompt-only guardrails are insufficient — LLMs can still produce invalid values
+- WAIT is the safe fallback for Phase 1 (no action taken, re-evaluated next cycle)
+- CLOSE is the safe fallback for Phase 2 (if direction can't be determined, close the position rather than roll blindly)
+- Constants (`VALID_ROLL_ACTIONS`, `VALID_PHASE2_ACTIVITIES`) are importable for use in tests and other modules
+
+---
+
+## 11. Decision: Pre-Computed Markdown Candidate Tables for Phase 2
+
+**Date:** 2026-07-10
+**Author:** Rusty (Agent Dev)
+**Status:** Implemented
+**Commit:** 6e7556f
+
+### Context
+Phase 2 roll management agent was receiving the filtered options chain as a raw JSON blob. Even after ±15 strike + delta + direction filtering, LLMs consistently misread bid/ask values, picked wrong strikes, and made arithmetic errors when navigating nested JSON.
+
+### Decision
+Pre-compute roll economics in Python and send Phase 2 a flat markdown table instead of JSON. The new `format_roll_candidates_table()` function in `options_chain_parser.py` computes buyback cost, net credit, DTE, premium%, and annualized return per candidate. The agent now picks from a numbered table — no JSON parsing, no arithmetic.
+
+### Implications
+- Phase 2 no longer needs `OPTIONS_CHAIN_SCHEMA_DESCRIPTION` — removed from both roll instruction files
+- The `_run_roll_management()` message uses "ROLL CANDIDATES:" label instead of "OPTIONS CHAIN DATA:"
+- Phase 2 instructions tell the agent to use pre-computed values directly and not recalculate
+- The `underlying_price` for premium% calculation comes from `handoff_json.get("underlying_price")`
+- Pipeline is now: ±15 strikes → delta → direction → candidate table
+
+---
+
+## 12. Decision: Debug Endpoint Underlying Price Source
+
+**Date:** 2026-07  
+**Author:** Rusty (Agent Dev)  
+**Status:** Implemented  
+**Impact:** Debug endpoint only (no production agent impact)
+
+### Context
+
+The debug endpoint needed the underlying stock price for the `format_roll_candidates_table()` call (used to compute premium_pct). In the real agent flow, this comes from the Phase 1 handoff JSON (`handoff_json.get("underlying_price")`), but in debug mode there's no Phase 1 agent.
+
+### Decision
+
+Source the underlying price from the cached **technicals** data (`cache.get(cache_key, "technicals")` → JSON → `price` field). This is the closing price from TradingView's scanner API, available whenever the technicals scheduler has run. Fallback to 0 with a `"not available"` note if cache is empty.
+
+### Rationale
+
+- The technicals cache is populated by the same scheduled fetcher, so it's available whenever options chain data is
+- The `price` field is a clean float, no parsing needed
+- Overview data is raw HTML text — extracting price would require fragile regex patterns
+- Using 0 as fallback is safe: premium_pct and annualized return will show 0%, clearly indicating missing data
+
+---
+
+## 13. Decision: Direction-Aware Chain Filtering for Phase 2
+
+**Author:** Rusty  
+**Date:** 2026-07  
+**Status:** Implemented  
+**Commit:** 39096cc
+
+### Context
+Phase 2 (Roll Management) received ±15 strikes around the current position after delta filtering, but many strikes were irrelevant for the roll direction. For example, ROLL_DOWN for a call doesn't need strikes above the current strike. The LLM wasted context and sometimes picked impossible candidates.
+
+### Decision
+Added a third filtering stage (`filter_options_chain_by_roll_direction`) that narrows the chain based on Phase 1's roll type before passing to Phase 2. The filter applies both strike direction and expiration constraints per roll type. Unknown roll types pass through unchanged as a safe fallback.
+
+### Key Design Choices
+- **Structured dict stored pre-Phase-1**: Refactored `agent_runner.py` to keep the structured chain dict (not just serialized text) so direction filtering doesn't require re-parsing.
+- **ROLL_OUT keeps ±1 adjacent strikes**: Not just the exact current strike, because a slightly different strike at a later date might be attractive.
+- **"OUT" rolls use strictly later expirations**: Same expiration makes no sense for an "out" roll.
+- **Puts and calls use the same direction logic**: ROLL_DOWN means lower strikes regardless of option type. The direction semantics are inherent to the roll name.
+
+### Filter Pipeline
+```
+±15 strikes → delta range → roll direction
+```
+
+---
+
+## 14. Decision: Auto-convert incomplete ROLL actions to CLOSE
+
+**Author:** Rusty  
+**Date:** 2026-07  
+**Status:** Implemented  
+**Commit:** 2086e07
+
+### Context
+Phase 2 agents sometimes output a ROLL type (e.g., ROLL_UP_AND_OUT) without selecting a specific candidate — `new_strike` and `new_expiration` are left null. This makes the activity unexecutable.
+
+### Decision
+Incomplete ROLL actions (missing `new_strike`, `new_expiration`, or `roll_economics`) are auto-converted to CLOSE with an audit trail appended to the reason field. This is consistent with the existing bare-ROLL → CLOSE conversion pattern.
+
+### Rationale
+- A ROLL without a target is worse than useless — it implies an action was chosen but can't be executed
+- Converting to CLOSE is the safest fallback: it flags the position for manual review
+- The audit trail in `reason` preserves what the agent originally recommended for debugging
+- Instruction-level hardening reduces the frequency of this happening, but code validation is the safety net
+
+---
+
+## 15. Decision: User Directive — ROLL Action Format
+
+**Date:** 2026-04-23  
+**By:** dsanchor (via Copilot)  
+**Status:** Implemented  
+
+### Directive
+
+(1) "ROLL" alone is never a valid action — must always include direction: ROLL_DOWN, ROLL_UP, ROLL_OUT, ROLL_UP_AND_OUT, ROLL_DOWN_AND_OUT. Valid actions are: WAIT, CLOSE, ROLL_DOWN, ROLL_UP, ROLL_OUT, ROLL_UP_AND_OUT, ROLL_DOWN_AND_OUT.
+
+(2) ROLL_OUT should not be recommended if the position would be a CLOSE candidate on the next monitoring cycle — keep actions objective and consistent.
+
+### Reason
+
+User request — captured for team memory. Prevents bare ROLL output and unnecessary interim rolls that just delay inevitable closes.
+
+---
+
+## 16. Decision: User Directive — ITM Stability Buffer
+
+**Date:** 2026-04-23  
+**By:** David (via Copilot)  
+**Status:** Implemented  
+
+### Directive
+
+When a position is slightly ITM (near ATM), the agent should NOT automatically recommend ROLL/CLOSE. If technicals (trends, sentiment, MAs) are still favorable, it may be a temporary move. Add a stability margin so the agent WAITs in these cases instead of flip-flopping between ROLL and WAIT on consecutive runs. Only trigger ROLL when clearly ITM beyond a margin, OR when technicals confirm the move is sustained. This applies when the position is still close to ATM.
+
+### Reason
+
+User request — prevents oscillating recommendations that create noise without improving outcomes. Implemented in linus-stability-buffer decision.
+

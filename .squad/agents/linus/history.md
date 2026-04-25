@@ -9,6 +9,21 @@
 
 ## Learnings
 
+### Near-ATM Stability Buffer (2026-07)
+- Problem: Positions slightly ITM (price barely crosses strike) trigger ROLL, then revert to OTM and get WAIT on the next run — oscillating recommendations.
+- Fix: Added `## NEAR-ATM STABILITY BUFFER` section to both `tv_open_call_assessment_instructions.py` and `tv_open_put_assessment_instructions.py`, placed before ACTIVITY CRITERIA.
+- Stability zone: within 3% of strike on the ITM side. If technicals are favorable (Neutral/Sell oscillators for calls, Neutral/Buy for puts) and delta < 0.60, default to WAIT.
+- Override conditions: delta > 0.60, Strong directional momentum against position, earnings imminent, ex-div risk (calls), DTE < 7 and ITM.
+- Added anti-flip-flop rule to INTERPRETING PREVIOUS ACTIVITY LOG: maintain WAIT if delta change < 0.10 and price change < 1% since last reading.
+- Modified ROLL triggers #1 and #2 to require momentum (not just proximity) and respect the stability zone.
+- Added `near_atm_stability` to the Unified Risk Flag Taxonomy in both files.
+- Key pattern: Near-ATM positions need hysteresis — once you decide WAIT, require a clear deterioration trend to switch to ROLL, not just a single marginal crossing.
+
+### Bare ROLL Bug + ROLL_OUT Guardrail (2026-07)
+- Bug 1: Phase 1 agents sometimes output `"action_needed": "ROLL"` without a direction suffix. Fixed by adding explicit `⛔ VALID ACTIONS` enumeration near the top of all four instruction files (both Phase 1 assessment and Phase 2 roll management). Added constraint text on `action_needed` in Phase 1 handoff schema and `activity` in Phase 2 output schema: "Never output bare ROLL — always include the direction suffix."
+- Bug 2: ROLL_OUT leading to immediate CLOSE on the next monitoring cycle. Root cause: ROLL_OUT keeps the same strike, so if the strike is fundamentally wrong (deep ITM/OTM), the next cycle sees the same problem and recommends CLOSE. Fixed by adding a `⚠️ ROLL_OUT GUARDRAIL` section in both Phase 1 assessment files (call + put) that restricts ROLL_OUT to cases where the strike is still viable (near-the-money delta ranges), the position is near expiration (≤5 DTE), and there's no directional signal. When the strike needs to change, agents must use compound roll types (ROLL_UP_AND_OUT, ROLL_DOWN_AND_OUT) instead.
+- Key pattern: When the agent has a "ROLL" concept as a category and specific types as instances, the agent may output the category name instead of an instance. Always enumerate valid outputs explicitly and reject the category name.
+
 ### Hard 45 DTE Cap for New Positions (2026-07)
 - User reported agents recommending expirations with DTE > 45 too frequently
 - Root cause: Instructions said "Avoid >60 DTE" — the 46-60 day gap had no prohibition. The earnings gate post-earnings path (≥14 days after earnings when >30 days out) could also push past 45 DTE.
@@ -1381,3 +1396,36 @@ Set to `null` for WAIT, populated for all ROLL and CLOSE activities.
 - **Finding 2 (HIGH): Profit optimization gate responsibility split** — Assessment files had flexible conditions 6/7 checking "no earnings/ex-div before new expiration" but Agent 1 doesn't choose the expiration. Changed gate result from "passed" to "eligible", removed candidate-dependent conditions (now 5 stock-level flexible, need 3 of 5), added `profit_optimization_constraints` field to handoff JSON with `next_earnings_date`/`next_ex_div_date`. Added new PROFIT OPTIMIZATION VALIDATION section to both roll files so Agent 2 validates these before proceeding.
 - **Finding 3 (HIGH): Mandatory JSON output** — Added explicit warning to both roll files: output MUST contain a valid JSON block with `activity` field. If no viable roll, output CLOSE with `roll_tier: "no_viable_roll"`. Never output without JSON.
 - Key learning: When splitting agents, re-examine which conditions each agent CAN evaluate. Candidate-dependent checks belong with the agent that selects the candidate.
+
+### Phase 1 CLOSE Removal (2026-07)
+- **Design flaw fixed**: Phase 1 (Assessment) was outputting CLOSE as an `action_needed` value, but Phase 1 lacks the full options chain needed to determine if any viable roll exists. Only Phase 2 (Roll Management) has chain data for that economic evaluation.
+- **Changes**: Removed CLOSE from `action_needed` enum in both assessment handoff schemas. Phase 1 now always picks the best ROLL type. Added `close_for_profit_recommended` (boolean) and `profit_level_pct` (float) handoff fields for TastyTrade 50%+ profit scenarios. Phase 2 now handles three CLOSE paths: (1) close-for-profit when flag is set and ask confirms profit, (2) no-viable-roll after exhausting Roll Search Algorithm, (3) fundamental deterioration with no viable roll.
+- **Earnings gate result names preserved**: CLOSE_OR_ROLL remains a valid gate result name (risk label), but Phase 1's action in response is always "hand off to Phase 2 for roll."
+- Key learning: The agent that makes a decision must have the data to justify it. CLOSE requires chain economics → only Phase 2 can decide CLOSE.
+
+### Pre-Computed Markdown Table Format for Phase 2 (2026-07)
+- **Problem**: LLM agents consistently misread raw JSON options chain data — wrong strikes, wrong bids, fabricated prices. The nested dict format (`calls["20260520"]["475.0"]["bid"]`) was error-prone for LLMs.
+- **Solution**: Replaced JSON chain input with pre-computed markdown tables where Python does all the math. Agent just picks the best row from the table.
+- **Changes to instruction files** (`tv_open_call_roll_instructions.py`, `tv_open_put_roll_instructions.py`):
+  - Removed `OPTIONS_CHAIN_SCHEMA_DESCRIPTION` import and f-string formatting
+  - Replaced INPUT section with new table format description (CURRENT POSITION block + ROLL CANDIDATES table)
+  - Updated VERIFICATION section: from "find JSON path" to "read from table row"
+  - Updated ROLL SEARCH ALGORITHM: from "navigate chain" to "scan table rows"
+  - Updated all example reason strings: from JSON paths to table row references
+  - Updated Close-for-Profit: references CURRENT POSITION block instead of "chain"
+  - Fixed double-brace `{{` → `{` since strings are no longer f-strings
+- **Preserved**: All decision logic, Premium-First tiers, 45 DTE cap, delta constraints, earnings gates, CLOSE logic, profit optimization validation.
+- Key learning: When LLMs misread structured data, pre-compute the answer and present it as a simple table — the agent's job becomes selection, not calculation.
+
+### Decision Batch Merged to Team Record (2026-04-25T06:43:58Z)
+**Status:** ✅ Completed
+**Decision Records:** Promoted from .squad/decisions/inbox → .squad/decisions.md
+**Cross-Team Awareness:** Strike snapping decision propagated to Rusty's history for roll economics validation workflows
+
+This orchestration event consolidates all pending team decisions from 2026-04-23 onwards into the permanent team record:
+- Decisions 5–16 in `decisions.md` (12 new decision entries covering action format, stability buffer, ROLL prohibition, phase-split logic, candidate tables, and code-level validation)
+- Inbox cleaned: all 12 decision files deleted from `.squad/decisions/inbox/`
+- Orchestration logs created: `20260425T064358-rusty.md` (summary) + `20260425T064358-strike-snapping-fix.md` (session log)
+- Linus entries include stability buffer (decision 8), bare ROLL prohibition (decision 6), phase-2-only CLOSE (decision 7), markdown tables (decision 9) — all already implemented and now recorded in team memory
+
+**Why this matters:** Team decisions are now canonical and immutable in the decisions archive. Future sprints will consult this record for precedent on action format validation, snapping behavior, and two-phase agent architecture.

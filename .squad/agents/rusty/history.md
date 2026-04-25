@@ -578,3 +578,11 @@ Bug: Phase 2 agent used pivot point values (R1/R2/R3, S1/S2/S3) as literal strik
 2. Added snapping rule: calls snap UP, puts snap DOWN to nearest available strike when pivot falls between strikes
 3. Added ⛔ warning: "NEVER invent or interpolate strike prices"
 4. Updated ROLL SEARCH ALGORITHM: replaced "$1-$2.50 higher/lower" with "next available strike(s) in the table"
+
+### Strike Snapping Fix — Orchestration Complete (2026-04-25T06:43:58Z)
+**Status:** ✅ Completed
+**Commit:** c0034bf (already pushed)
+**Orchestration Log:** `.squad/orchestration-log/20260425T064358-rusty.md`
+**Session Log:** `.squad/log/20260425T064358-strike-snapping-fix.md`
+
+Strike snapping decision finalized and merged into team decisions.md. Both instruction files updated to clarify that pivot point levels are guidance only — agents snap to nearest available strikes in safe direction (UP for calls, DOWN for puts). Decision promoted from inbox to permanent record. Inbox cleaned. Cross-agent awareness flagged for Linus (roll economics validation workflows).
