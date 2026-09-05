@@ -979,3 +979,25 @@ Initial feature rejected by Basher (D0) due to two contract gaps. Pulled forward
 
 **Final Outcome:** All 73 gate tests pass (53 core + 20 extended); all 13 original + extended requirements verified; feature approved and production-ready.
 
+### 2026-09-05 — Dividend Portfolio Architecture (design only)
+
+- **Proposal:** `.squad/decisions/inbox/danny-dividend-portfolio-architecture.md`
+- **Key architectural decisions:**
+  - New `portfolio` Cosmos container (partition key `/symbol`), fully independent of the `symbols` container. No foreign keys — ticker string is the natural join key.
+  - Ledger-first model: holdings derived from `Σ BUY - Σ SELL + Σ dividend_shares`, never stored as a mutable document. Movements are append-only (soft-delete, no hard delete).
+  - **Null vs zero withholding** is the critical invariant: `withholding_destination = null` means "broker does not capture this" (Fidelity, IBKR); `{amount: 0}` means "broker confirms zero" (ING). Without this distinction, fiscal export (Phase 4) cannot distinguish "tax paid" from "tax liability pending."
+  - Multi-currency model: every monetary field carries `{amount, currency, eur_amount, fx_rate}`; `fx_rate` is always `transaction_currency / EUR` (ECB convention).
+  - Broker profiles are defaults/hints (pre-fill form), not constraints. Recorded transactions are self-contained facts; changing a profile never alters historical movements.
+  - Mixed cash/share dividends modeled atomically: one DIVIDEND movement with an optional `share_leg` — no phantom BUY.
+  - `total_shares` on `symbol_config` left untouched; reconciliation deferred to post-Excel-import (Phase 2/3).
+  - Watchlist NOT renamed — the concepts "stocks I watch" and "stocks I own" are orthogonal; renaming 40+ files for zero functional gain is churn.
+  - "Portfolio" added as a new TopNav dropdown peer to "Symbols" with Holdings + Movements sub-items.
+- **Reusable pattern:** When a new domain (portfolio) overlaps an existing domain (watchlist) on one dimension (the ticker), connect them by shared key, not by co-locating in the same container or adding foreign-key dependencies. This preserves independent evolution and avoids RU/query interference.
+- **Anti-pattern avoided:** Deriving holdings from the ledger *before* the full history is imported would produce wrong numbers and destroy trust. Parallel systems (mutable `total_shares` + ledger) must coexist until a reconciliation phase proves equivalence.
+
+### 2026-09-05 — Dividend Portfolio Consolidated Recommendation (specialist reconciliation)
+
+- **Reconciled:** Danny architecture proposal + Livingston ledger model + Rusty UX design into `## Consolidated Recommendation` section in `danny-dividend-portfolio-architecture.md`.
+- **Nine divergences resolved:** (1) Container `portfolio` with pk `/account_id` (Livingston's partition wins, Danny's name wins). (2) 3 MVP pages not 4 or 2 (Accounts + Movements + Holdings; Dividends page deferred). (3) Livingston's `EUR_PER_TXN_CCY` multiply convention (eliminates divide-direction bugs). (4) No hardcoded tax rates in broker profiles — all rates are user-confirmed defaults. (5) Null-vs-zero destination WHT codified with three states. (6) `holding_snapshot` deferred. (7) Mixed dividend = two linked movements, not single doc or three-doc scrip event. (8) JSON numbers over decimal strings (personal scale, float64 sufficient). (9) Full edit allowed in MVP (not void-only); revision chain is Phase 4.
+- **Structural lesson:** When reconciling specialist designs of different depths (Livingston: 880-line persistence model; Rusty: 700-line UX spec; Danny: 540-line architecture), the reconciler's job is to find the *simplest correct intersection*, not to merge all detail. Specialists correctly anticipate future needs; the lead's job is to defer those anticipations cleanly rather than shipping them prematurely. Every deferred decision has a named phase and a preserved hook.
+

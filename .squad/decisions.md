@@ -2,7 +2,246 @@
 
 ## Active Decisions
 
-### 1. Scheduler Hang Watchdog — Per-Symbol Timeout & Worker Max Duration
+### 1. Dividend Portfolio — Phase 1 MVP Architecture & Ledger Design
+
+**Date:** 2026-09-05  
+**Authors:** Danny (Lead, Architecture), Livingston (Persistence), Rusty (UX/Frontend)  
+**Status:** PROPOSED — awaiting user confirmation on open questions  
+**Impact:** User-managed dividend portfolio with ledger-first data model, multi-broker support, multi-currency accounting, withholding tracking, mixed dividend support
+
+#### Context & Directive
+
+User request: Design independent dividend portfolio section to manage manual BUY, SELL, and DIVIDEND movements; support Fidelity, HeyTrade, ING, Interactive Brokers; EUR, USD, GBP, CHF currencies with EUR base reporting; withholding at origin (source country) and destination (investor country); mixed cash/share dividends (scrip/DRIP). Explicitly defers: Excel import (Phase 2), charts, Economics integration, fiscal export.
+
+#### Architecture — Domain Boundaries
+
+The app tracks two orthogonal concerns:
+- **Watchlist/Symbols:** Option-income research (flags, agents, enrichment, buy-tracker). Remains in existing `symbols` container.
+- **Portfolio:** Stocks owned (BUY/SELL/DIVIDEND ledger). New `portfolio` Cosmos container, partition key `/account_id`.
+
+**Key decision:** Keep `symbol_config` as-is for options; portfolio movements independent. Link via ticker symbol (string), not foreign key. Symbols can be watched-only, owned-only, both, or neither. This is correct, not a bug.
+
+**Navigation:** Add new "Portfolio" top-level menu between Economics and Chat (peer to Symbols). Four subpages: Securities (holdings), Movements (ledger), Dividends (yield focus), Accounts (broker setup). Do NOT rename "Symbols" or "Watchlist" — avoids 40+ file churn with zero functional gain.
+
+#### Ledger-First Data Model — Core Design Principles
+
+1. **Immutable movements.** Each recorded transaction (BUY, SELL, DIVIDEND) is an immutable fact. Soft-delete (mark `deleted_at`) or correct via reversal; never mutate.
+2. **Holdings are derived, never stored.** Current holdings = `SUM(buys) - SUM(sells) + SUM(dividend_shares)`, grouped by `(symbol, broker)`. Computed on read.
+3. **All monetary amounts dual-store:** transaction currency AND EUR equivalent (e.g., `gross_amount: {amount: 8625.00, currency: USD, eur_amount: 7915.00, fx_rate: 1.0897}`).
+4. **Broker is first-class attribute.** Fidelity, HeyTrade, ING, Interactive Brokers each have distinct withholding, FX, and fee behaviors.
+
+#### Multi-Currency & FX — Critical Convention
+
+**FX rate convention:** `fx_rate = transaction_currency / EUR` (reciprocal of ECB convention)  
+**Arithmetic:** `eur_amount = amount_txn × fx_rate`  
+**Example:** USD/EUR = 0.91730 (ECB EURUSD = 1.09, so rate = 1/1.09); $27,375 × 0.91730 = €25,111.29  
+**Rate sources:** ECB (preferred for trade date), BROKER (HeyTrade/ING conversion), MANUAL (user), OVERRIDE (user change with original preserved)  
+**Data type:** Decimal string (9 decimal places for precision in rate composition)
+
+#### Withholding — Dual-Layer Model (Most Critical Design Decision)
+
+| Layer | When Present | Semantics |
+|-------|--------------|-----------|
+| **Source (origin_wht)** | DIVIDEND always | Tax withheld at security's country (e.g., US 15% treaty rate) |
+| **Destination (dest_wht)** | DIVIDEND always | Tax withheld by broker for investor's country (e.g., Spain 19% IRPF) — or NOT captured |
+
+**The null vs. zero distinction is fundamental:**
+- `withholding_destination: null` = broker doesn't capture this; distinct from `{amount: 0}` which means confirmed zero
+- Critical for Phase 4 fiscal export: identifies "tax already paid" vs. "tax liability outstanding"
+- **UI rendering rule:** null displays as ⚠️ "Pending" / "Not captured"; never as €0.00
+- Broker profile flag `captures_destination_withholding` drives form UI: if false, field hidden with warning
+
+#### Security Identity Model
+
+**Primary identifier: ISIN (ISO 6166, 12-character).** All transactions must carry ISIN (canonical identifier across exchanges/currencies).
+
+**Secondary identifiers (embedded in every transaction):** CUSIP (Fidelity primary), SEDOL (LSE listings), ticker (exchange-local, time-of-transaction), exchange MIC (ISO 10383), company name, asset class, listing currency.
+
+**Broker-specific IDs:** IBKR conid, HeyTrade internal mappings stored in `broker_ids` object.
+
+**Denormalized by design:** Security object embedded in every movement (not a foreign key). Preserves historical identity at transaction time; avoids joins; enables future corporate action tracking.
+
+#### Transaction Document Schema (Summarized)
+
+**Every movement carries:**
+- Cosmos fields: `id` (constructed: `txn_{account_id}_{date}_{ticker}_{type}_{seq}`), partition key `account_id`, `doc_type: ledger_txn`
+- Identity: `security` (ISIN, CUSIP, SEDOL, ticker, MIC, name, asset class, listing currency, broker_ids)
+- Classification: `txn_type` (BUY, SELL, DIVIDEND, SCRIP_CASH_LEG, SCRIP_SHARE_LEG)
+- Dates: `trade_date`, `settlement_date` (optional), `payment_date` (dividends), `ex_dividend_date` (dividends)
+- Quantity: `quantity` (decimal string, 6 dp, always positive; direction in txn_type); `quantity_unit: shares`
+- Price: `price_txn` (per share, null for dividends), `txn_currency` (EUR/USD/GBP/CHF)
+- Gross/Fees/Net (both txn currency and EUR):
+  - `gross_txn` / `gross_eur`
+  - `fees.total_txn` / `fees_eur` (with optional breakdown: commission, exchange_fee, stamp_duty, custody_fee, other)
+  - `net_txn` / `net_eur` (gross − fees − withholding)
+- FX: `fx.rate` (9 dp), `fx.rate_source` (ECB|BROKER|MANUAL|OVERRIDE), `fx.rate_date`, `fx.ecb_reference_rate`, `fx.original_rate` (if overridden)
+- Withholding (dividends only):
+  - `withholding.source_country`, `source_rate_pct`, `source_amount_txn`, `source_amount_eur`, `treaty_applied`, `treaty_name`
+  - `withholding.destination_country`, `destination_rate_pct`, `destination_basis_eur`, `creditable_amount_eur`
+- Dividend details (when txn_type = DIVIDEND):
+  - `dividend.ex_date`, `record_date`, `payment_date`, `dps` (dividend per share)
+  - `dividend.paid_in_shares` (boolean)
+  - `dividend.share_leg` (optional, when paid_in_shares): `shares`, `price_per_share`, `cost_basis_per_share_eur`, `total_value` (with cash portion, for mixed dividends)
+- Audit: `broker_ref`, `import_source` (manual|excel_import|api_import), `dedup_key` (for import idempotency), `revision`, `status` (active|voided), `voided_by`, `replaces_id`, `correction_chain`
+- Timestamps: `created_at`, `updated_at`, `deleted_at` (soft-delete, null = active)
+
+#### Mixed Cash/Share Dividends — Atomic Modeling
+
+Scrip dividends or DRIP can pay partly cash, partly shares, or entirely shares. Modeled as ONE economic event:
+
+When `dividend.paid_in_shares = true`, the movement gains a `share_leg` object:
+- Shares received (fractional)
+- Price per share at ex-date (for cost basis assignment)
+- Cost basis type: zero (true scrip) or fair value (elected in-lieu)
+- Total value in EUR
+
+**UI flow:** Dividend form has toggle "Paid in shares". When enabled, reveals stock leg sub-form. Both legs submitted atomically; server ensures both persist or neither.
+
+**Holdings impact:** `share_leg.shares` adds to symbol's total holdings at specified cost basis. Cash portion is income only. One DIVIDEND movement captures entire event.
+
+#### Cost Basis & Holdings Derivation
+
+**Formula:** For each `(account_id, isin)`:
+```
+total_shares = SUM(BUY.quantity) - SUM(SELL.quantity) + SUM(DIVIDEND.share_leg.quantity where paid_in_shares)
+avg_cost_basis_eur = weighted average of all BUY.cost_basis_per_share_eur
+total_invested_eur = SUM(BUY.gross_eur) - SUM(SELL.net_eur)
+total_dividends_eur = SUM(DIVIDEND.net_eur)
+```
+
+**Cost basis method (MVP default):** Average cost (simplest, matches Spanish FIFO-like scenarios). FIFO/LIFO deferred to Phase 3.
+
+**Performance:** ~500 movements (8 years × ~60 trades) computes sub-second via cross-partition aggregation. No materialized view needed for MVP. Snapshot optimization deferred to Phase 3.
+
+#### Broker Profiles — Four Initial Profiles (Behavior Hints, Not Constraints)
+
+**Fidelity (US-centric):** USD-native, CUSIP-primary, zero commission (since 2019), 15% US treaty withholding, no destination capture, requires ISIN resolution pre-import.
+
+**HeyTrade (EU-Spanish):** EUR-native, ISIN-primary, broker auto-converts USD → EUR, low/zero commission, captures both withholding layers, treats destination withholding transparently.
+
+**ING España (EU-Spanish):** EUR-native, ISIN-primary, commission-bearing (varies Spanish vs. international), captures both layers, PDF/online statements, historical data may require manual entry.
+
+**Interactive Brokers (Global):** Multi-currency, IBKR conid (proprietary) + ISIN, tiered commissions, complex W-8BEN scenarios, origin withholding only, no destination capture, Flex Query (XML/CSV) structured source.
+
+Each profile has defined defaults for forms (currency, FX field visibility, withholding toggle defaults, destination capture flag). **Critically:** Profiles are hints only. When the user enters a movement, they override any profile default. The stored movement records **what actually happened** per broker statement, not what profile predicted.
+
+#### MVP Pages & Forms
+
+**Securities (`/portfolio/securities`):** Read-only holdings table (Symbol, Broker, Shares, Avg Cost/share, Avg Cost EUR, Total Cost EUR, Status). Filters: broker, status. Row click: filtered Movements for that holding. Add button: quick BUY entry (cost basis always ledger-derived).
+
+**Movements (`/portfolio/movements`):** Full ledger (Date, Account, Type, Ticker, Qty, Price, Currency, FX Rate, Gross, Fees, Origin WHT, Dest WHT, Net EUR, Notes). Filters: date range, account(s), type(s), currency, ticker. Sort all columns. Row click: detail/edit panel. Void workflow (soft-delete with reason; cost-basis auto-recalculates). New Movement button: type-adaptive form.
+
+**Dividends (`/portfolio/dividends`):** Derived view grouping dividends per ticker/period. Columns: Payment Date, Ex-Date, Account, Ticker, Gross/Share, Shares, Gross Total, Origin WHT %, Dest WHT Status (✓ Collected | ⚠️ Pending | —). Summary stats: Total gross YTD, Total origin WHT YTD, **Destination WHT pending (amber highlight)**, Net YTD. Filters: year, account(s), ticker, month, type (Cash/Mixed/All), WHT status. No separate add button (via Movements form).
+
+**Accounts (`/portfolio/accounts`):** Broker profile setup (card per account). Add/Edit form: Broker dropdown (Fidelity/HeyTrade/ING/IBKR), Nickname, Default currency (locked for broker-specific; user-selectable for IBKR), Notes. Broker-to-currency mapping is advisory.
+
+#### Movement Form Flows — Type-Specific Adaptations
+
+**Common header (all types):** Type selector (pills: BUY | SELL | DIVIDEND | DIVIDEND+STOCK), Account dropdown, Date picker, Ticker combobox.
+
+**BUY form:** Shares → Price (currency) → Fees → FX Rate (🔄 fetch button) → EUR equivalent (computed, editable) → Summary (total cost, avg cost/share).
+
+**SELL form:** Extends BUY with Origin WHT % + Destination WHT % + "collected?" checkbox. Proceeds summary (gross − fees − withholding). Informational hint: "Avg cost basis €X.XX/share — Estimated gain €Y (deferred analytics)".
+
+**DIVIDEND (cash) form:** Ex-date → Payment date (required) → Gross/share → Shares at ex-date (auto-populated from position, editable) → Origin WHT % (pre-filled from country+DTA) + "yellow chip: DTA: reduced to 15%" → Destination WHT % + "collected?" checkbox (⚠️ if pending) → FX Rate (🔄 fetch for payment date) → Net EUR → Notes.
+
+**DIVIDEND+STOCK (mixed) form:** Extends DIVIDEND (cash) with second section: Stock Leg (Shares received, Price at ex-date, Cost basis type: ◉ Zero | ○ Fair value, Cost basis EUR). Atomic submission; both legs created together. UI shows linked rows with visual connector.
+
+#### Validation Rules (Invariants)
+
+| # | Invariant | Enforced |
+|---|-----------|----------|
+| I1 | `txn_type ∈ {BUY, SELL, DIVIDEND, ...}` | API validation |
+| I2 | `quantity > 0` for all types; direction in txn_type | API |
+| I3 | Every money field has amount + currency; eur_amount/fx_rate required when currency ≠ EUR | API |
+| I4 | `withholding_destination = null` ≠ `{amount: 0}`; UI renders null as "Pending" | UI + API |
+| I5 | Derived holdings never negative for (account_id, isin) at any point in ledger | API (chronological) |
+| I6 | Movements append-only; corrections via soft-delete or new document | API design |
+| I7 | `net = gross - fees - wht_source - wht_dest` (EUR conversion) | API (computed) |
+| I8 | `deleted_at` (soft-deleted) excluded from aggregates | Query filter |
+
+#### `total_shares` Migration Path
+
+Current `symbol_config.total_shares` (mutable, no provenance) coexists with ledger in MVP:
+- **Phase 1:** `total_shares` still editable in Watchlist; portfolio independent
+- **Phase 2:** Excel import + reconciliation tool (ledger vs. total_shares comparison); user decides when to flip each symbol to ledger-derived
+- **Phase 3:** `total_shares` becomes read-only, computed from ledger (not MVP)
+
+**Why not derive from day 1?** User has history since 2016. Manual entry of 8+ years impractical. Until Excel import delivers full history, ledger incomplete; derived holdings would be wrong. Both must coexist.
+
+#### UX / Accessibility / Mobile
+
+**Form accessibility:** `<label>` elements for all controls; `aria-live="polite"` on computed fields; movement type selector as `role="tablist"`; slide-over with `aria-modal="true"`, focus-trap, Escape closes with "discard?" confirmation.
+
+**Status indicators:** Color + icon (never color alone); ⚠️ for Pending, ✓ for Collected, "—" for zero/N/A.
+
+**Mobile:** Full-screen sheet (not half-sheet) on < 768 px viewport; `inputmode="decimal"` for numeric inputs; horizontal scroll with sticky columns for tables; card-list layout below 640 px; sticky summary at sheet bottom.
+
+**Error handling:** Field-level inline errors + red border; server errors via toast (Sonner pattern) or inline banner; FX fetch failure: warning (field stays required); Void failure: toast; network errors: optimistic update + rollback.
+
+#### APIs & BFF Surface
+
+All under `/api/portfolio/`:
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/portfolio/accounts` | List broker profiles |
+| POST/PUT/DELETE | `/api/portfolio/accounts/:id` | CRUD broker profiles |
+| GET | `/api/portfolio/securities` | Holdings (derived, not stored) |
+| GET/POST | `/api/portfolio/movements` | List / create movement(s) |
+| PATCH | `/api/portfolio/movements/:id/void` | Soft-delete with reason |
+| GET | `/api/portfolio/dividends` | Dividend events log |
+| GET | `/api/portfolio/dividends/summary` | Stat cards |
+| GET | `/api/portfolio/fx-rate` | `?currency=USD&date=YYYY-MM-DD` (ECB or BROKER or manual) |
+
+BFF routes in `frontend/src/app/api/portfolio/` follow existing proxy pattern.
+
+#### Phased Roadmap
+
+**Phase 1 (MVP):** Manual entry of movements; read-only holdings; parallel total_shares coexistence  
+**Phase 2:** Excel import (parser, batch processing, dedup); reconciliation tool; auto-FX fetching (ECB)  
+**Phase 3:** Ledger-derived total_shares (read-only); cost-basis methods (FIFO/LIFO); snapshot optimization  
+**Phase 4:** Fiscal export; tax reporting (IRPF integration); declaration linkage  
+**Phase 5:** Charts, analytics, time-series visualizations; Economics integration  
+
+#### Open Questions & Confirmations Awaited from User
+
+1. **Scrip/DRIP cost basis:** Is zero-cost election (true scrip) typical for user? Or predominantly fair-value (elected in-lieu)?
+2. **Broker statement frequency:** Monthly? Quarterly? Impacts reconciliation tool UI (Phase 2).
+3. **Historical data urgency:** Excel import (Phase 2) critical for early adoption, or can MVP start with "today forward"?
+4. **Tax reporting scope:** Are Spanish (IRPF) withholding rules primary, or multi-jurisdiction?
+5. **Current price feed:** Should Holdings page show "N/A" if symbol not in watchlist, or integrate yfinance spot?
+6. **Audit trail depth:** Do we preserve edit history (array in document) or just `updated_at` timestamp?
+
+#### Consolidated Recommendation (Authoritative)
+
+**Danny's design is primary.** Livingston's persistence model and Rusty's UX design integrate seamlessly:
+- Persistence: Cosmos container strategy, security identity (ISIN), FX convention (rate reciprocal), withholding dual-layer, decimal precision (6 dp amounts, 9 dp rates), broker profiles, transaction schema, validation invariants all validated.
+- UX: Navigation (Portfolio between Economics/Chat), four subpages, form flows (type-adaptive), accessibility (ARIA, mobile, focus management), API surface all mapped to persistence schema.
+- Cross-design consistency verified: FX convention aligned, withholding model agreed, cost-basis method (average cost MVP) confirmed, broker profiles shared, form field sets match schema.
+
+#### Assignments
+
+- **Implementation (future):** Backend API design & Cosmos provisioning (Livingston lead); frontend component development (Rusty lead); validation gates (Basher lead)
+- **Scribe (this session):** Merge inbox decisions, write orchestration logs, stage for commit
+
+#### Next Steps
+
+1. User reviews consolidated recommendation and design documents (links below)
+2. Confirm/clarify open questions above
+3. Proceed to Phase 1 implementation (backend API + frontend components)
+4. Phase 2 readiness: Excel import scaffolding, dedup key strategy, reconciliation tool UI
+
+---
+
+**See also:**
+- Orchestration logs: `.squad/orchestration-log/2026-09-05T15:56:00Z-danny-*.md` (all three agents)
+- Original inbox designs: All content merged into this decision; inbox files removed after commit
+- User directive: `.squad/decisions/inbox/copilot-directive-20260905T154228+0200.md` (Spanish — design target captured)
+
+---
+
+### 2. Scheduler Hang Watchdog — Per-Symbol Timeout & Worker Max Duration
 
 **Date:** 2026-06-30  
 **Author:** Rusty (Agent Dev)  
