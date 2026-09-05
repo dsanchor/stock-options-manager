@@ -2862,3 +2862,23 @@ Final Gate Approval (2026-09-05): After D1/D2 revisions:
 
 **Final Outcome:** ✅ Approved with confidence; 73/73 tests pass.
 
+
+---
+
+## 2026-09-05: Portfolio & Dividend CSV Validation (Specialist Input)
+
+**Task:** Design comprehensive validation and test matrix for historical dividend CSV import; provide error taxonomy for lead architect's consolidation.
+
+**Deliverables:**
+1. **basher-dividend-csv-validation.md** (320 lines) — Validation test matrix (parser, numeric, reconciliation, dedup, edge cases), error taxonomy
+
+**Key Contributions:**
+- Established error taxonomy (6 blocking errors, 8 warnings, informational, accepted)
+- Designed test matrix (15 parser tests, 8 numeric parsing tests, 8 reconciliation tests, dedup/idempotency tests, security/alias tests)
+- Specified edge cases (empty files, header-only, encoding fallback, year/date mismatch, ambiguous numbers)
+- Validated three-layer dedup model: Layer 1 (batch idempotency), Layer 2 (within-file exact match), Layer 3 (cross-batch fingerprint)
+
+**Status:** ✅ MERGED — Danny adopted Basher's error taxonomy and test matrix into Decision #2 §2.3 and §2.7. Handed off for test automation implementation.
+
+**Related:** Input to `danny-dividend-csv-import-consolidated.md`; Test matrix in Decision #2 §2.7
+

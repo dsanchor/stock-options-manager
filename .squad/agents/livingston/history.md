@@ -1314,3 +1314,25 @@ Per strict lockout policy: author of rejected code cannot participate in revisio
 - Calendar extractor revision owned by Rusty
 - Provider hang fix requires follow-up work (parallel path)
 - Gates on Basher's second review (calendar) and successful fix (provider hang)
+
+---
+
+## 2026-09-05: Portfolio & Dividend Persistence Model (Specialist Input)
+
+**Task:** Provide detailed persistence design for scrip dividends, rights handling, and historical CSV import; supply foundation for lead architect's consolidation.
+
+**Deliverables:**
+1. **livingston-scrip-rights-topup-clarification.md** (794 lines) — Detailed ca_event/ca_leg model, FMV/cost-basis separation, account reassignment cross-partition workflow
+2. **livingston-dividend-csv-import.md** (782 lines) — Input file contract, column mapping, parsing rules, batch metadata, dedup three-layer foundation
+
+**Key Contributions:**
+- Established ca_event (parent) + ca_leg (subtypes: CASH_DIVIDEND, SHARE_ACQUISITION, RIGHTS_SOLD, CASH_TOP_UP) document structure
+- Designed FMV/cost-basis separation on SHARE_ACQUISITION: `fmv_per_share` (broker fact), `cost_basis` (tax interpretation with `recorded_method` enum)
+- Specified account reassignment workflow: write to target partition, void original, idempotent retry, orphan detection via row_hash
+- Defined column mapping (8-column positional), parsing rules (Spanish locale), batch metadata requirements
+- Outlined three-layer dedup: Layer 1 (batch retry-safe), Layer 2 (within-file exact), Layer 3 (cross-batch fingerprint)
+
+**Status:** ✅ MERGED — Danny adopted Livingston's model as authoritative foundation. Handed off for Cosmos schema provisioning and transactional workflow implementation.
+
+**Related:** Input to `danny-scrip-rights-topup-architecture.md` and `danny-dividend-csv-import-consolidated.md`
+

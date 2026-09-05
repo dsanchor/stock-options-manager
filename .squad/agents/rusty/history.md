@@ -1630,3 +1630,24 @@ Initial feature rejected by Basher (D0) with D2 defect: TypeScript types and too
 
 **Final Outcome:** All 73 gate tests pass; feature approved and production-ready.
 
+
+---
+
+## 2026-09-05: Portfolio & Dividend Import Wizard UX (Specialist Input)
+
+**Task:** Design four-step wizard for historical dividend CSV import; provide UX foundations for lead architect's consolidation.
+
+**Deliverables:**
+1. **rusty-dividend-import-ux.md** (852 lines) — Four-step wizard (Upload, Metadata, Preview, Confirm), delimiter detection, Spanish number parsing, alert/badge design
+
+**Key Contributions:**
+- Designed multi-step wizard flow: Step 0 (Upload/Paste), Step 1 (Metadata: source_currency, fx_behavior, account_id), Step 2 (Preview with validation alerts), Step 3 (Confirm and import)
+- Specified delimiter auto-detection (Tab → Semicolon → Comma, with user override)
+- Detailed Spanish number parsing (period = thousands, comma = decimal; ambiguity heuristic)
+- Designed alert/badge taxonomy for import rows (blocking errors 🔴, warnings ⚠️, info 🔵)
+- Integrated rights-pending reconciliation queue with year filter (default 2026)
+
+**Status:** ✅ MERGED — Danny incorporated wizard flow and UX event handling into Decision #2. Handed off for frontend implementation.
+
+**Related:** Input to `danny-dividend-csv-import-consolidated.md`; Orchestration log for wizard implementation
+

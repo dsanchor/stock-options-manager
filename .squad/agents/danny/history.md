@@ -1001,3 +1001,57 @@ Initial feature rejected by Basher (D0) due to two contract gaps. Pulled forward
 - **Nine divergences resolved:** (1) Container `portfolio` with pk `/account_id` (Livingston's partition wins, Danny's name wins). (2) 3 MVP pages not 4 or 2 (Accounts + Movements + Holdings; Dividends page deferred). (3) Livingston's `EUR_PER_TXN_CCY` multiply convention (eliminates divide-direction bugs). (4) No hardcoded tax rates in broker profiles — all rates are user-confirmed defaults. (5) Null-vs-zero destination WHT codified with three states. (6) `holding_snapshot` deferred. (7) Mixed dividend = two linked movements, not single doc or three-doc scrip event. (8) JSON numbers over decimal strings (personal scale, float64 sufficient). (9) Full edit allowed in MVP (not void-only); revision chain is Phase 4.
 - **Structural lesson:** When reconciling specialist designs of different depths (Livingston: 880-line persistence model; Rusty: 700-line UX spec; Danny: 540-line architecture), the reconciler's job is to find the *simplest correct intersection*, not to merge all detail. Specialists correctly anticipate future needs; the lead's job is to defer those anticipations cleanly rather than shipping them prematurely. Every deferred decision has a named phase and a preserved hook.
 
+### 2026-09-05 — Scrip Rights & Cash Top-Up Clarification (amends CR-7)
+
+- **Trigger:** User directive — scrip dividends can include residual rights sold (with own WHT) and cash top-ups for whole shares; top-up ≠ cost basis.
+- **Decision:** `.squad/decisions/inbox/danny-scrip-rights-topup-architecture.md`
+- **Key finding:** A scrip dividend can produce up to 4 distinct financial flows: (1) cash dividend, (2) share allocation, (3) residual rights sold (separate withholding event), (4) cash top-up paid. The prior CR-7 model (2 linked movements) was insufficient.
+- **Amendment:** Adopted `ca_event` + `ca_leg` model (from Livingston). Leg types: `CASH_DIVIDEND`, `SHARE_ACQUISITION`, `RIGHTS_SOLD`, `CASH_TOP_UP`. All in same Cosmos partition for transactional batch atomicity.
+
+**⚠️ CORRECTION (2026-09-05T16:20) — prior version of this entry contained an error:**
+The first version stated `cost_basis = reference_price` as a system invariant and had `SCRIP_TOPUP` adding shares. Both were wrong:
+- `cost_basis = reference_price` is a **tax interpretation**, not an invariant. Different jurisdictions assign different cost bases to scrip shares (FMV, zero, FMV+top-up, etc.).
+- `CASH_TOP_UP` is a pure cash outflow that does NOT add shares (shares are on `SHARE_ACQUISITION` leg, which records all shares including top-up rounded ones).
+- The corrected model stores three independent facts: FMV (broker/company reference price), top-up cash (outflow), and cost basis (explicit `recorded_method` enum: `FMV_EX_DATE | ZERO | TOP_UP_ONLY | FMV_PLUS_TOP_UP | MANUAL_OVERRIDE | UNKNOWN`). The system never auto-derives cost basis from FMV or top-up.
+
+- **UX decision (unchanged):** Progressive disclosure within DIVIDEND form. No new top-level type pills.
+- **Reusable pattern:** When a single economic event has N financial flows with different tax/withholding treatment, model each as a separate leg document linked by a parent event. Do not embed distinct tax events in one document.
+- **Error pattern to avoid:** Asserting that a specific accounting interpretation is a system invariant. The system records facts (what the broker statement says) and interpretations (what the tax advisor confirms) as separate fields. It never conflates them, even when one interpretation seems "obviously correct."
+
+### 2026-09-05 — CSV Import Consolidated Architecture (Phase 1b)
+
+- **Trigger:** Three specialist designs (Livingston persistence, Rusty UX, Basher validation) + two user directives on the 8-column historical dividend CSV import.
+- **Decision:** `.squad/decisions/inbox/danny-dividend-csv-import-consolidated.md`
+- **Key conflicts resolved:**
+  1. Container name: `portfolio` (not `portfolio_ledger`). Already settled in CR-1.
+  2. Rights warning on older years: user overruled Livingston's "Info" classification. `PENDING_RIGHTS_CLASSIFICATION` is a WARNING with visible badge on ALL years. Reconciliation queue defaults to 2026, but older rows retain their badge.
+  3. Dedup: replaced all three specialists' single-key approaches with a 3-layer model: (a) batch idempotency via `batch_id + row_number + row_hash`, (b) intra-file duplicate = BLOCKING, (c) cross-batch hash match = WARNING (never auto-suppression). User explicitly rejected `(date, company, gross)` as a destructive dedup key.
+  4. Source currency: required per batch (default EUR). Not silently assumed. Single-currency per file.
+  5. Warning hierarchy: 6 blocking codes, 7 warning codes, strict display order. Missing account is NOT a warning.
+- **Phase placement:** Phase 1b (immediately after manual entry MVP). User directive confirmed.
+- **Reusable pattern:** When reconciling specialist designs, enumerate each conflict explicitly with source positions and resolution rationale. Don't merge silently — the conflict table IS the value of the consolidation.
+
+
+---
+
+## 2026-09-05: Portfolio & Dividend Architecture Consolidation (Lead)
+
+**Task:** Consolidate conflicting specialist designs on scrip dividends, rights handling, and historical import; establish authoritative ca_event/ca_leg model.
+
+**Deliverables:**
+1. **danny-scrip-rights-topup-architecture.md** — Corrected architecture (fixing prior tax-invariant error), ca_event + ca_leg model with FMV/cost-basis separation
+2. **danny-dividend-csv-import-consolidated.md** — Nine conflict resolutions (RC-1 through RC-9), definitive column mapping, warning hierarchy, dedup three-layer model
+
+**Key Contributions:**
+- Identified FMV/cost-basis conflation bug in prior version; corrected to store broker facts (FMV, top-up) separately from tax interpretation (cost basis)
+- Resolved user directive on rights warning persistence (overruled Livingston's Info-level classification; user requires Warning badges for all years)
+- Codified user's deduplication requirement: batch_id+row_hash (retry-safe), within-file exact match (blocking), cross-batch fingerprint (warning, never auto-collapse)
+- Confirmed broker/account optionality (unanimous specialist agreement)
+- Placed import at Phase 1b (immediately after manual MVP) based on backfill criticality and unassigned-account design
+
+**Conflicts Resolved:** 9 major (RC-1 through RC-9); 1 erroneous prior assertion corrected
+
+**Status:** ✅ COMPLETE — Handed off to Livingston (schema), Rusty (wizard UX), Linus (backend), Basher (tests)
+
+**Related:** Orchestration log at `.squad/orchestration-log/2026-09-05T163930+0200-portfolio-dividend-merge.md`; Session log at `.squad/session-log/2026-09-05T163930+0200-danny-consolidation.md`
+

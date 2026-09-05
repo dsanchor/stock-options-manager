@@ -4377,3 +4377,377 @@ For the complete calculation model, API contract, UI contract, type definitions,
 - §7: TypeScript Types
 - §8: Test Coverage
 
+
+---
+
+## Portfolio & Dividend Management — Phase 1b Architecture (2026-09-05)
+
+**Orchestrated by:** Scribe (consolidation)  
+**Lead Architect:** Danny  
+**Persistence Engineer:** Livingston  
+**Frontend/UX:** Rusty  
+**QA/Test Design:** Basher  
+**Trigger:** User directives on scrip dividends, rights handling, broker-account optionality, and historical CSV import.  
+**Status:** DESIGN FINALIZED — Ready for implementation
+
+### Decision #2: Portfolio Container, CA Event Model, & Dividend Semantics
+
+**Narrative:**
+
+The user's portfolio contains dividend history (2016–2025) and future dividend entitlements. Current manual entry via forms forces per-dividend data entry with no bulk import path. Three specialist teams submitted designs (Livingston: persistence model; Rusty: UX wizard; Basher: validation matrix), revealing conflicting assumptions on:
+
+1. **Rights/scrip dividend completeness** — Can they include residual rights sales and cash top-ups for whole-share rounding? (YES, with **separate** withholding contexts and cost-basis-independence guarantees.)
+2. **Broker/account optionality** — May users import without immediately assigning broker/account? (YES, via `_unassigned` partition, safe cross-partition reassignment later.)
+3. **Cost basis auto-derivation** — Should top-up cash or reference price be locked into cost basis? (NO. Broker-statement facts (FMV, top-up, reference price) are immutable; cost basis is a separate tax interpretation, user-set or advisor-confirmed, never auto-computed by the system.)
+4. **Historical data warning age-out** — Can warnings on old rights rows be hidden after N years? (NO. The user explicitly requested: "Every row with `Importe en Derechos > 0` must warn until **manually** reconciled, regardless of year.")
+5. **Deduplication key design** — Should account be part of the dedup key? (NO. Account may be null at import; dedup operates on financial identity alone (`row_hash`). Three layers: batch idempotency, within-file exact match, cross-batch fingerprint with user override.)
+
+Danny's consolidated recommendation (with Livingston's detailed model as foundation) resolves all five via a unified `ca_event` + `ca_leg` document design.
+
+**Invariants (six required by user and specification):**
+
+1. **Rights amount >0 ⇒ warning for all years until reconciled.** Year filter defaults 2026 (active reconciliation queue), but older warnings persist and do not block dashboards/import.
+
+2. **Missing broker/account ⇒ accepted, no warning.** `_unassigned` partition strategy under container `portfolio`; later safe reassignment.
+
+3. **Batch currency required, default EUR.** Single `source_currency` per import batch (EUR, USD, GBP, CHF); required dropdown, not assumed.
+
+4. **Idempotency = batch+row+normalized hash.** Cross-batch duplicates warn (never auto-collapse). Layer 1: `batch_id+row_number+row_hash` (retry-safe). Layer 2: `row_hash` within file (blocking if repeated). Layer 3: `row_hash` cross-batch (warning; user decides).
+
+5. **Corporate action uses parent + legs for cash dividend, share acquisition, rights sold, cash top-up.** Top-up is never auto-equated to cost basis. FMV and cost basis are separate fields.
+
+6. **FX is EUR_PER_TXN_CCY and always multiply.** Amounts stored in transaction currency; EUR conversion via `amount_eur = amount_txn × fx_rate`.
+
+---
+
+### §2.1 Data Model — `ca_event` (Parent) + `ca_leg` (Legs)
+
+**Container:** `portfolio`  
+**Partition key:** `/account_id` (required for Cosmos transactional batches within target partition)
+
+**Reserved partition values:**
+- `_unassigned` — Import rows without assigned broker/account
+- `_global` — Alias maps, FX rates, system configuration
+
+#### `ca_event` Document
+
+Parent document grouping related corporate-action legs (one economic event).
+
+```jsonc
+{
+  "id": "cae_{uuid}",
+  "account_id": "heytrade_main",                   // partition key
+  "doc_type": "ca_event",
+
+  "ca_type": "DIVIDEND_WITH_SCRIP",               // CASH_DIVIDEND | SCRIP_DIVIDEND | DIVIDEND_WITH_SCRIP
+  "ticker": "ULVR",                               // required
+  "isin": "GB0031348658",                         // optional (recommended)
+  "security_name": "Unilever PLC",                // optional
+
+  "ex_dividend_date": "2024-03-07",               // mandatory for dividend events
+  "payment_date": "2024-03-28",                   // mandatory
+  "announcement_date": null,                      // optional
+  "record_date": null,                            // optional
+
+  "election": "MIXED",                            // CASH | SCRIP | MIXED | N_A
+
+  // Entitlement anchor (reconciliation reference)
+  "entitlement": {
+    "shares_at_record": 500,
+    "declared_dps": 0.45,
+    "declared_currency": "GBP",
+    "declared_gross_total": 225.00
+  },
+
+  "leg_ids": [                                     // child references
+    "cal_{uuid_1}",                               // CASH_DIVIDEND
+    "cal_{uuid_2}",                               // SHARE_ACQUISITION
+    "cal_{uuid_3}",                               // RIGHTS_SOLD
+    "cal_{uuid_4}"                                // CASH_TOP_UP
+  ],
+
+  "status": "active",                             // active | voided
+  "notes": "",
+  "created_at": "...",
+  "updated_at": "...",
+  "deleted_at": null
+}
+```
+
+#### `ca_leg` Document Subtypes
+
+All legs are `doc_type: "ca_leg"` with `ca_event_id` parent reference and `leg_type` discriminator.
+
+| `leg_type` | Cash flow | Holdings impact | Withholding | Key fields |
+|------------|-----------|-----------------|-------------|-----------|
+| `CASH_DIVIDEND` | INFLOW | None | Origin + destination | `gross_txn`, `fees`, `withholding`, `net_txn`, `fx_rate` |
+| `SHARE_ACQUISITION` | NONE | +shares | None | `quantity`, `fmv_per_share`, `cost_basis` (separate), `fx_rate` |
+| `RIGHTS_SOLD` | INFLOW | None | Own origin + destination | `rights_quantity`, `gross_txn`, `fees`, `withholding`, `net_txn`, `fx_rate` |
+| `CASH_TOP_UP` | OUTFLOW | None | Always null | `amount_txn`, `fees`, `fx_rate` |
+
+**Critical correction (from Danny's superseding version):**
+
+`SHARE_ACQUISITION` has **two independent fields for acquisition cost**:
+
+- **`fmv_per_share` (broker-statement fact):** Reference price from company/broker. Immutable after entry. Stored separately.
+- **`cost_basis` (tax interpretation):** User-set or advisor-confirmed. May change as tax understanding evolves. Enum `recorded_method` (FMV_EX_DATE, ZERO, TOP_UP_ONLY, FMV_PLUS_TOP_UP, MANUAL_OVERRIDE, UNKNOWN).
+
+**Why:** Top-up cash must not be conflated with cost basis. Reference price and top-up are broker-statement facts (who supplies them, what they mean). Cost basis is a tax classification (different rules in different jurisdictions). System stores facts; never auto-computes tax interpretation.
+
+```jsonc
+{
+  "id": "cal_{uuid}",
+  "account_id": "heytrade_main",
+  "doc_type": "ca_leg",
+  "ca_event_id": "cae_{uuid}",
+  "leg_type": "SHARE_ACQUISITION",
+  "cash_flow_direction": "NONE",
+
+  "quantity": 9,                                  // whole shares received
+  "payment_date": "2024-03-28",
+  "ex_dividend_date": "2024-03-07",
+
+  // ── Fair Market Value (BROKER STATEMENT FACT) ────────────────────────
+  "fmv_per_share": 24.75,                         // reference/ex-date price
+  "fmv_currency": "GBP",
+  "fmv_reference_date": "2024-03-07",
+  "fmv_source": "BROKER_STATEMENT",              // BROKER_STATEMENT | COMPANY_CIRCULAR | MANUAL
+  "fmv_total": 222.75,
+  "fx_rate": 1.1655,                              // EUR_PER_TXN_CCY
+  "fx_rate_source": "ECB",
+  "fmv_per_share_eur": 28.85,
+  "fmv_total_eur": 259.61,
+
+  // ── Cost Basis (TAX INTERPRETATION — separate from FMV) ───────────────
+  "cost_basis": {
+    "recorded_method": "UNKNOWN",
+    // FMV_EX_DATE | ZERO | TOP_UP_ONLY | FMV_PLUS_TOP_UP | MANUAL_OVERRIDE | UNKNOWN
+    "cost_per_share_eur": null,
+    "total_cost_eur": null,
+    "basis_note": "Pending tax advisor confirmation",
+    "basis_set_by": null,
+    "basis_set_at": null
+  },
+
+  "cash_top_up_leg_id": "cal_{uuid_4}",          // navigational only; does NOT determine cost basis
+  "status": "active",
+  "created_at": "...", "updated_at": "..."
+}
+```
+
+`CASH_TOP_UP` documents (investor pays to round up to whole shares):
+
+```jsonc
+{
+  "id": "cal_{uuid}",
+  "account_id": "heytrade_main",
+  "doc_type": "ca_leg",
+  "ca_event_id": "cae_{uuid}",
+  "leg_type": "CASH_TOP_UP",
+  "cash_flow_direction": "OUTFLOW",
+
+  "payment_date": "2024-03-28",
+  "currency": "GBP",
+  "amount_txn": 4.95,                             // cash paid (positive; direction is OUTFLOW)
+  "fees": 0,
+  "fx_rate": 1.1655,                              // EUR_PER_TXN_CCY
+  "fx_rate_source": "ECB",
+  "amount_eur": 5.77,
+
+  "withholding": null,                            // ALWAYS null for outflows
+
+  "status": "active",
+  "created_at": "...", "updated_at": "..."
+}
+```
+
+---
+
+### §2.2 Historical Dividend Import — 8-Column Format
+
+**Scope:** Upload CSV/Excel with 8 columns (Año, Empresa, Fecha de cobro, Importe Bruto, Importe Neto, Importe en Derechos, Retención Origen, Retención Destino). Columns beyond position 8 are silently ignored.
+
+**Phase:** 1b (immediately after Phase 1 manual-entry MVP). Unassigned-account design means broker/account setup is not a prerequisite.
+
+#### Column Mapping
+
+| Position | Header (Spanish) | Normalized field | Type | Notes |
+|----------|------------------|------------------|------|-------|
+| 0 | `Año` | `year` | Integer | Calendar year (e.g., 2024). Cross-validated against date. |
+| 1 | `Empresa` | `company_raw` | String | Free-text company name. Subject to alias mapping. |
+| 2 | `Fecha de cobro` | `payment_date` | Date | DD/MM/YYYY (European locale). Authoritative date. |
+| 3 | `Importe Bruto` | `gross_txn` | Decimal | Gross amount. Spanish: period = thousands, comma = decimal. |
+| 4 | `Importe Neto` | `net_txn` | Decimal | Net after withholdings. |
+| 5 | `Importe en Derechos` | `rights_amount_txn` | Decimal | Rights/scrip monetary amount. >0 ⇒ `WARNING_RIGHTS_PENDING` |
+| 6 | `Retención Origen` | `origin_wht_txn` | Decimal | Source-country withholding. |
+| 7 | `Retención Destino` | `dest_wht_txn` | Decimal | Investor-country withholding. |
+
+**File format detection:** Positional-first (columns 0–7 of each data row). Header row detection (first row matching ≥5 of 8 canonical names, case-insensitive) skips the row if found.
+
+**Delimiter auto-detection:** Tab → Semicolon → Comma. If ambiguous, user confirms manually.
+
+**Spanish number parsing:** Strip whitespace and currency symbols. `.` = thousands, `,` = decimal. Ambiguity heuristic: if last `.` has 2–3 following digits, treat as decimal; else thousands.
+
+**Date parsing:** `DD/MM/YYYY` strict. Cross-check: `Año` must match year of `Fecha de cobro` or emit `WARNING_YEAR_DATE_MISMATCH`.
+
+**BOM handling:** Strip UTF-8 BOM silently.
+
+#### Batch-Level Metadata (Per Import Session)
+
+| Parameter | Required | Default | Notes |
+|-----------|----------|---------|-------|
+| `source_currency` | **Yes** | `EUR` (pre-selected) | EUR \| USD \| GBP \| CHF. Single currency per batch. |
+| `fx_behavior` | **Yes** (auto-set if EUR) | `AMOUNTS_ARE_EUR` | See §2.2.5 below. |
+| `batch_fx_rate` | Conditional | — | Required if `fx_behavior = AMOUNTS_ARE_TXN_CCY_MANUAL`. |
+| `account_id` | **No** | `null` → `_unassigned` | No warning if absent. Reassignment workflow (§2.2.6) available later. |
+| `batch_captures_dest_wht` | No | `null` (conservative) | Disambiguate zero vs. null in `dest_wht` column. |
+
+##### FX Behavior Modes
+
+| Mode | Semantics | Phase 1b? |
+|------|-----------|----------|
+| `AMOUNTS_ARE_EUR` | All amounts already EUR. `fx_rate = 1.0` | ✅ Supported |
+| `AMOUNTS_ARE_TXN_CCY_MANUAL` | Amounts in source currency; user provides one batch FX rate | ✅ Supported |
+| `AMOUNTS_ARE_TXN_CCY_ECB` | Amounts in source currency; per-row ECB rate lookup | ⏳ Phase 2 |
+
+When `source_currency = EUR`, `fx_behavior` auto-locks to `AMOUNTS_ARE_EUR`.
+
+##### Account Reassignment (Cross-Partition Move)
+
+Rows initially imported to `_unassigned` may be reassigned to a specific broker account later. Workflow:
+
+1. Write new documents to target partition (Cosmos transactional batch within target).
+2. Void originals in `_unassigned` partition (separate transaction).
+3. `import_provenance.original_partition` and `import_provenance.original_id` audit trail.
+4. Failure modes detectable and recoverable (idempotent retry; orphan detection via `row_hash`).
+
+---
+
+### §2.3 Row Validation & Deduplication
+
+#### Error Taxonomy (Blocking, Warning, Informational, Accepted)
+
+**BLOCKING (🔴) — Row excluded from import; auto-unchecked:**
+
+| Code | Trigger |
+|------|---------|
+| `ERROR_PARSE_FAILURE` | Any column unparseable (date, number) |
+| `ERROR_MISSING_DATE` | `Fecha de cobro` blank |
+| `ERROR_NEGATIVE_AMOUNT` | Any monetary column < 0 |
+| `ERROR_ALL_ZERO` | All of gross, net, rights, origin WHT, dest WHT = 0 |
+| `ERROR_INTRA_FILE_DUPLICATE` | Same `normalized_row_hash` appears twice in one batch |
+| `ERROR_UNRESOLVED_SECURITY` | Company name not mapped to known security (resolvable via alias mapper) |
+
+**WARNING (⚠️) — Row imports with visible badge; user action recommended:**
+
+| Code | Trigger | Clears when |
+|------|---------|------------|
+| `WARNING_RIGHTS_PENDING` | `Importe en Derechos > 0` | User completes reconciliation form |
+| `WARNING_ARITHMETIC_MISMATCH` | \|gross − net − origin_wht − dest_wht\| > tolerance (0.02 default) | User confirms or corrects |
+| `WARNING_YEAR_DATE_MISMATCH` | `Año ≠ year(Fecha de cobro)` | User confirms |
+| `WARNING_POSSIBLE_DUPLICATE` | Cross-batch `normalized_row_hash` match | User confirms or voids one |
+| `WARNING_WITHHOLDING_EXCEEDS_GROSS` | `origin_wht + dest_wht > gross + 0.05` | User corrects |
+| `WARNING_AMBIGUOUS_NUMBER` | Spanish locale number heuristic uncertain | User confirms parsed value |
+
+**INFO (🔵) — Cosmetic / audit; import proceeds:**
+
+- Extra columns beyond position 8 (silently ignored)
+- Windows-1252 encoding fallback attempted
+
+**ACCEPTED (✅) — Field absent or unresolvable; no flag; post-import workflow fills gap:**
+
+- Missing broker/account → stored as `_unassigned` (administrative state, not warning)
+
+#### Deduplication — Three-Layer Model
+
+**Layer 1 — Batch idempotency (same file re-upload):**
+- Key: `import_batch_id + source_row_number + normalized_row_hash`
+- Behavior: SKIP silently. This is retry-safety, not dedup.
+- `import_batch_id` is UUID generated client-side at upload (Step 0) and attached to every row.
+
+**Layer 2 — Within-file duplicate:**
+- Key: `normalized_row_hash` (SHA-256 of 8 normalized column values in canonical order)
+- Behavior: Second occurrence within same batch → `ERROR_INTRA_FILE_DUPLICATE` (blocking). User must fix file.
+
+**Layer 3 — Cross-batch fingerprint (possible duplicate across imports):**
+- Key: `normalized_row_hash` checked against ALL active (non-voided) `ca_event` documents with same hash across ALL partitions.
+- Behavior: `WARNING_POSSIBLE_DUPLICATE` — never auto-suppression. Row shows in preview with chip; user decides: import (new record + warning), skip, or navigate to existing.
+
+**Why account is NOT in dedup key:** May be null at import; legitimate multi-broker same-day payments are distinct, not duplicates.
+
+---
+
+### §2.4 Row Classification & Domain Mapping
+
+Each validated row routes to one outcome:
+
+| Condition | Classification | `ca_type` | Legs created |
+|-----------|---------------|-----------|--------------|
+| `gross > 0` AND `rights = 0` | Simple cash dividend | `CASH_DIVIDEND` | 1× `CASH_DIVIDEND` |
+| `gross > 0` AND `rights > 0` | Mixed cash + rights | `DIVIDEND_WITH_SCRIP` | 1× `CASH_DIVIDEND` + 1× `RIGHTS_OR_SHARE_PENDING` |
+| `gross = 0` AND `rights > 0` | Rights/scrip only | `SCRIP_DIVIDEND` | 1× `RIGHTS_OR_SHARE_PENDING` |
+
+**`RIGHTS_OR_SHARE_PENDING` placeholder leg:**
+- Stores `raw_importe_en_derechos` verbatim
+- Carries `WARNING_RIGHTS_PENDING`
+- Excluded from holdings derivation and dividend aggregates until classified
+- User classifies via reconciliation form: `RIGHTS_SOLD_PROCEEDS`, `SHARE_ACQUISITION_VALUE`, `ENTITLEMENT_DECLARED`, or `OTHER`
+
+**WHT attribution for mixed rows:** Origin and destination WHT from CSV written to `CASH_DIVIDEND` leg in full. `RIGHTS_OR_SHARE_PENDING` leg has `withholding: null` with note: "WHT split pending reconciliation." User splits WHT during reconciliation.
+
+---
+
+### §2.5 Rights Reconciliation Queue (Year Filtering, Non-Blocking Behavior)
+
+**Default view:** Year 2026 (active work queue). User may select older years.
+
+**Badge persistence:** `WARNING_RIGHTS_PENDING` appears on every row with `Importe en Derechos > 0`, regardless of year, until reconciliation complete.
+
+**Non-blocking behavior (older years):**
+- Warning does NOT prevent import of new data
+- Warning does NOT suppress row from dashboards or aggregates (cash legs counted)
+- Warning does NOT appear as global notification or banner
+- Warning DOES appear on row itself in any view showing it (Movements, Dividends, Holdings detail)
+
+**Rationale:** Older incomplete scrip entries may take months to resolve (waiting for broker statements, tax guidance). Blocking dashboards would be inappropriate. Persistent row-level badge keeps incomplete entries visible without suppressing portfolio activity.
+
+---
+
+### §2.6 Holdings & Portfolio Impact
+
+**`CASH_DIVIDEND` and `RIGHTS_SOLD` legs** contribute to cash flow aggregates (dividends received, tax withholdings) immediately upon import.
+
+**`SHARE_ACQUISITION` leg** (when `cost_basis.recorded_method ≠ UNKNOWN`) contributes to holdings and cost basis. When method is UNKNOWN, row displays with "⚠️ Cost basis pending" badge. Future reconciliation tool surfaces all UNKNOWN entries for resolution.
+
+**`CASH_TOP_UP` leg** (outflow) is recorded separately; does not add shares (shares on `SHARE_ACQUISITION` only), does not determine cost basis.
+
+---
+
+### §2.7 Test Coverage & Validation
+
+**Test matrix (from Basher):**
+
+- **Parser / File Ingestion (P-01 to P-15):** Tab/semicolon/comma detection, delimiter ambiguity, date parsing, locale number parsing, Excel XLSX handling, BOM strip
+- **Numeric Parsing & Locale (N-01 to N-08):** Comma/period decimals, negative values, zero totals, large values, fractional cent precision
+- **Gross–Net–Withholding Reconciliation (R-01 to R-08):** Perfect reconciliation, tolerance (0.02), mismatch severity, rights-only rows, mixed cash+rights, WHT > gross
+- **Duplicate Detection & Idempotent Re-import:** Three-layer model verification, batch retry safety, cross-batch warning
+- **Security / Alias Mapping:** Unresolved company names, alias resolution, FX rate consistency
+- **Edge cases:** Empty files, header-only files, encoding fallback, year/date mismatch, ambiguous numbers
+
+---
+
+### §2.8 Orchestration & Work Split
+
+**Danny (Lead)** — Architecture consolidation, invariant enforcement, ca_event/ca_leg model specification.  
+**Livingston** — Detailed persistence model, partition strategy, account reassignment workflow, dedup three-layer design.  
+**Rusty** — Wizard UX (Steps 0–3: Upload, Metadata, Preview, Confirm), delimiter detection, header matching, alerts and badges.  
+**Basher** — Test matrix, error taxonomy, validation edge cases, adversarial scenarios (malformed files, encoding, large datasets).
+
+**File ownership:**
+- Backend import controller: Rusty (Phase 1b) → Linus (core validation/mapping logic)
+- Reconciliation form & status updates: Rusty (frontend) → Linus (event/leg updates)
+- Alias mapper & security lookup: Existing utility; extend if needed
+- Cosmos schema & provisioning: Livingston
+
+---
+
