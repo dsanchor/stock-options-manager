@@ -32,11 +32,13 @@ The app tracks two orthogonal concerns:
 
 #### Multi-Currency & FX — Critical Convention
 
-**FX rate convention:** `fx_rate = transaction_currency / EUR` (reciprocal of ECB convention)  
-**Arithmetic:** `eur_amount = amount_txn × fx_rate`  
-**Example:** USD/EUR = 0.91730 (ECB EURUSD = 1.09, so rate = 1/1.09); $27,375 × 0.91730 = €25,111.29  
+**FX rate convention:** `fx_rate = EUR_PER_TXN_CCY` (number of EUR for 1 unit of transaction currency)  
+**Arithmetic:** `amount_eur = amount_txn × fx_rate`  
+**Example:** 1 USD = 0.86 EUR, so 1000 USD × 0.86 = 860 EUR  
 **Rate sources:** ECB (preferred for trade date), BROKER (HeyTrade/ING conversion), MANUAL (user), OVERRIDE (user change with original preserved)  
 **Data type:** Decimal string (9 decimal places for precision in rate composition)
+
+**CRITICAL:** This is NOT the reciprocal of ECB convention. ECB publishes EURUSD (how many USD per 1 EUR); we store the reciprocal value (EUR per 1 USD) for direct multiplication arithmetic. Always verify: `amount_eur = amount_txn × fx_rate` (never divide).
 
 #### Withholding — Dual-Layer Model (Most Critical Design Decision)
 
@@ -216,9 +218,23 @@ BFF routes in `frontend/src/app/api/portfolio/` follow existing proxy pattern.
 #### Consolidated Recommendation (Authoritative)
 
 **Danny's design is primary.** Livingston's persistence model and Rusty's UX design integrate seamlessly:
-- Persistence: Cosmos container strategy, security identity (ISIN), FX convention (rate reciprocal), withholding dual-layer, decimal precision (6 dp amounts, 9 dp rates), broker profiles, transaction schema, validation invariants all validated.
+- Persistence: Cosmos container strategy, security identity (ISIN), FX convention (EUR_PER_TXN_CCY), withholding dual-layer, decimal precision (6 dp amounts, 9 dp rates), broker profiles, transaction schema, validation invariants all validated.
 - UX: Navigation (Portfolio between Economics/Chat), four subpages, form flows (type-adaptive), accessibility (ARIA, mobile, focus management), API surface all mapped to persistence schema.
 - Cross-design consistency verified: FX convention aligned, withholding model agreed, cost-basis method (average cost MVP) confirmed, broker profiles shared, form field sets match schema.
+
+---
+
+**⚠️ CORRECTION (2026-09-05T16:02:00+02:00):** FX Convention clarification
+
+Original wording "rate reciprocal" was ambiguous and incorrect. **Authoritative correction:**
+
+**FX rate convention (corrected):** `fx_rate = EUR_PER_TXN_CCY` — number of EUR for 1 unit of transaction currency.  
+**Formula:** `amount_eur = amount_txn × fx_rate` (always multiply, never divide)  
+**Example:** 1 USD = 0.86 EUR, so 1000 USD × 0.86 = 860 EUR
+
+This is the reciprocal of the ECB convention (ECB publishes EURUSD; we store USD→EUR). The arithmetic is direct multiplication for all calculations. Updated in decisions.md Consolidated Recommendation (line 37), Danny's orchestration log, and all related specifications.
+
+---
 
 #### Assignments
 

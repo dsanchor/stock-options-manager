@@ -43,10 +43,11 @@ Designed the comprehensive Dividend Portfolio architecture as a **ledger-first s
 ## Technical Decisions
 
 ### FX Convention (Critical)
-- **Convention: `fx_rate` is `transaction_currency / EUR`** (always reciprocal of ECB rate)
+- **Convention: `fx_rate = EUR_PER_TXN_CCY`** (number of EUR for 1 unit of transaction currency)
 - Arithmetic: `eur_amount = amount_txn × fx_rate`
-- Example: USD/EUR = 0.91730 means $27,375 × 0.91730 = €25,111.29
-- Rationale: Consistent, unambiguous, matches Spanish tax reporting
+- Example: 1 USD = 0.86 EUR, so 1000 USD × 0.86 = 860 EUR
+- Rationale: Direct multiplication (never divide); consistent with decimal precision requirements; unambiguous for tax reporting
+- **Note:** ECB publishes EURUSD (e.g., 1.163 USD per EUR); we store 1/1.163 = 0.86 for direct multiplication
 
 ### Withholding Null vs. Zero Distinction
 - **`withholding_destination: null`** = broker doesn't capture this; distinct from `{amount: 0}` which means confirmed zero
