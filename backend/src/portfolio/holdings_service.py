@@ -78,6 +78,7 @@ class HoldingsService:
                     "total_cost_eur": Decimal("0"),
                     "paid_buy_shares": Decimal("0"),
                     "total_dividends_eur": Decimal("0"),
+                    "total_sales_eur": Decimal("0"),
                     "buy_count": 0,
                     "zero_cost_count": 0,
                     "accounts": set(),
@@ -102,6 +103,7 @@ class HoldingsService:
                 agg["buy_count"] += 1
             elif txn_type == "SELL":
                 agg["total_shares"] -= qty
+                agg["total_sales_eur"] += gross_eur - commission_eur
             elif txn_type == "DIVIDEND":
                 net_eur = _d((m.get("net") or {}).get("eur_amount", "0"))
                 agg["total_dividends_eur"] += net_eur
@@ -119,6 +121,8 @@ class HoldingsService:
         holdings_list = []
         total_invested = Decimal("0")
         total_dividends = Decimal("0")
+        total_purchases = Decimal("0")
+        total_sales = Decimal("0")
 
         for security_id, agg in per_security.items():
             total_shares = agg["total_shares"]
@@ -158,6 +162,8 @@ class HoldingsService:
                 })
 
             total_invested += total_cost
+            total_purchases += total_cost
+            total_sales += agg["total_sales_eur"]
             total_dividends += agg["total_dividends_eur"]
 
             company_name = security_names.get(security_id, "")
@@ -175,6 +181,10 @@ class HoldingsService:
                 ),
                 "cost_basis_status": cost_basis_status,
                 "total_invested_eur": str(total_cost.quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)),
+                "total_purchases_eur": str(total_cost.quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)),
+                "total_sales_eur": str(
+                    agg["total_sales_eur"].quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)
+                ),
                 "total_dividends_eur": str(
                     agg["total_dividends_eur"].quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)
                 ),
@@ -196,6 +206,15 @@ class HoldingsService:
                 "total_securities": len(holdings_list),
                 "total_invested_eur": str(
                     total_invested.quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)
+                ),
+                "total_purchases_eur": str(
+                    total_purchases.quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)
+                ),
+                "total_sales_eur": str(
+                    total_sales.quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)
+                ),
+                "current_invested_eur": str(
+                    (total_purchases - total_sales).quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)
                 ),
                 "total_dividends_eur": str(
                     total_dividends.quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)

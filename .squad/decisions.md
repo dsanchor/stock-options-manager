@@ -12552,3 +12552,129 @@ Automated deployment of API and frontend Docker images to Azure Container Apps o
 - Hardcoded resource names reduce indirection for single-environment deployments
 - 5-minute timeout (30 × 10s) is generous but bounded; fails visibly if exceeded
 
+
+---
+
+## Approved Features (2026-09-06)
+
+### 2. Portfolio Summary Totals & Holdings Filters (APPROVED & IMPLEMENTED)
+
+**Date:** 2026-09-06  
+**Author:** Danny (Lead)  
+**Status:** FROZEN — implementation-ready (Rusty Backend + Livingston Frontend)  
+**Impact:** Holdings summary displays purchase/sale/current-invested totals; UI filters hide zero-share holdings (default on) and search ticker/company/security_id; Find in portfolio search.
+
+#### Backend: Summary Accumulators
+
+- New fields in `HoldingsService.compute_holdings()`:
+  - `total_purchases_eur`: SUM(gross + commission) for all BUY with complete cost basis
+  - `total_sales_eur`: SUM(gross - commission) for all SELL
+  - `current_invested_eur`: purchases - sales (can be negative if profitable)
+- Per-security fields: `total_purchases_eur`, `total_sales_eur`
+- Backward compat: `total_invested_eur` preserved (= total_purchases_eur)
+- Dividends excluded from all three (remain in `total_dividends_eur`)
+- Implementation: 12 targeted tests; all 79 tests pass (33 holdings + 46 endpoints)
+
+#### Frontend: Summary Display & Filters
+
+- Summary bar (portfolio-wide, unaffected by filters):
+  1. Total Purchases
+  2. Total Sales
+  3. Current Invested
+  4. Total Dividends
+  5. Securities count
+- Zero-shares filter: toggle (default ON) hides holdings with exactly 0 shares; negatives always visible
+- Symbol search: text input, case-insensitive substring match on ticker + company_name + security_id
+- Client-side filtering; API always returns all holdings
+- Responsive + a11y compliant
+
+#### Files Changed
+
+**Backend:**
+- `backend/src/portfolio/holdings_service.py` — accumulators, per-security fields
+- `backend/src/portfolio/models.py` — HoldingItem + HoldingsSummary models
+- `backend/tests/test_portfolio_holdings.py` — 12 new test cases
+
+**Frontend:**
+- `frontend/src/types/portfolio.ts` — HoldingsSummary + HoldingEntry type updates
+- `frontend/src/components/PortfolioHoldingsTable.tsx` — summary bar, filters, search
+- `frontend/src/lib/filterSecurities.ts` *(new)* — helper function
+- `frontend/src/components/SecuritySearchPanel.tsx` *(new)* — Find in portfolio panel
+
+#### Validation
+
+- **Backend:** Rusty PASS 228 backend + 54 synthetic tests
+- **Frontend:** tsc/eslint clean; Livingston manual verification
+- **Approval:** Danny APPROVE
+
+#### Non-Goals
+
+- No server-side filtering/search
+- No pagination
+- No URL query params for state
+- No persistence of filter state
+- No new API endpoints
+
+---
+
+### 3. Find in Portfolio — Import Question Security Search (APPROVED & IMPLEMENTED)
+
+**Date:** 2026-09-06  
+**Author:** Livingston (Frontend Lead)  
+**Status:** FROZEN — implementation-ready (Rusty Implementation)  
+**Impact:** Import questions for unresolved companies can now search existing portfolio securities (including aliases) and select to map to SELECTED_CANDIDATE.
+
+#### Feature
+
+- "Find in portfolio" button in `ImportQuestionCard` (mutually exclusive with "+ Create new security")
+- Opens `SecuritySearchPanel` modal with:
+  - Lazy-loaded securities list from `listSecurities()` (cached to avoid duplicates)
+  - Case-insensitive search on: security_id, ticker, company_name, aliases[].value
+  - Results capped at 50; "refine search" hint shown if needed
+  - Loading/no-results/error states handled
+  - Accessible: labelled input, role=listbox/option, aria-labels
+- Selection maps to existing `handleSelect` → `SELECTED_CANDIDATE` answer type
+- Reuses existing backend fan-out logic; no backend changes
+
+#### Files Changed
+
+**Frontend:**
+- `frontend/src/lib/filterSecurities.ts` *(new)* — pure, testable helper; no framework dependency
+- `frontend/src/components/SecuritySearchPanel.tsx` *(new)* — modal UI + state
+- `frontend/src/components/ImportQuestionCard.tsx` *(modified)* — button state + panel integration
+
+#### Validation
+
+- tsc --noEmit → 0 errors
+- eslint → 0 warnings/errors
+- Manual verification by Rusty
+
+#### Design Decisions
+
+- Helper function separated from component for testability and reuse
+- Lazy loading + caching pattern avoids duplicate API calls on panel re-opens
+- Aliases included in search to catch historical/regional variations
+- 50-result cap balances UX responsiveness with completeness
+
+---
+
+## Archived Decisions (Inbox → Consolidated)
+
+The following inbox files have been merged into the active decisions above and archived per convention:
+
+- `.squad/decisions/inbox/danny-portfolio-summary-filters.md`
+- `.squad/decisions/inbox/copilot-directive-20260906T112642+0200.md`
+- `.squad/decisions/inbox/copilot-directive-20260906T113335+0200.md`
+
+All implementation histories and design rationale preserved in sections 2 and 3 above.
+
+---
+
+## Implementation History Log
+
+| Date | Feature | Agent/Owner | Status | Files Modified |
+|------|---------|-------------|--------|-----------------|
+| 2026-09-06 | Portfolio Summary & Filters | Rusty (Backend) | COMPLETE | holdings_service.py, models.py, test_portfolio_holdings.py |
+| 2026-09-06 | Portfolio Summary & Filters | Livingston (Frontend) | COMPLETE | portfolio.ts, PortfolioHoldingsTable.tsx |
+| 2026-09-06 | Find in Portfolio | Rusty (Implementation) | COMPLETE | filterSecurities.ts *(new)*, SecuritySearchPanel.tsx *(new)*, ImportQuestionCard.tsx |
+

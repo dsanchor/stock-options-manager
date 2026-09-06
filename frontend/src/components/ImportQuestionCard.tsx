@@ -4,6 +4,7 @@ import { useState } from "react";
 import { answerQuestion } from "@/lib/portfolio-api";
 import type { ImportQuestion, ImportSession, SecurityMaster } from "@/types/import";
 import SecurityCreateForm from "./SecurityCreateForm";
+import SecuritySearchPanel from "./SecuritySearchPanel";
 
 interface Props {
   question: ImportQuestion;
@@ -22,6 +23,9 @@ export default function ImportQuestionCard({ question, sessionId, onAnswered }: 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  // Cache fetched securities so repeated panel opens don't re-request.
+  const [cachedSecurities, setCachedSecurities] = useState<SecurityMaster[] | null>(null);
   const [batchValue, setBatchValue] = useState(
     question.scope === "BATCH" ? question.current_value : "",
   );
@@ -171,7 +175,17 @@ export default function ImportQuestionCard({ question, sessionId, onAnswered }: 
 
           {/* Actions */}
           <div className="flex flex-wrap gap-2 pt-1">
-            {!showCreate && (
+            {!showSearch && !showCreate && (
+              <button
+                type="button"
+                onClick={() => setShowSearch(true)}
+                disabled={loading}
+                className="rounded-[var(--radius)] border border-accent-blue/50 px-3 py-1.5 text-xs text-accent-blue hover:bg-accent-blue/10 disabled:opacity-50"
+              >
+                Find in portfolio
+              </button>
+            )}
+            {!showCreate && !showSearch && (
               <button
                 type="button"
                 onClick={() => setShowCreate(true)}
@@ -198,6 +212,19 @@ export default function ImportQuestionCard({ question, sessionId, onAnswered }: 
               Exclude permanently
             </button>
           </div>
+
+          {showSearch && (
+            <SecuritySearchPanel
+              prefillQuery={question.company_name}
+              cachedSecurities={cachedSecurities}
+              onCacheLoaded={setCachedSecurities}
+              onSelect={(secId) => {
+                setShowSearch(false);
+                handleSelect(secId);
+              }}
+              onClose={() => setShowSearch(false)}
+            />
+          )}
 
           {showCreate && (
             <SecurityCreateForm

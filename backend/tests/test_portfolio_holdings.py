@@ -402,3 +402,183 @@ class TestAvgCostBasisPerShare:
         result = svc.compute_holdings()
         h = result["holdings"][0]
         assert h["avg_cost_basis_eur"] is None
+
+
+# ---------------------------------------------------------------------------
+# Summary totals — purchases, sales, current_invested, backward-compat alias
+# ---------------------------------------------------------------------------
+
+class TestSummaryTotals:
+    def test_purchases_only(self):
+        """BUY 100@€1000 (€10 fee) → purchases=1010, sales=0, current_invested=1010."""
+        movements = [
+            _make_movement("t1", "XNYS:AAPL", "BUY", "100", "1000.00", commission_eur="10.00"),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        s = result["summary"]
+        assert s["total_purchases_eur"] == "1010.00"
+        assert s["total_sales_eur"] == "0.00"
+        assert s["current_invested_eur"] == "1010.00"
+
+    def test_purchases_and_sales(self):
+        """BUY 100@€1000 (€10 fee) + SELL 30@€350 (€5 fee) → purchases=1010, sales=345, current=665."""
+        movements = [
+            _make_movement("t1", "XNYS:AAPL", "BUY", "100", "1000.00", commission_eur="10.00"),
+            _make_movement("t2", "XNYS:AAPL", "SELL", "30", "350.00", commission_eur="5.00"),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        s = result["summary"]
+        assert s["total_purchases_eur"] == "1010.00"
+        assert s["total_sales_eur"] == "345.00"
+        assert s["current_invested_eur"] == "665.00"
+
+    def test_sales_exceed_purchases(self):
+        """BUY 100@€500 (€0 fee) + SELL 100@€800 (€0 fee) → current_invested=-300.00 (profit)."""
+        movements = [
+            _make_movement("t1", "XNYS:AAPL", "BUY", "100", "500.00"),
+            _make_movement("t2", "XNYS:AAPL", "SELL", "100", "800.00"),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        s = result["summary"]
+        assert s["total_purchases_eur"] == "500.00"
+        assert s["total_sales_eur"] == "800.00"
+        assert s["current_invested_eur"] == "-300.00"
+
+    def test_dividends_excluded_from_current_invested(self):
+        """BUY + DIVIDEND → current_invested_eur equals total_purchases_eur (dividend excluded)."""
+        movements = [
+            _make_movement("t1", "XNYS:AAPL", "BUY", "100", "1000.00", commission_eur="10.00"),
+            _make_movement("t2", "XNYS:AAPL", "DIVIDEND", "0", "86.25", net_eur="73.31"),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        s = result["summary"]
+        assert s["current_invested_eur"] == s["total_purchases_eur"]
+        assert s["total_purchases_eur"] == "1010.00"
+
+    def test_incomplete_buys_excluded_from_purchases(self):
+        """INCOMPLETE BUY → total_purchases_eur=0.00."""
+        movements = [
+            _make_movement("t1", "XNYS:AAPL", "BUY", "50", "0", cost_basis_status="INCOMPLETE"),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        s = result["summary"]
+        assert s["total_purchases_eur"] == "0.00"
+        assert s["total_sales_eur"] == "0.00"
+        assert s["current_invested_eur"] == "0.00"
+
+    def test_multi_security_aggregation(self):
+        """2 securities, mixed buys/sells → summary totals are portfolio-wide sums."""
+        movements = [
+            _make_movement("t1", "XNYS:AAPL", "BUY", "10", "1000.00", commission_eur="5.00"),
+            _make_movement("t2", "XNYS:AAPL", "SELL", "5", "600.00", commission_eur="3.00"),
+            _make_movement("t3", "XMAD:TEF", "BUY", "100", "400.00", commission_eur="2.00"),
+            _make_movement("t4", "XMAD:TEF", "SELL", "20", "90.00", commission_eur="1.00"),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        s = result["summary"]
+        # AAPL purchases: 1000+5=1005; TEF purchases: 400+2=402 → 1407
+        assert Decimal(s["total_purchases_eur"]) == Decimal("1407.00")
+        # AAPL sales: 600-3=597; TEF sales: 90-1=89 → 686
+        assert Decimal(s["total_sales_eur"]) == Decimal("686.00")
+        assert Decimal(s["current_invested_eur"]) == Decimal("721.00")
+        assert s["total_securities"] == 2
+
+    def test_backward_compat_total_invested(self):
+        """summary.total_invested_eur == summary.total_purchases_eur (backward-compat alias)."""
+        movements = [
+            _make_movement("t1", "XNYS:AAPL", "BUY", "100", "1000.00", commission_eur="10.00"),
+            _make_movement("t2", "XNYS:AAPL", "SELL", "30", "350.00", commission_eur="5.00"),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        s = result["summary"]
+        assert s["total_invested_eur"] == s["total_purchases_eur"]
+
+    def test_empty_ledger_new_fields(self):
+        """Empty ledger → all new summary fields are zero strings."""
+        portfolio_svc, securities_svc = _make_services([])
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        s = result["summary"]
+        assert s["total_purchases_eur"] == "0.00"
+        assert s["total_sales_eur"] == "0.00"
+        assert s["current_invested_eur"] == "0.00"
+
+    def test_soft_deleted_excluded(self):
+        """Movements with deleted_at are excluded from all totals."""
+        movements = [
+            _make_movement("t1", "XNYS:AAPL", "BUY", "100", "1000.00", commission_eur="10.00"),
+            {
+                **_make_movement("t2", "XNYS:AAPL", "BUY", "50", "500.00", commission_eur="5.00"),
+                "deleted_at": "2024-03-01T00:00:00Z",
+            },
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        s = result["summary"]
+        # Only t1 should be counted (t2 is soft-deleted)
+        assert s["total_purchases_eur"] == "1010.00"
+
+
+# ---------------------------------------------------------------------------
+# Per-security totals — total_purchases_eur and total_sales_eur on each holding
+# ---------------------------------------------------------------------------
+
+class TestPerSecurityTotals:
+    def test_per_security_purchases_and_sales(self):
+        """Per-holding total_purchases_eur and total_sales_eur are correct."""
+        movements = [
+            _make_movement("t1", "XNYS:AAPL", "BUY", "100", "18250.00", commission_eur="7.50"),
+            _make_movement("t2", "XNYS:AAPL", "SELL", "30", "5500.00", commission_eur="5.00"),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        h = result["holdings"][0]
+        # purchases = 18250 + 7.50 = 18257.50
+        assert h["total_purchases_eur"] == "18257.50"
+        # purchases alias equals total_invested_eur
+        assert h["total_purchases_eur"] == h["total_invested_eur"]
+        # sales = 5500 - 5 = 5495.00
+        assert h["total_sales_eur"] == "5495.00"
+
+    def test_per_security_no_sells(self):
+        """Per-holding total_sales_eur is '0.00' when there are no sells."""
+        movements = [
+            _make_movement("t1", "XNYS:AAPL", "BUY", "50", "5000.00"),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        h = result["holdings"][0]
+        assert h["total_sales_eur"] == "0.00"
+
+    def test_per_security_independent_of_other_securities(self):
+        """Each security's sales/purchases are isolated from other securities."""
+        movements = [
+            _make_movement("t1", "XNYS:AAPL", "BUY", "10", "1000.00", commission_eur="5.00"),
+            _make_movement("t2", "XNYS:AAPL", "SELL", "5", "600.00", commission_eur="3.00"),
+            _make_movement("t3", "XMAD:TEF", "BUY", "100", "400.00", commission_eur="2.00"),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        by_id = {h["security_id"]: h for h in result["holdings"]}
+        assert by_id["XNYS:AAPL"]["total_purchases_eur"] == "1005.00"
+        assert by_id["XNYS:AAPL"]["total_sales_eur"] == "597.00"
+        assert by_id["XMAD:TEF"]["total_purchases_eur"] == "402.00"
+        assert by_id["XMAD:TEF"]["total_sales_eur"] == "0.00"

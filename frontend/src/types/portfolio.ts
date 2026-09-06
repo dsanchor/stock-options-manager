@@ -141,6 +141,8 @@ export interface HoldingEntry {
   avg_cost_basis_eur: string | null;
   cost_basis_status: CostBasisStatus;
   total_invested_eur: string;
+  total_purchases_eur: string;      // NEW (= total_invested_eur for this security)
+  total_sales_eur: string;          // NEW
   total_dividends_eur: string;
   accounts: string[];
   warnings: MovementWarning[];
@@ -148,8 +150,11 @@ export interface HoldingEntry {
 
 export interface HoldingsSummary {
   total_securities: number;
-  total_invested_eur: string;
-  total_dividends_eur: string;
+  total_invested_eur: string;       // kept (= total_purchases_eur, backward compat)
+  total_dividends_eur: string;      // kept
+  total_purchases_eur: string;      // NEW
+  total_sales_eur: string;          // NEW
+  current_invested_eur: string;     // NEW
 }
 
 export interface HoldingsResponse {

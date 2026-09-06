@@ -222,6 +222,8 @@ class HoldingItem(BaseModel):
     avg_cost_basis_eur: Optional[str]
     cost_basis_status: str
     total_invested_eur: str
+    total_purchases_eur: str
+    total_sales_eur: str
     total_dividends_eur: str
     accounts: List[str]
     warnings: List[ImportWarning]
@@ -230,6 +232,9 @@ class HoldingItem(BaseModel):
 class HoldingsSummary(BaseModel):
     total_securities: int
     total_invested_eur: str
+    total_purchases_eur: str
+    total_sales_eur: str
+    current_invested_eur: str
     total_dividends_eur: str
 
 

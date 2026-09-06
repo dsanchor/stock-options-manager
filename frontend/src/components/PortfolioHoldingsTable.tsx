@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { getHoldings } from "@/lib/portfolio-api";
 import type { HoldingEntry, HoldingsResponse, WarningType } from "@/types/portfolio";
@@ -23,11 +23,17 @@ function Skeleton() {
   );
 }
 
+function formatEur(value: string) {
+  return `€${Number(value).toLocaleString("es-ES", { minimumFractionDigits: 2 })}`;
+}
+
 /** Client-side holdings table with empty, loading, and error states. */
 export default function PortfolioHoldingsTable() {
   const [data, setData] = useState<HoldingsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [hideZeroShares, setHideZeroShares] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -49,6 +55,27 @@ export default function PortfolioHoldingsTable() {
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { load(); }, [load]);
+
+  const visibleHoldings = useMemo(() => {
+    if (!data) return [];
+    return data.holdings.filter((h) => {
+      const shares = parseFloat(h.total_shares);
+      // Negative holdings are always visible (reconciliation warnings)
+      if (shares < 0) return true;
+      // Hide exactly-zero shares when filter is on
+      if (hideZeroShares && shares === 0) return false;
+      // Search filter (case-insensitive substring)
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        return (
+          h.ticker.toLowerCase().includes(q) ||
+          h.company_name.toLowerCase().includes(q) ||
+          h.security_id.toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [data, hideZeroShares, searchQuery]);
 
   if (loading) return <Skeleton />;
 
@@ -79,65 +106,143 @@ export default function PortfolioHoldingsTable() {
     );
   }
 
-  const { holdings, summary } = data;
+  const { summary } = data;
+  const isFiltered = searchQuery.trim() !== "" || (hideZeroShares && data.holdings.some((h) => parseFloat(h.total_shares) === 0));
+  const currentInvestedNegative = parseFloat(summary.current_invested_eur) < 0;
 
   return (
     <div className="space-y-5">
-      {/* Summary bar */}
-      <div className="flex flex-wrap gap-6 rounded-[var(--radius)] border border-border bg-bg-card px-5 py-4 text-sm">
-        <div>
-          <div className="text-xs text-text-muted mb-1">Securities</div>
-          <div className="text-lg font-semibold text-text">{summary.total_securities}</div>
-        </div>
-        <div>
-          <div className="text-xs text-text-muted mb-1">Total invested</div>
-          <div className="text-lg font-semibold text-text">
-            €{Number(summary.total_invested_eur).toLocaleString("es-ES", { minimumFractionDigits: 2 })}
+      {/* Summary bar — always reflects full API response, never filtered */}
+      <div className="rounded-[var(--radius)] border border-border bg-bg-card px-5 py-4">
+        {/* Primary cards: required trio in exact order */}
+        <div className="flex flex-wrap gap-6 text-sm">
+          <div>
+            <div className="text-xs text-text-muted mb-1">Total Purchases</div>
+            <div className="text-lg font-semibold text-text">{formatEur(summary.total_purchases_eur)}</div>
           </div>
-        </div>
-        <div>
-          <div className="text-xs text-text-muted mb-1">Total dividends</div>
-          <div className="text-lg font-semibold text-accent-green">
-            €{Number(summary.total_dividends_eur).toLocaleString("es-ES", { minimumFractionDigits: 2 })}
+          <div>
+            <div className="text-xs text-text-muted mb-1">Total Sales</div>
+            <div className="text-lg font-semibold text-text">{formatEur(summary.total_sales_eur)}</div>
           </div>
-        </div>
-        <div className="ml-auto">
-          <button
-            type="button"
-            onClick={load}
-            className="rounded-[var(--radius-pill)] border border-border px-3 py-1.5 text-xs text-text-muted hover:bg-bg-hover"
-          >
-            Refresh
-          </button>
+          <div>
+            <div className="text-xs text-text-muted mb-1">Current Invested</div>
+            <div className={`text-lg font-semibold ${currentInvestedNegative ? "text-accent-green" : "text-text"}`}>
+              {formatEur(summary.current_invested_eur)}
+            </div>
+          </div>
+
+          {/* Separator */}
+          <div className="hidden sm:block w-px bg-border/50 self-stretch" aria-hidden="true" />
+
+          {/* Secondary: dividends + securities count */}
+          <div className="opacity-70">
+            <div className="text-xs text-text-muted mb-1">Total Dividends</div>
+            <div className="text-base font-medium text-accent-green">{formatEur(summary.total_dividends_eur)}</div>
+          </div>
+          <div className="opacity-70">
+            <div className="text-xs text-text-muted mb-1">Securities</div>
+            <div className="text-base font-medium text-text">{summary.total_securities}</div>
+          </div>
+
+          <div className="ml-auto flex items-start">
+            <button
+              type="button"
+              onClick={load}
+              className="rounded-[var(--radius-pill)] border border-border px-3 py-1.5 text-xs text-text-muted hover:bg-bg-hover"
+              aria-label="Refresh holdings"
+            >
+              Refresh
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Table */}
-      <div className="overflow-x-auto rounded-[var(--radius)] border border-border">
-        <table className="w-full table-modern text-sm">
-          <thead>
-            <tr className="border-b border-border bg-bg-card/80">
-              {["Security", "Shares", "Avg Cost (€)", "Invested (€)", "Dividends (€)", "Accounts", ""].map(
-                (h, i) => (
-                  <th
-                    key={i}
-                    className={`px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-text-muted ${
-                      i >= 1 && i <= 4 ? "text-right" : "text-left"
-                    }`}
-                  >
-                    {h}
-                  </th>
-                ),
-              )}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border/40">
-            {holdings.map((h) => (
-              <HoldingRow key={h.security_id} holding={h} />
-            ))}
-          </tbody>
-        </table>
+      {/* Filter toolbar */}
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <label className="relative flex-1 min-w-[180px] max-w-xs">
+          <span className="sr-only">Search holdings</span>
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search ticker, name, ID…"
+            aria-label="Search holdings by ticker, company name, or security ID"
+            className="w-full rounded-[var(--radius)] border border-border bg-bg-card px-3 py-2 pl-8 text-sm text-text placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-border"
+          />
+          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted text-xs pointer-events-none" aria-hidden="true">
+            🔍
+          </span>
+        </label>
+
+        <label className="flex items-center gap-2 cursor-pointer select-none text-text-muted hover:text-text">
+          <input
+            type="checkbox"
+            checked={hideZeroShares}
+            onChange={(e) => setHideZeroShares(e.target.checked)}
+            className="rounded border-border"
+            aria-label="Hide zero-share holdings"
+          />
+          <span className="text-xs">Hide zero-share holdings</span>
+        </label>
       </div>
+
+      {/* Table or filtered-empty state */}
+      {visibleHoldings.length === 0 ? (
+        <div className="rounded-[var(--radius-card)] border border-border bg-bg-card p-10 text-center space-y-3">
+          <div className="text-3xl">🔍</div>
+          <div className="text-base font-medium text-text">No holdings match your filters</div>
+          <div className="text-sm text-text-muted">
+            Try adjusting your search or showing zero-share holdings.
+          </div>
+          <button
+            type="button"
+            onClick={() => { setSearchQuery(""); setHideZeroShares(false); }}
+            className="inline-flex items-center gap-2 rounded-[var(--radius)] border border-border px-4 py-2 text-sm text-text-muted hover:bg-bg-hover"
+          >
+            Clear filters
+          </button>
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-[var(--radius)] border border-border">
+          {isFiltered && (
+            <div className="flex items-center gap-2 border-b border-border/40 bg-bg-card/60 px-4 py-2 text-xs text-text-muted">
+              <span>Showing {visibleHoldings.length} of {data.holdings.length} holdings</span>
+              <button
+                type="button"
+                onClick={() => { setSearchQuery(""); setHideZeroShares(false); }}
+                className="ml-2 underline hover:text-text"
+                aria-label="Clear all filters"
+              >
+                Clear filters
+              </button>
+            </div>
+          )}
+          <table className="w-full table-modern text-sm">
+            <thead>
+              <tr className="border-b border-border bg-bg-card/80">
+                {["Security", "Shares", "Avg Cost (€)", "Invested (€)", "Dividends (€)", "Accounts", ""].map(
+                  (h, i) => (
+                    <th
+                      key={i}
+                      scope="col"
+                      className={`px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-text-muted ${
+                        i >= 1 && i <= 4 ? "text-right" : "text-left"
+                      }`}
+                    >
+                      {h}
+                    </th>
+                  ),
+                )}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/40">
+              {visibleHoldings.map((h) => (
+                <HoldingRow key={h.security_id} holding={h} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -186,6 +291,7 @@ function HoldingRow({ holding: h }: { holding: HoldingEntry }) {
               type="button"
               onClick={() => setShowWarnings((v) => !v)}
               title="View warnings"
+              aria-expanded={showWarnings}
               className="text-accent-orange hover:text-accent-orange/70 transition-colors"
             >
               ⚠
