@@ -88,6 +88,9 @@ export default async function SymbolDetailPage({
 
   const hasOptions = hasAgentContent || positions.length > 0 || activities.length > 0;
 
+  // security_id to query movements — prefer canonical form from security master
+  const stocksSecurityId = d.security?.security_id ?? d.security_id ?? null;
+
   return (
     <div className="space-y-6">
       {/* ── Shared Header ─────────────────────────────────────────────── */}
@@ -135,15 +138,19 @@ export default async function SymbolDetailPage({
       <TradingViewSymbolInfo symbol={d.symbol} exchange={d.exchange} />
       <RtChart symbol={d.symbol} exchange={d.exchange} />
 
+      {/* ── Summary Section ────────────────────────────────────────────── */}
+      <DetailSection title="Summary">
+        <SymbolSummary
+          symbol={symbol}
+          enrichment={enr}
+          summary={d.summary}
+          totalShares={d.total_shares}
+        />
+      </DetailSection>
+
       {/* ── Options Section ────────────────────────────────────────────── */}
       {hasOptions && (
         <DetailSection title="Options">
-          <SymbolSummary
-            symbol={symbol}
-            enrichment={enr}
-            summary={d.summary}
-            totalShares={d.total_shares}
-          />
           <PositionsTable symbol={symbol} positions={positions} />
           <AddPositionForm symbol={symbol} />
           {(hasAgentContent || activities.length > 0) && (
@@ -153,10 +160,12 @@ export default async function SymbolDetailPage({
       )}
 
       {/* ── Stocks Section ─────────────────────────────────────────────── */}
-      {hasPortfolio && (
+      {stocksSecurityId && (
         <DetailSection title="Stocks">
-          <PortfolioHoldingsCard portfolio={d.portfolio!} symbolState={symbolState} />
-          <StockTransactionsTable securityId={d.security?.security_id ?? d.security_id ?? symbol} />
+          {hasPortfolio && (
+            <PortfolioHoldingsCard portfolio={d.portfolio!} symbolState={symbolState} />
+          )}
+          <StockTransactionsTable securityId={stocksSecurityId} />
         </DetailSection>
       )}
 
