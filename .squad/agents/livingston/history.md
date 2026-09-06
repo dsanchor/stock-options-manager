@@ -1399,3 +1399,27 @@ Per strict lockout policy: author of rejected code cannot participate in revisio
 **Deployment action required:** Run `bash scripts/provision_cosmosdb.sh` (or execute the two new `az cosmosdb sql container create` commands) against the live Azure Cosmos account to create the missing containers. After creation, restart the backend container so the startup probe succeeds.
 
 **Learning:** Provision scripts must be updated in the same PR as any new container registration in `CosmosDBService.__init__`. Best-effort container init logs warnings silently; this can hide missing provisioning until a feature is first used.
+
+---
+
+## 2026-09-06: ISO Date Pass-through Bug Fix (production bug)
+
+**Bug:** Importing purchases CSV with ISO-formatted dates (`2016-07-18`) raised `Row 2: Cannot parse date: '2016-07-18'`. Triggered when user files contain dates already in ISO format (re-export, Excel normalisation, or any downstream re-parse of a previously-normalised value).
+
+**Root cause:** `parse_spanish_date` in `parsers/common.py` only accepted `DD/MM/YYYY` (splitting on `/`). ISO `YYYY-MM-DD` (hyphen-delimited) hit the `len(parts) != 3` guard immediately. An existing test (`test_invalid`) even codified this as the expected behavior.
+
+**Fix (surgical, `parsers/common.py` only):**
+- Added `_ISO_DATE_RE` pre-compiled regex `^(\d{4})-(\d{2})-(\d{2})$`
+- `parse_spanish_date` now has two branches: ISO pass-through (with `datetime.date` calendar validation) and Spanish `DD/MM/YYYY` (existing logic, now also validated via `datetime.date`)
+- US-style dates with month > 12 are rejected by calendar validation; ambiguous dates (day ≤ 12) are parsed as Spanish (documented source schema)
+- `import datetime as _dt` added to common.py imports
+
+**Tests updated/added (`test_portfolio_parsers.py`):**
+- `TestParseSpanishDate.test_invalid` → replaced with `test_iso_passthrough` (ISO now accepted)
+- Added `test_iso_passthrough_old_date` (exact `2016-07-18` production reproduction)
+- Added `test_spanish_normalises_to_iso`, `test_iso_idempotent`, `test_iso_calendar_invalid_raises`, `test_spanish_calendar_invalid_raises`, `test_us_date_high_month_rejected`
+- Added `TestIsoDatesRegressionPurchases`, `TestIsoDatesRegressionDividends`, `TestIsoDatesRegressionSales` — cover all three parsers end-to-end with ISO dates and mixed-format files
+
+**Result:** 171 tests pass (11 new, 160 pre-existing). No regressions.
+
+**Learning:** `parse_spanish_date` is the single boundary for all CSV date input across all three parsers. It must be idempotent — calling it on an already-normalised ISO value must return the same ISO value. The existing test that expected `ValueError` for `"2024-06-15"` was a specification error that blocked real-world import files.

@@ -8,6 +8,7 @@ All financial amounts returned as Decimal for arithmetic precision.
 from __future__ import annotations
 
 import csv
+import datetime as _dt
 import io
 import re
 import unicodedata
@@ -66,23 +67,48 @@ def parse_spanish_decimal(raw: str) -> Optional[Decimal]:
         raise ValueError(f"Cannot parse decimal: {raw!r}")
 
 
+_ISO_DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+
+
 def parse_spanish_date(raw: str) -> Optional[str]:
-    """Parse a Spanish DD/MM/YYYY date string → ISO 'YYYY-MM-DD'.
+    """Parse a date string → ISO 'YYYY-MM-DD'.
+
+    Accepts:
+    - Spanish DD/MM/YYYY  → normalised to YYYY-MM-DD
+    - Already-normalised ISO YYYY-MM-DD  → validated and returned as-is
+
+    US-style MM/DD/YYYY with a month value > 12 will be rejected by the
+    calendar validation below.  Ambiguous dates (e.g. 07/12/2016) are
+    treated as Spanish (DD first) — the source schema is always Spanish.
 
     Returns None for empty / missing values.
-    Raises ValueError for non-empty invalid values.
+    Raises ValueError for non-empty unrecognised or calendar-invalid values.
     """
     if raw is None:
         return None
     s = str(raw).strip()
     if not s:
         return None
+
+    # --- Branch 1: already-normalised ISO YYYY-MM-DD (pass-through) ---
+    iso_m = _ISO_DATE_RE.match(s)
+    if iso_m:
+        year, month, day = (int(p) for p in iso_m.groups())
+        try:
+            _dt.date(year, month, day)  # validate calendar ranges
+        except ValueError:
+            raise ValueError(f"Cannot parse date: {raw!r}")
+        return s
+
+    # --- Branch 2: Spanish DD/MM/YYYY ---
     parts = s.split("/")
     if len(parts) != 3:
         raise ValueError(f"Cannot parse date: {raw!r}")
-    day, month, year = parts
+    day_s, month_s, year_s = parts
     try:
-        return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+        d, m, y = int(day_s), int(month_s), int(year_s)
+        _dt.date(y, m, d)  # validate calendar ranges
+        return f"{y:04d}-{m:02d}-{d:02d}"
     except ValueError:
         raise ValueError(f"Cannot parse date: {raw!r}")
 

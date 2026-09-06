@@ -98,13 +98,43 @@ class TestParseSpanishDate:
     def test_none(self):
         assert parse_spanish_date(None) is None
 
-    def test_invalid(self):
-        with pytest.raises(ValueError):
-            parse_spanish_date("2024-06-15")
+    # ISO pass-through — formerly raised ValueError (pre-fix regression anchor)
+    def test_iso_passthrough(self):
+        """Already-normalised ISO YYYY-MM-DD is accepted unchanged."""
+        assert parse_spanish_date("2024-06-15") == "2024-06-15"
+
+    def test_iso_passthrough_old_date(self):
+        """Reproduces the production bug: '2016-07-18' must not raise."""
+        assert parse_spanish_date("2016-07-18") == "2016-07-18"
+
+    def test_spanish_normalises_to_iso(self):
+        """Spanish 18/07/2016 normalises to ISO 2016-07-18 exactly once."""
+        assert parse_spanish_date("18/07/2016") == "2016-07-18"
+
+    def test_iso_idempotent(self):
+        """Calling parse_spanish_date twice on the same value is safe."""
+        first = parse_spanish_date("18/07/2016")
+        second = parse_spanish_date(first)
+        assert second == "2016-07-18"
+
+    def test_iso_calendar_invalid_raises(self):
+        """ISO with out-of-range day raises ValueError."""
+        with pytest.raises(ValueError, match="Cannot parse date"):
+            parse_spanish_date("2024-02-30")
+
+    def test_spanish_calendar_invalid_raises(self):
+        """Spanish with month 13 raises ValueError."""
+        with pytest.raises(ValueError, match="Cannot parse date"):
+            parse_spanish_date("01/13/2024")
 
     def test_invalid_format(self):
         with pytest.raises(ValueError):
             parse_spanish_date("not-a-date")
+
+    def test_us_date_high_month_rejected(self):
+        """US MM/DD/YYYY with day > 12 read as Spanish produces month > 12 → rejected."""
+        with pytest.raises(ValueError):
+            parse_spanish_date("07/18/2016")  # day=07, month=18 → invalid
 
 
 class TestNormalizeCompanyName:
@@ -336,3 +366,72 @@ class TestSalesParser:
     def test_wrong_columns_raises(self):
         with pytest.raises(ValueError):
             parse_sales(_encode("Col1\tCol2\n1\t2\n"))
+
+
+# ---------------------------------------------------------------------------
+# Regression: ISO date pass-through across all three parsers
+# ---------------------------------------------------------------------------
+# Reproduces the production bug: user files that already contain ISO-formatted
+# dates (e.g. after re-export or Excel normalisation) must not raise.
+
+class TestIsoDatesRegressionPurchases:
+    """Purchases: ISO YYYY-MM-DD in 'Fecha compra' column."""
+
+    _CSV_ISO = (
+        "Año\tEmpresa\tFecha compra\tValor compra\tAcciones\tTotal (€)\tComisión\n"
+        "2016\tSome Corp\t2016-07-18\t10,00\t100\t1.000,00\t5,00\n"
+    )
+
+    def test_iso_date_accepted(self):
+        """'2016-07-18' must not raise 'Cannot parse date'."""
+        rows = parse_purchases(_encode(self._CSV_ISO))
+        assert len(rows) == 1
+        assert rows[0]["purchase_date"] == "2016-07-18"
+
+    def test_spanish_date_still_normalises(self):
+        csv = (
+            "Año\tEmpresa\tFecha compra\tValor compra\tAcciones\tTotal (€)\tComisión\n"
+            "2016\tSome Corp\t18/07/2016\t10,00\t100\t1.000,00\t5,00\n"
+        )
+        rows = parse_purchases(_encode(csv))
+        assert rows[0]["purchase_date"] == "2016-07-18"
+
+    def test_iso_and_spanish_mixed(self):
+        """A file with both formats in different rows parses cleanly."""
+        csv = (
+            "Año\tEmpresa\tFecha compra\tValor compra\tAcciones\tTotal (€)\tComisión\n"
+            "2016\tCorp A\t18/07/2016\t10,00\t100\t1.000,00\t5,00\n"
+            "2017\tCorp B\t2017-03-15\t20,00\t50\t1.000,00\t5,00\n"
+        )
+        rows = parse_purchases(_encode(csv))
+        assert rows[0]["purchase_date"] == "2016-07-18"
+        assert rows[1]["purchase_date"] == "2017-03-15"
+
+
+class TestIsoDatesRegressionDividends:
+    """Dividends: ISO YYYY-MM-DD in 'Fecha de cobro' column."""
+
+    _CSV_ISO = (
+        "Año\tEmpresa\tFecha de cobro\tImporte Bruto\tImporte Neto\t"
+        "Importe en Derechos\tRetención Origen\tRetención Destino\n"
+        "2016\tSome Corp\t2016-07-18\t50,00\t38,00\t0,00\t7,50\t4,50\n"
+    )
+
+    def test_iso_date_accepted(self):
+        rows = parse_dividends(_encode(self._CSV_ISO))
+        assert len(rows) == 1
+        assert rows[0]["payment_date"] == "2016-07-18"
+
+
+class TestIsoDatesRegressionSales:
+    """Sales: ISO YYYY-MM-DD in 'Fecha venta' column."""
+
+    _CSV_ISO = (
+        "Año\tEmpresa\tFecha venta\tAcciones\tComisión\tTotal Venta\n"
+        "2016\tSome Corp\t2016-07-18\t50\t5,00\t600,00\n"
+    )
+
+    def test_iso_date_accepted(self):
+        rows = parse_sales(_encode(self._CSV_ISO))
+        assert len(rows) == 1
+        assert rows[0]["sale_date"] == "2016-07-18"
