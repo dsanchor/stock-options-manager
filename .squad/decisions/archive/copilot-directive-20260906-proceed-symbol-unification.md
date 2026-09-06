@@ -1,0 +1,4 @@
+### 2026-09-06: Proceed with Portfolio, Watchlist, and Symbol Details unification
+**By:** Copilot (via Copilot)
+**What:** After the current Portfolio summary deployment completes, implement Symbol Unification: link Portfolio securities to Watchlist/symbol_config, automatically create missing configs with all agents and notifications disabled, preserve Watchlist-only symbols, and extend the canonical Symbol Details experience with Portfolio holdings and movement information. Use safe defaults from the prior proposal: include securities with any ledger history, retain zero-share symbols/configuration, use MIC:TICKER as canonical identity with backward-compatible redirects, and reconcile legacy total_shares before making it read-only.
+**Why:** User explicitly authorized continuing with the previously paused Portfolio/Watchlist/Symbol Details integration after the current release.

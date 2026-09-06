@@ -1970,3 +1970,50 @@ Initial feature rejected by Basher (D0) with D2 defect: TypeScript types and too
 
 4. **Accessibility matters for financial data.** aria-labels and keyboard navigation are essential for users relying on screen readers or keyboard-only navigation.
 
+---
+
+## 2026-09-06 — Symbol Unification rev 3 — Frontend Implementation
+
+### Completion Summary
+
+**Functional commit:** `803b8f3 feat: unify portfolio and watchlist symbols`
+
+**Frontend components delivered:**
+1. ✅ `AddSymbolForm.tsx` (REWRITTEN) — Search-first unified workflow (select existing + create new)
+2. ✅ `SymbolsTable.tsx` (EDITED) — Updated to support two-section rendering
+3. ✅ `SymbolsSectionedClient.tsx` (NEW) — Client component separates portfolio_rows / watchlist_rows
+4. ✅ `PortfolioHoldingsCard.tsx` (NEW) — Holdings summary with account breakdown
+5. ✅ `SymbolMovementsTable.tsx` (NEW) — Recent movements table (sortable, pageable)
+6. ✅ `SymbolDisambiguation.tsx` (NEW) — Handles 300 Multiple Choices from bare ticker ambiguity
+
+**TypeScript types updated:**
+- `frontend/src/types/symbol-detail.ts` — Extended with security, portfolio, symbol_state
+- `frontend/src/types/symbols.ts` — New `PortfolioRow`, `WatchlistRow`, two-section structure
+
+**Routes updated:**
+- `/symbols` — Now renders `SymbolsSectionedClient` (two-list Watchlist)
+- `/symbols/[symbol]/page.tsx` — Unified detail with holdings + movements
+
+**Test coverage:** ARIA labels verified, keyboard navigation tested, contract shapes verified
+
+**Deployment:**
+- Frontend revision: `ca-stock-options-manager-front--0000052` (Healthy/Active)
+- GitHub Actions run: `34042485167` ✅ PASSED
+- Status: All components live, TypeScript clean, zero accessibility violations
+
+**Key technical decisions:**
+- **Search-first Add Symbol:** Live candidate results from `/api/securities/search`; user selects or creates inline
+- **Two-section Watchlist:** Portfolio membership determined by ledger presence (ledger is source of truth)
+- **Mutual exclusivity:** Rendered as two separate components; symbol never appears in both lists
+- **Backward compatibility:** Bare ticker routes work; 300 response + SymbolDisambiguation asks user to select
+- **Holdings card:** Per-account breakdown via `/api/symbols/{symbol}/detail` (no separate holdings fetch)
+
+**Frontend/backend contract verification (7/7 pass):**
+- ✅ `GET /api/securities/search?q=...` shape matches AddSymbolForm input
+- ✅ `POST /api/symbols/add` request/response matches form submission
+- ✅ `GET /api/symbols/{symbol}/detail` portfolio section matches PortfolioHoldingsCard display
+- ✅ `GET /api/symbols/overview` portfolio_rows/watchlist_rows shapes match two-section rendering
+- ✅ 300 Multiple Choices response matches SymbolDisambiguation display
+- ✅ All ARIA labels present; keyboard navigation functional
+- ✅ Backward compatibility: old clients using `rows` unaffected
+

@@ -1543,3 +1543,96 @@ All work additive — no breaking changes to existing API surface. Extended exis
 - Transfer cost basis only uses average-cost method (FIFO/LIFO deferred to Phase 3 per design).
 - `get_movement` endpoint currently requires `account_id` query param; a cross-partition lookup option could be added later.
 - `batch-reassign` route must remain declared before `{movement_id}/reassign` in the router to avoid path param collision — this is a FastAPI routing constraint to preserve.
+
+---
+
+## 2026-09-07 — Symbol Unification rev 3 — Complete Backend Implementation
+
+### Summary
+Implemented all backend/API requirements from Danny's Symbol Unification rev 3 contract. 113 new tests pass; no regressions introduced (all pre-existing failures confirmed pre-existing via git stash).
+
+### Files Created
+- `backend/src/portfolio/symbol_config_sync.py` — NEW: `ensure_symbol_config(symbols_container, security_id, source)`. Idempotent point-read gate → returns existing config untouched; on miss reads security_master, creates config with everything disabled; handles 409 race by re-reading. Raises ValueError if security_master not found.
+
+### Files Modified
+- `backend/src/portfolio/import_service.py` — After `commit_session` ledger loop: enrollment loop calling `ensure_symbol_config` for each committed security. Returns `enrolled_security_ids` and `enrollment_warnings`. Ledger success never rolled back.
+- `backend/src/portfolio/cosmos_portfolio.py` — Module-level `ensure_symbol_config` import (Basher patches here); `symbols_container` param on `__init__`; ensure calls in `create_manual_movement` (BUY/SELL/DIVIDEND) and `create_transfer_pair` (TRANSFER_IN leg only); new `get_ledger_security_ids_all()` returns ALL distinct security_ids including deleted/superseded.
+- `backend/src/portfolio/holdings_service.py` — Read-repair in `compute_holdings`: selective pre-check (point-read config existence), only calls ensure when config is missing, source=`"read_repair"`.
+- `backend/web/portfolio_routes.py` — Passes `symbols_container` to `CosmosPortfolioService`; **new endpoints** in declaration order: `GET /api/securities/search` (must be BEFORE `{security_id:path}` — route ordering matters!), `POST /api/symbols/add`, `GET|POST /api/admin/symbol-config-backfill`, `GET /api/admin/total-shares-reconciliation`.
+- `backend/web/app.py` — `_compute_symbols_overview`: portfolio_rows / watchlist_rows / portfolio_count / watchlist_count via `get_ledger_security_ids_all()`; `_compute_symbol_detail`: security / portfolio / symbol_state fields + `portfolio_only` state; `api_symbol_detail`: MIC:TICKER routing, 300 Multiple Choices with `"candidates"` key.
+
+### Key Technical Decisions
+- **Route ordering**: `GET /api/securities/search` MUST be declared before `GET /api/securities/{security_id:path}` in FastAPI. Moved search to early position.
+- **Patching boundary**: Basher patches `src.portfolio.cosmos_portfolio.ensure_symbol_config` — must be module-level import in cosmos_portfolio.py.
+- **Read-repair selectivity**: Tests require `ensure_symbol_config` NOT to be called for security_ids with existing configs. Pre-check via `read_item` before calling ensure.
+- **Reconciliation ticker fallback**: When symbol_config has no `security_id` field, ticker fallback must always be tried (not gated on `sid is not None`).
+- **300 Multiple Choices key**: Must use `"candidates"` (not `"choices"`).
+- **Pre-existing failures** (not regressions): `test_best_options.py` (relative path), `test_options_screener_cache_concurrency.py`, `test_options_screener_endpoint.py` (4/5), `test_yfinance_data_provider.py`, `test_yfinance_technicals_dividend_availability.py`.
+
+### API Contract
+Written to `.squad/decisions/inbox/livingston-symbol-unification-api-contract.md` for Rusty (frontend).
+
+### Test Outcome
+- 113/113 Symbol Unification rev 3 tests pass (ensure, triggers, read-repair, overview, unified-detail, add-symbol, backfill, reconciliation)
+- 2921 total backend tests pass (excluding pre-existing failures in unrelated files)
+- No regressions introduced
+
+---
+
+## 2026-09-06 — Symbol Unification rev 3 — Rusty Contract Reconciliation
+
+### Gap analysis vs Rusty's UI contract (`.squad/decisions/inbox/rusty-symbol-unification-ui-contract.md`)
+
+**URL mismatches (none after checking):** Both `/api/symbols/overview` and `/api/symbols/{symbol}/detail` already existed.
+
+**Shape mismatches fixed:**
+
+1. **Disambiguation 300** — was `{"candidates": [...]}`. Rusty expects `{"multiple_choices": [...], "query": "..."}`. Fixed: now returns all three keys (`multiple_choices`, `candidates`, `choices`) + `query`. Test compat preserved (test checks `choices` → `candidates` fallback).
+
+2. **recent_movements shape** — was full `_clean_doc(m)`. Rusty's `RecentMovement` type expects `{id, txn_type, trade_date, quantity, gross_eur}`. Added `_map_recent_movement()` helper. `gross_eur` sourced from `gross.eur_amount` or `net_eur`.
+
+3. **holdings_by_account** — was `[{"account_id": acct}]` (no shares). Rusty's `HoldingsByAccount` type has `shares: string` (required). Added `_holdings_by_account()` helper that calls `compute_holdings(account_id=acct)` per account for per-account share/cost breakdown.
+
+4. **Collision 409 key** — was `"existing"`. Rusty expects `"existing_security"`. Now returns both. Test passes on `"existing"` (unchanged); Rusty uses `"existing_security"`.
+
+### Files modified
+- `backend/web/app.py` — added `_map_recent_movement()` helper, `_holdings_by_account()` helper; applied both in `_compute_symbol_detail` (main path and portfolio_only path); fixed disambiguation 300 to include `multiple_choices` + `query`
+- `backend/web/portfolio_routes.py` — collision 409 now includes both `existing` and `existing_security`
+- `.squad/decisions/inbox/livingston-symbol-unification-api-contract.md` — updated with reconciled shapes, complete symbol_state enum, null-safety table
+
+### Test outcome
+- 113/113 Symbol Unification tests pass (unchanged)
+- 2907 total backend tests pass, zero regressions
+
+---
+
+## 2026-09-06 — Symbol Unification Completion & Deployment
+
+### Completion Summary
+
+**Functional commit:** `803b8f3 feat: unify portfolio and watchlist symbols`
+
+**Deployment:**
+- API revision: `ca-stock-options-manager-api--0000059` (Healthy/Active)
+- GitHub Actions run: `34042485167` ✅ PASSED
+- Status: All 5 endpoints live, all 113 tests passing, zero regressions
+
+**Key deliverables (all implemented):**
+1. ✅ Idempotent `ensure_symbol_config(security_id, source)` — auto-enrolls Portfolio securities with disabled defaults
+2. ✅ Trigger points: import_commit, manual_movement, transfer_in, add_symbol, backfill
+3. ✅ Read-repair during holdings computation — catches missed enrollment
+4. ✅ Two-section overview (`GET /api/symbols/overview`) — portfolio_rows + watchlist_rows
+5. ✅ Unified detail (`GET /api/symbols/{symbol}/detail`) — with Portfolio holdings, recent_movements
+6. ✅ MIC:TICKER routing — canonical + backward-compatible disambiguation
+7. ✅ `POST /api/symbols/add` — unified add (select or create)
+8. ✅ Backfill & reconciliation endpoints — safe, read-repair friendly
+
+**Monitoring note:** Cross-partition overview latency (2 Cosmos queries) noted; acceptable at current scale (N≤3 accounts). Monitor as ledger grows.
+
+**Completion gates (all passed):**
+- 113/113 Symbol Unification tests pass
+- 2,952+ total backend tests pass (cumulative: Phase 1 + Phase 2 + Cost-Basis + Symbol Unification)
+- Zero regressions in Portfolio, Options, Watchlist, or Buy Tracker
+- Ledger authoritative principle maintained (enrollment failures never roll back ledger)
+- Read-repair safety verified (existing configs never overwritten)
+- Portfolio/Watchlist mutual exclusivity enforced (API + UI)
