@@ -2,15 +2,20 @@
 
 import { useState, useCallback, useEffect } from "react";
 import Link from "next/link";
-import { FileUp } from "lucide-react";
-import { getMovements, deleteMovement } from "@/lib/portfolio-api";
+import { FileUp, Plus } from "lucide-react";
+import { getMovements, deleteMovement, listAccounts } from "@/lib/portfolio-api";
 import type { MovementsResponse, LedgerMovement, TxnType, WarningType } from "@/types/portfolio";
+import type { BrokerAccount } from "@/types/portfolio";
 import type { MovementsFilter } from "@/lib/portfolio-api";
+import MovementDetailDialog from "./MovementDetailDialog";
+import AddMovementDialog from "./AddMovementDialog";
 
 const TXN_BADGE: Record<TxnType, string> = {
   BUY: "bg-accent-green/15 text-accent-green",
   SELL: "bg-accent-red/15 text-accent-red",
   DIVIDEND: "bg-accent-blue/15 text-accent-blue",
+  TRANSFER_OUT: "bg-accent-orange/15 text-accent-orange",
+  TRANSFER_IN: "bg-accent-orange/15 text-accent-orange",
 };
 
 const WARNING_SHORT: Record<WarningType, string> = {
@@ -22,6 +27,10 @@ const WARNING_SHORT: Record<WarningType, string> = {
   ACCIONES_ZERO_QUANTITY: "Share sale, zero quantity",
   INVALID_SALES_TYPE: "Invalid sale type",
 };
+
+function accountDisplay(id: string): string {
+  return !id || id === "_unassigned" ? "Sin asignar" : id;
+}
 
 const PAGE_SIZE = 50;
 
@@ -35,19 +44,31 @@ function Skeleton() {
   );
 }
 
-/** Client-side movements table with pagination and filters. */
+/** Client-side movements table with account filter, pagination, detail view, and manual entry. */
 export default function PortfolioMovementsTable() {
   const [data, setData] = useState<MovementsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [accounts, setAccounts] = useState<BrokerAccount[]>([]);
+  const [selectedMovement, setSelectedMovement] = useState<LedgerMovement | null>(null);
+  const [showAddMovement, setShowAddMovement] = useState(false);
 
   // Filters
+  const [accountFilter, setAccountFilter] = useState("");
   const [txnType, setTxnType] = useState("");
   const [securityId, setSecurityId] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+
+  const buildFilter = useCallback((): MovementsFilter => ({
+    account_id: accountFilter || undefined,
+    txn_type: txnType || undefined,
+    security_id: securityId.trim() || undefined,
+    date_from: dateFrom || undefined,
+    date_to: dateTo || undefined,
+  }), [accountFilter, txnType, securityId, dateFrom, dateTo]);
 
   const load = useCallback(async (off: number, filter: MovementsFilter) => {
     setLoading(true);
@@ -67,22 +88,25 @@ export default function PortfolioMovementsTable() {
     }
   }, []);
 
-  const currentFilter: MovementsFilter = {
-    txn_type: txnType || undefined,
-    security_id: securityId.trim() || undefined,
-    date_from: dateFrom || undefined,
-    date_to: dateTo || undefined,
-  };
+  const loadAccounts = useCallback(async () => {
+    try {
+      const resp = await listAccounts();
+      setAccounts(resp.accounts);
+    } catch {
+      setAccounts([]);
+    }
+  }, []);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
-  useEffect(() => { load(offset, currentFilter); }, []);
+  useEffect(() => { load(0, {}); loadAccounts(); }, []);
 
   function applyFilter() {
     setOffset(0);
-    load(0, currentFilter);
+    load(0, buildFilter());
   }
 
   function resetFilter() {
+    setAccountFilter("");
     setTxnType("");
     setSecurityId("");
     setDateFrom("");
@@ -95,7 +119,7 @@ export default function PortfolioMovementsTable() {
     setDeleteError(null);
     try {
       await deleteMovement(id, accountId);
-      load(offset, currentFilter);
+      load(offset, buildFilter());
     } catch (err) {
       const e = err as { data?: { detail?: string; error?: string } };
       setDeleteError(e.data?.detail ?? (err instanceof Error ? err.message : "Delete failed"));
@@ -109,6 +133,20 @@ export default function PortfolioMovementsTable() {
     <div className="space-y-5">
       {/* Filter bar */}
       <div className="flex flex-wrap gap-3 rounded-[var(--radius)] border border-border bg-bg-card px-4 py-3">
+        {/* Account filter */}
+        <select
+          value={accountFilter}
+          onChange={(e) => setAccountFilter(e.target.value)}
+          className={`${inputCls} w-40`}
+          aria-label="Filter by account"
+        >
+          <option value="">All accounts</option>
+          <option value="_unassigned">Sin asignar</option>
+          {accounts.map((a) => (
+            <option key={a.account_id} value={a.account_id}>{a.name}</option>
+          ))}
+        </select>
+
         <select
           value={txnType}
           onChange={(e) => setTxnType(e.target.value)}
@@ -118,6 +156,8 @@ export default function PortfolioMovementsTable() {
           <option value="BUY">BUY</option>
           <option value="SELL">SELL</option>
           <option value="DIVIDEND">DIVIDEND</option>
+          <option value="TRANSFER_OUT">TRANSFER OUT</option>
+          <option value="TRANSFER_IN">TRANSFER IN</option>
         </select>
         <input
           value={securityId}
@@ -153,13 +193,23 @@ export default function PortfolioMovementsTable() {
         >
           Reset
         </button>
-        <Link
-          href="/portfolio/import"
-          className="ml-auto inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-border px-3 py-1.5 text-sm text-text-muted hover:bg-bg-hover"
-        >
-          <FileUp size={14} className="shrink-0" />
-          Bulk import
-        </Link>
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowAddMovement(true)}
+            className="inline-flex items-center gap-1.5 rounded-[var(--radius)] bg-accent-blue/15 px-3 py-1.5 text-sm text-accent-blue hover:bg-accent-blue/25"
+          >
+            <Plus size={14} className="shrink-0" />
+            Add movement
+          </button>
+          <Link
+            href="/portfolio/import"
+            className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-border px-3 py-1.5 text-sm text-text-muted hover:bg-bg-hover"
+          >
+            <FileUp size={14} className="shrink-0" />
+            Bulk import
+          </Link>
+        </div>
       </div>
 
       {deleteError && (
@@ -181,17 +231,26 @@ export default function PortfolioMovementsTable() {
           <div className="text-3xl">📋</div>
           <div className="text-sm font-medium text-text">No movements found</div>
           <div className="text-xs text-text-muted">
-            {offset > 0 || txnType || securityId
+            {offset > 0 || txnType || securityId || accountFilter
               ? "Try adjusting the filters."
-              : "Import a CSV to add ledger movements."}
+              : "Import a CSV or add a movement to start your ledger."}
           </div>
-          {!txnType && !securityId && (
-            <Link
-              href="/portfolio/import"
-              className="inline-flex items-center rounded-[var(--radius)] bg-[image:var(--grad-blue)] px-4 py-2 text-sm font-medium text-white hover:opacity-90"
-            >
-              Import CSV
-            </Link>
+          {!txnType && !securityId && !accountFilter && (
+            <div className="flex items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => setShowAddMovement(true)}
+                className="inline-flex items-center gap-1.5 rounded-[var(--radius)] bg-[image:var(--grad-blue)] px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+              >
+                <Plus size={14} /> Add movement
+              </button>
+              <Link
+                href="/portfolio/import"
+                className="inline-flex items-center rounded-[var(--radius)] border border-border px-4 py-2 text-sm font-medium text-text-muted hover:bg-bg-hover"
+              >
+                Import CSV
+              </Link>
+            </div>
           )}
         </div>
       ) : (
@@ -217,7 +276,12 @@ export default function PortfolioMovementsTable() {
               </thead>
               <tbody className="divide-y divide-border/40">
                 {data.movements.map((m) => (
-                  <MovementRow key={m.id} movement={m} onDelete={handleDelete} />
+                  <MovementRow
+                    key={m.id}
+                    movement={m}
+                    onDelete={handleDelete}
+                    onSelect={() => setSelectedMovement(m)}
+                  />
                 ))}
               </tbody>
             </table>
@@ -235,7 +299,7 @@ export default function PortfolioMovementsTable() {
                 onClick={() => {
                   const next = Math.max(0, offset - PAGE_SIZE);
                   setOffset(next);
-                  load(next, currentFilter);
+                  load(next, buildFilter());
                 }}
                 disabled={offset === 0}
                 className="rounded-[var(--radius)] border border-border px-3 py-1.5 hover:bg-bg-hover disabled:opacity-40"
@@ -247,7 +311,7 @@ export default function PortfolioMovementsTable() {
                 onClick={() => {
                   const next = offset + PAGE_SIZE;
                   setOffset(next);
-                  load(next, currentFilter);
+                  load(next, buildFilter());
                 }}
                 disabled={offset + PAGE_SIZE >= data.total_count}
                 className="rounded-[var(--radius)] border border-border px-3 py-1.5 hover:bg-bg-hover disabled:opacity-40"
@@ -258,6 +322,23 @@ export default function PortfolioMovementsTable() {
           </div>
         </>
       )}
+
+      {/* Detail dialog */}
+      {selectedMovement && (
+        <MovementDetailDialog
+          movement={selectedMovement}
+          onClose={() => setSelectedMovement(null)}
+          onRefresh={() => { setSelectedMovement(null); load(offset, buildFilter()); }}
+        />
+      )}
+
+      {/* Add movement dialog */}
+      {showAddMovement && (
+        <AddMovementDialog
+          onClose={() => setShowAddMovement(false)}
+          onCreated={() => { setShowAddMovement(false); load(0, buildFilter()); }}
+        />
+      )}
     </div>
   );
 }
@@ -265,9 +346,11 @@ export default function PortfolioMovementsTable() {
 function MovementRow({
   movement: m,
   onDelete,
+  onSelect,
 }: {
   movement: LedgerMovement;
   onDelete: (id: string, accountId?: string) => void;
+  onSelect: () => void;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showWarnings, setShowWarnings] = useState(false);
@@ -275,12 +358,10 @@ function MovementRow({
   const hasIncomplete = m.cost_basis_status === "INCOMPLETE";
   const showWarningIcon = hasWarnings || hasIncomplete;
 
-  const accountDisplay = !m.account_id || m.account_id === "_unassigned" ? "—" : m.account_id;
-
   return (
     <>
-      <tr>
-        <td className="px-4 py-2">
+      <tr className="cursor-pointer hover:bg-bg-hover/30 transition-colors" onClick={onSelect}>
+        <td className="px-4 py-2" onClick={(e) => e.stopPropagation()}>
           <span
             className={`rounded-full px-2 py-0.5 text-xs font-medium ${
               TXN_BADGE[m.txn_type] ?? "bg-bg-hover text-text-muted"
@@ -310,8 +391,8 @@ function MovementRow({
         <td className="px-4 py-2 text-right font-mono text-text">
           €{Number(m.net.eur_amount).toLocaleString("es-ES", { minimumFractionDigits: 2 })}
         </td>
-        <td className="px-4 py-2 text-text-muted text-sm">{accountDisplay}</td>
-        <td className="px-3 py-2">
+        <td className="px-4 py-2 text-text-muted text-sm">{accountDisplay(m.account_id)}</td>
+        <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-2 justify-end">
             {showWarningIcon && (
               <button

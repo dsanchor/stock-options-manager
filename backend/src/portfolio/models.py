@@ -23,6 +23,22 @@ class TxnType(str, Enum):
     BUY = "BUY"
     SELL = "SELL"
     DIVIDEND = "DIVIDEND"
+    TRANSFER_OUT = "TRANSFER_OUT"
+    TRANSFER_IN = "TRANSFER_IN"
+
+
+class AccountBroker(str, Enum):
+    fidelity = "fidelity"
+    heytrade = "heytrade"
+    ing = "ing"
+    interactive_brokers = "interactive_brokers"
+    other = "other"
+
+
+class CorrectionStatus(str, Enum):
+    ACTIVE = "ACTIVE"
+    SUPERSEDED = "SUPERSEDED"
+    VOIDED = "VOIDED"
 
 
 class ImportFormat(str, Enum):
@@ -244,3 +260,199 @@ class HoldingsSummary(BaseModel):
 class HoldingsResponse(BaseModel):
     holdings: List[HoldingItem]
     summary: HoldingsSummary
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Accounts
+# ---------------------------------------------------------------------------
+
+class AccountCreate(BaseModel):
+    broker: AccountBroker
+    name: str
+    currency: str = "EUR"
+    description: Optional[str] = None
+
+    @field_validator("name")
+    @classmethod
+    def name_nonempty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("name must not be empty")
+        return v
+
+    @field_validator("currency")
+    @classmethod
+    def currency_upper(cls, v: str) -> str:
+        return v.strip().upper()
+
+
+class AccountDoc(BaseModel):
+    id: str
+    account_id: str
+    broker: str
+    name: str
+    currency: str
+    description: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Manual movement creation
+# ---------------------------------------------------------------------------
+
+class MoneyAmountInput(BaseModel):
+    amount: str
+    currency: str
+    eur_amount: str
+
+
+class FeesInput(BaseModel):
+    total: str
+    currency: str
+    total_eur: str
+
+
+class TransferFeeInput(BaseModel):
+    amount: str
+    currency: str
+    eur_amount: str
+
+
+class ManualMovementCreate(BaseModel):
+    txn_type: TxnType
+    security_id: str
+    trade_date: str
+    account_id: str = "_unassigned"
+    quantity: str = "0"
+    gross: MoneyAmountInput
+    fees: Optional[FeesInput] = None
+    withholding: Optional[Any] = None
+    fx: Optional[Dict[str, str]] = None
+    sales_type: Optional[str] = None      # SELL only: ACCIONES | DERECHOS
+    cost_basis_status: Optional[str] = None  # BUY only: COMPLETE | INCOMPLETE
+    notes: Optional[str] = None
+
+    @field_validator("trade_date")
+    @classmethod
+    def valid_date(cls, v: str) -> str:
+        from datetime import date
+        try:
+            date.fromisoformat(v)
+        except ValueError:
+            raise ValueError(f"trade_date must be YYYY-MM-DD, got {v!r}")
+        return v
+
+    @field_validator("quantity")
+    @classmethod
+    def quantity_nonnegative(cls, v: str) -> str:
+        from decimal import Decimal as D
+        try:
+            d = D(str(v))
+        except Exception:
+            raise ValueError(f"quantity must be a number, got {v!r}")
+        if d < D("0"):
+            raise ValueError("quantity must be >= 0")
+        return v
+
+    @field_validator("sales_type")
+    @classmethod
+    def valid_sales_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ("ACCIONES", "DERECHOS"):
+            raise ValueError("sales_type must be ACCIONES or DERECHOS")
+        return v
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Movement correction
+# ---------------------------------------------------------------------------
+
+class MovementCorrectionRequest(BaseModel):
+    account_id: str
+    correction_note: str
+    trade_date: Optional[str] = None
+    quantity: Optional[str] = None
+    gross: Optional[MoneyAmountInput] = None
+    fees: Optional[FeesInput] = None
+    withholding: Optional[Any] = None
+    fx: Optional[Dict[str, str]] = None
+    sales_type: Optional[str] = None
+    cost_basis_status: Optional[str] = None
+    notes: Optional[str] = None
+
+    @field_validator("correction_note")
+    @classmethod
+    def note_nonempty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("correction_note must not be empty")
+        return v
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Transfers
+# ---------------------------------------------------------------------------
+
+class TransferCreateRequest(BaseModel):
+    security_id: str
+    trade_date: str
+    quantity: str
+    source_account_id: str
+    dest_account_id: str
+    cost_basis_override_eur: Optional[str] = None
+    transfer_fee: Optional[TransferFeeInput] = None
+    notes: Optional[str] = None
+
+    @field_validator("trade_date")
+    @classmethod
+    def valid_date(cls, v: str) -> str:
+        from datetime import date
+        try:
+            date.fromisoformat(v)
+        except ValueError:
+            raise ValueError(f"trade_date must be YYYY-MM-DD, got {v!r}")
+        return v
+
+    @field_validator("quantity")
+    @classmethod
+    def quantity_positive(cls, v: str) -> str:
+        from decimal import Decimal as D
+        try:
+            d = D(str(v))
+        except Exception:
+            raise ValueError(f"quantity must be a number")
+        if d <= D("0"):
+            raise ValueError("quantity must be > 0")
+        return v
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Movement reassignment
+# ---------------------------------------------------------------------------
+
+class MovementReassignRequest(BaseModel):
+    source_account_id: str
+    dest_account_id: str
+    reason: str = ""
+
+
+class BatchReassignRequest(BaseModel):
+    source_account_id: str
+    dest_account_id: str
+    security_id: Optional[str] = None
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+    reason: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: FX Rate
+# ---------------------------------------------------------------------------
+
+class FxRateResponse(BaseModel):
+    from_currency: str
+    to_currency: str
+    date: str
+    rate: str
+    rate_source: str
+    note: Optional[str] = None

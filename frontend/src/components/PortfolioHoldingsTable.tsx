@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import Link from "next/link";
-import { getHoldings } from "@/lib/portfolio-api";
+import { getHoldings, listAccounts } from "@/lib/portfolio-api";
 import type { HoldingEntry, HoldingsResponse, WarningType } from "@/types/portfolio";
-import { useEffect } from "react";
+import type { BrokerAccount } from "@/types/portfolio";
+import ReassignmentDialog from "./ReassignmentDialog";
 
 const WARNING_SHORT: Record<WarningType, string> = {
   NEGATIVE_INVENTORY: "Negative inventory",
@@ -15,6 +16,10 @@ const WARNING_SHORT: Record<WarningType, string> = {
   ACCIONES_ZERO_QUANTITY: "Share sale, zero quantity",
   INVALID_SALES_TYPE: "Invalid sale type",
 };
+
+function accountDisplay(id: string): string {
+  return id === "_unassigned" ? "Sin asignar" : id;
+}
 
 function Skeleton() {
   return (
@@ -30,27 +35,35 @@ function formatEur(value: string) {
   return `€${Number(value).toLocaleString("es-ES", { minimumFractionDigits: 2 })}`;
 }
 
-/** Client-side holdings table with empty, loading, and error states. */
+/** Client-side holdings table with account filter, empty, loading, and error states. */
 export default function PortfolioHoldingsTable() {
   const [data, setData] = useState<HoldingsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [hideZeroShares, setHideZeroShares] = useState(true);
+  const [accountFilter, setAccountFilter] = useState("");
+  const [accounts, setAccounts] = useState<BrokerAccount[]>([]);
+  const [showReassign, setShowReassign] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (acctId?: string) => {
     setLoading(true);
     setError(null);
     try {
-      const d = await getHoldings();
-      setData(d);
-    } catch (err) {
-      const e = err as { status?: number; data?: { error?: string; detail?: string } };
-      if (e.status === 503) {
-        setError("Portfolio storage is not yet configured. Movements will appear here once the backend is set up.");
-      } else {
-        setError(e.data?.detail ?? (err instanceof Error ? err.message : "Failed to load holdings"));
+      const [holdingsData, acctResp] = await Promise.allSettled([
+        getHoldings(acctId || undefined),
+        listAccounts(),
+      ]);
+      if (holdingsData.status === "fulfilled") setData(holdingsData.value);
+      else {
+        const e = holdingsData.reason as { status?: number; data?: { detail?: string } };
+        if (e.status === 503) {
+          setError("Portfolio storage is not yet configured. Movements will appear here once the backend is set up.");
+        } else {
+          setError(e.data?.detail ?? (holdingsData.reason instanceof Error ? holdingsData.reason.message : "Failed to load holdings"));
+        }
       }
+      if (acctResp.status === "fulfilled") setAccounts(acctResp.value.accounts);
     } finally {
       setLoading(false);
     }
@@ -59,15 +72,17 @@ export default function PortfolioHoldingsTable() {
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { load(); }, [load]);
 
+  function handleAccountFilter(acctId: string) {
+    setAccountFilter(acctId);
+    load(acctId || undefined);
+  }
+
   const visibleHoldings = useMemo(() => {
     if (!data) return [];
     return data.holdings.filter((h) => {
       const shares = parseFloat(h.total_shares);
-      // Negative holdings are always visible (reconciliation warnings)
       if (shares < 0) return true;
-      // Hide exactly-zero shares when filter is on
       if (hideZeroShares && shares === 0) return false;
-      // Search filter (case-insensitive substring)
       if (searchQuery) {
         const q = searchQuery.toLowerCase();
         return (
@@ -110,14 +125,13 @@ export default function PortfolioHoldingsTable() {
   }
 
   const { summary } = data;
-  const isFiltered = searchQuery.trim() !== "" || (hideZeroShares && data.holdings.some((h) => parseFloat(h.total_shares) === 0));
+  const isFiltered = searchQuery.trim() !== "" || accountFilter !== "" || (hideZeroShares && data.holdings.some((h) => parseFloat(h.total_shares) === 0));
   const currentInvestedNegative = parseFloat(summary.current_invested_eur) < 0;
 
   return (
     <div className="space-y-5">
-      {/* Summary bar — always reflects full API response, never filtered */}
+      {/* Summary bar */}
       <div className="rounded-[var(--radius)] border border-border bg-bg-card px-5 py-4">
-        {/* Primary cards: required trio in exact order */}
         <div className="flex flex-wrap gap-6 text-sm">
           <div>
             <div className="text-xs text-text-muted mb-1">Total Purchases</div>
@@ -133,11 +147,7 @@ export default function PortfolioHoldingsTable() {
               {formatEur(summary.current_invested_eur)}
             </div>
           </div>
-
-          {/* Separator */}
           <div className="hidden sm:block w-px bg-border/50 self-stretch" aria-hidden="true" />
-
-          {/* Secondary: dividends + securities count */}
           <div className="opacity-70">
             <div className="text-xs text-text-muted mb-1">Total Dividends</div>
             <div className="text-base font-medium text-accent-green">{formatEur(summary.total_dividends_eur)}</div>
@@ -146,11 +156,18 @@ export default function PortfolioHoldingsTable() {
             <div className="text-xs text-text-muted mb-1">Securities</div>
             <div className="text-base font-medium text-text">{summary.total_securities}</div>
           </div>
-
-          <div className="ml-auto flex items-start">
+          <div className="ml-auto flex items-start gap-2">
             <button
               type="button"
-              onClick={load}
+              onClick={() => setShowReassign(true)}
+              className="rounded-[var(--radius-pill)] border border-border px-3 py-1.5 text-xs text-text-muted hover:bg-bg-hover"
+              aria-label="Batch reassign movements"
+            >
+              Batch reassign
+            </button>
+            <button
+              type="button"
+              onClick={() => load(accountFilter || undefined)}
               className="rounded-[var(--radius-pill)] border border-border px-3 py-1.5 text-xs text-text-muted hover:bg-bg-hover"
               aria-label="Refresh holdings"
             >
@@ -162,6 +179,20 @@ export default function PortfolioHoldingsTable() {
 
       {/* Filter toolbar */}
       <div className="flex flex-wrap items-center gap-3 text-sm">
+        {/* Account filter */}
+        <select
+          value={accountFilter}
+          onChange={(e) => handleAccountFilter(e.target.value)}
+          className="rounded-[var(--radius)] border border-border bg-bg-card px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-border"
+          aria-label="Filter by account"
+        >
+          <option value="">All accounts</option>
+          <option value="_unassigned">Sin asignar</option>
+          {accounts.map((a) => (
+            <option key={a.account_id} value={a.account_id}>{a.name}</option>
+          ))}
+        </select>
+
         <label className="relative flex-1 min-w-[180px] max-w-xs">
           <span className="sr-only">Search holdings</span>
           <input
@@ -199,7 +230,7 @@ export default function PortfolioHoldingsTable() {
           </div>
           <button
             type="button"
-            onClick={() => { setSearchQuery(""); setHideZeroShares(false); }}
+            onClick={() => { setSearchQuery(""); setHideZeroShares(false); setAccountFilter(""); load(); }}
             className="inline-flex items-center gap-2 rounded-[var(--radius)] border border-border px-4 py-2 text-sm text-text-muted hover:bg-bg-hover"
           >
             Clear filters
@@ -210,9 +241,12 @@ export default function PortfolioHoldingsTable() {
           {isFiltered && (
             <div className="flex items-center gap-2 border-b border-border/40 bg-bg-card/60 px-4 py-2 text-xs text-text-muted">
               <span>Showing {visibleHoldings.length} of {data.holdings.length} holdings</span>
+              {accountFilter && (
+                <span>· Account: <strong>{accountFilter === "_unassigned" ? "Sin asignar" : accounts.find(a => a.account_id === accountFilter)?.name ?? accountFilter}</strong></span>
+              )}
               <button
                 type="button"
-                onClick={() => { setSearchQuery(""); setHideZeroShares(false); }}
+                onClick={() => { setSearchQuery(""); setHideZeroShares(false); setAccountFilter(""); load(); }}
                 className="ml-2 underline hover:text-text"
                 aria-label="Clear all filters"
               >
@@ -245,6 +279,14 @@ export default function PortfolioHoldingsTable() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {showReassign && (
+        <ReassignmentDialog
+          mode="batch"
+          onClose={() => setShowReassign(false)}
+          onReassigned={() => { setShowReassign(false); load(accountFilter || undefined); }}
+        />
       )}
     </div>
   );
@@ -283,7 +325,7 @@ function HoldingRow({ holding: h }: { holding: HoldingEntry }) {
                 key={a}
                 className="rounded-full bg-bg-hover px-2 py-0.5 text-xs text-text-muted"
               >
-                {a === "_unassigned" ? "—" : a}
+                {accountDisplay(a)}
               </span>
             ))}
           </div>

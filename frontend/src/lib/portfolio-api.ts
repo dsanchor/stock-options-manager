@@ -1,6 +1,6 @@
 /**
  * Typed client for all portfolio / securities / import proxy routes.
- * These are browser-side calls: /api/securities, /api/portfolio/*, /api/import/*.
+ * These are browser-side calls: /api/securities, /api/portfolio/*, /api/import/*, /api/fx/*.
  * All paths go through the Next.js BFF proxy to the internal Python backend.
  */
 
@@ -11,6 +11,22 @@ import type {
   HoldingsResponse,
   MovementsResponse,
   LedgerMovement,
+  BrokerAccount,
+  CreateAccountRequest,
+  UpdateAccountRequest,
+  AccountsResponse,
+  ManualMovementRequest,
+  TransferRequest,
+  TransferResponse,
+  MovementCorrectionRequest,
+  MovementCorrectionResponse,
+  IndividualReassignmentRequest,
+  IndividualReassignmentResponse,
+  BatchReassignmentRequest,
+  BatchReassignmentResponse,
+  BatchReassignmentPreviewRequest,
+  BatchReassignmentPreviewResponse,
+  FxRateResponse,
 } from "@/types/portfolio";
 import type {
   ImportSession,
@@ -178,4 +194,140 @@ export async function commitImport(sessionId: string): Promise<CommitResult> {
     `/api/import/sessions/${encodeURIComponent(sessionId)}/commit`,
     { method: "POST" },
   );
+}
+
+// ─── Phase 2: Broker Accounts ─────────────────────────────────────────────────
+
+export async function listAccounts(): Promise<AccountsResponse> {
+  return fetchJSON<AccountsResponse>("/api/portfolio/accounts");
+}
+
+export async function getAccount(accountId: string): Promise<BrokerAccount> {
+  return fetchJSON<BrokerAccount>(`/api/portfolio/accounts/${encodeURIComponent(accountId)}`);
+}
+
+export async function createAccount(data: CreateAccountRequest): Promise<BrokerAccount> {
+  return fetchJSON<BrokerAccount>("/api/portfolio/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateAccount(
+  accountId: string,
+  data: UpdateAccountRequest,
+): Promise<BrokerAccount> {
+  return fetchJSON<BrokerAccount>(`/api/portfolio/accounts/${encodeURIComponent(accountId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteAccount(accountId: string): Promise<void> {
+  await fetchJSON<unknown>(`/api/portfolio/accounts/${encodeURIComponent(accountId)}`, {
+    method: "DELETE",
+  });
+}
+
+// ─── Phase 2: Manual Movement Entry ──────────────────────────────────────────
+
+/** POST /api/portfolio/movements — BUY, SELL, or DIVIDEND only. */
+export async function createMovement(data: ManualMovementRequest): Promise<LedgerMovement> {
+  return fetchJSON<LedgerMovement>("/api/portfolio/movements", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** POST /api/portfolio/transfers — creates TRANSFER_OUT + TRANSFER_IN pair. */
+export async function createTransfer(data: TransferRequest): Promise<TransferResponse> {
+  return fetchJSON<TransferResponse>("/api/portfolio/transfers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+// ─── Phase 2: Movement Correction ────────────────────────────────────────────
+
+export async function correctMovement(
+  movementId: string,
+  data: MovementCorrectionRequest,
+): Promise<MovementCorrectionResponse> {
+  return fetchJSON<MovementCorrectionResponse>(
+    `/api/portfolio/movements/${encodeURIComponent(movementId)}/correct`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+// ─── Phase 2: Account Reassignment ───────────────────────────────────────────
+
+/** POST /api/portfolio/movements/{id}/reassign — individual movement reassignment. */
+export async function reassignMovement(
+  movementId: string,
+  data: IndividualReassignmentRequest,
+): Promise<IndividualReassignmentResponse> {
+  return fetchJSON<IndividualReassignmentResponse>(
+    `/api/portfolio/movements/${encodeURIComponent(movementId)}/reassign`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+/**
+ * POST /api/portfolio/movements/batch-reassign — bulk reassignment.
+ * NOTE: No preview endpoint exists in the backend. The UI provides a confirmation
+ * checkbox before calling this. Flag: accepted UX requires preview; backend gap.
+ */
+export async function batchReassignMovements(
+  data: BatchReassignmentRequest,
+): Promise<BatchReassignmentResponse> {
+  return fetchJSON<BatchReassignmentResponse>("/api/portfolio/movements/batch-reassign", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/**
+ * POST /api/portfolio/movements/batch-reassign/preview
+ * Dry-run with same selection predicate. Read-only; no writes.
+ * Client MUST NOT forward the returned count to execution — server re-derives.
+ */
+export async function getBatchReassignmentPreview(
+  data: BatchReassignmentPreviewRequest,
+): Promise<BatchReassignmentPreviewResponse> {
+  return fetchJSON<BatchReassignmentPreviewResponse>(
+    "/api/portfolio/movements/batch-reassign/preview",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+// ─── Phase 2: FX Rate Helper ──────────────────────────────────────────────────
+
+/**
+ * GET /api/fx/rates — look up FX rate from ECB.
+ * Query: from_currency, to_currency, date.
+ */
+export async function getFxRate(
+  fromCurrency: string,
+  toCurrency: string,
+  date: string,
+): Promise<FxRateResponse> {
+  const qs = new URLSearchParams({ from_currency: fromCurrency, to_currency: toCurrency, date });
+  return fetchJSON<FxRateResponse>(`/api/fx/rates?${qs.toString()}`);
 }

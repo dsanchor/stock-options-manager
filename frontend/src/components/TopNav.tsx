@@ -22,6 +22,7 @@ import {
   ChevronDown,
   LayoutList,
   ArrowLeftRight,
+  Landmark,
   type LucideIcon,
 } from "lucide-react";
 import type { SymbolsOverview } from "@/types/symbols";
@@ -33,6 +34,7 @@ const DROPDOWNS: Record<string, Item[]> = {
     { href: "/portfolio/holdings", label: "Portfolio", icon: LayoutList },
     { href: "/symbols", label: "Watchlist", icon: LineChart },
     { href: "/portfolio/movements", label: "Movements", icon: ArrowLeftRight },
+    { href: "/portfolio/accounts", label: "Accounts", icon: Landmark },
     { href: "/symbols/calendar", label: "Calendar", icon: CalendarDays },
     { href: "/plans", label: "Action Plans", icon: ClipboardList },
   ],

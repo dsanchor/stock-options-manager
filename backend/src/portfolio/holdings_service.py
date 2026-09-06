@@ -75,7 +75,8 @@ class HoldingsService:
                     "security_id": security_id,
                     "ticker": m.get("ticker", security_id.split(":")[-1]),
                     "total_shares": Decimal("0"),
-                    "total_cost_eur": Decimal("0"),
+                    "total_cost_eur": Decimal("0"),      # BUY + TRANSFER_IN carried basis
+                    "total_buy_cost_eur": Decimal("0"),  # BUY outflows only (not TRANSFER_IN)
                     "paid_buy_shares": Decimal("0"),
                     "total_dividends_eur": Decimal("0"),
                     "total_sales_eur": Decimal("0"),
@@ -96,7 +97,9 @@ class HoldingsService:
             if txn_type == "BUY":
                 agg["total_shares"] += qty
                 if cost_basis_status != "INCOMPLETE":
-                    agg["total_cost_eur"] += gross_eur + commission_eur
+                    cost = gross_eur + commission_eur
+                    agg["total_cost_eur"] += cost
+                    agg["total_buy_cost_eur"] += cost  # BUY-only accumulator
                     agg["paid_buy_shares"] += qty
                 else:
                     agg["zero_cost_count"] += 1
@@ -111,12 +114,24 @@ class HoldingsService:
             elif txn_type == "DIVIDEND":
                 net_eur = _d((m.get("net") or {}).get("eur_amount", "0"))
                 agg["total_dividends_eur"] += net_eur
+            elif txn_type == "TRANSFER_IN":
+                # Adds shares to the destination account; carries cost basis; not a purchase.
+                agg["total_shares"] += qty
+                carried_cost = _d(m.get("transfer_cost_basis_eur", "0"))
+                agg["total_cost_eur"] += carried_cost
+                if qty > Decimal("0") and carried_cost > Decimal("0"):
+                    agg["paid_buy_shares"] += qty
+            elif txn_type == "TRANSFER_OUT":
+                # Subtracts shares and proportional cost from source account.
+                agg["total_shares"] -= qty
+                carried_cost = _d(m.get("transfer_cost_basis_eur", "0"))
+                agg["total_cost_eur"] = max(Decimal("0"), agg["total_cost_eur"] - carried_cost)
+                if qty > Decimal("0"):
+                    agg["paid_buy_shares"] = max(Decimal("0"), agg["paid_buy_shares"] - qty)
 
             # Carry per-movement warnings to holding warnings
             for w in m.get("warnings", []):
                 agg["movement_warnings"].append(w)
-
-        # Resolve company names from securities catalog
         security_names = _resolve_security_names(
             list(per_security.keys()), self.securities_svc
         )
@@ -130,7 +145,8 @@ class HoldingsService:
 
         for security_id, agg in per_security.items():
             total_shares = agg["total_shares"]
-            total_cost = agg["total_cost_eur"]
+            total_cost = agg["total_cost_eur"]      # BUY + TRANSFER_IN basis
+            buy_cost = agg["total_buy_cost_eur"]    # BUY outflows only
             paid_shares = agg["paid_buy_shares"]
 
             # Average cost basis: total paid cost / total paid shares
@@ -166,7 +182,7 @@ class HoldingsService:
                 })
 
             total_invested += total_cost
-            total_purchases += total_cost
+            total_purchases += buy_cost   # BUY outflows only, excludes TRANSFER_IN
             total_sales += agg["total_sales_eur"]
             total_dividends += agg["total_dividends_eur"]
 
@@ -185,7 +201,7 @@ class HoldingsService:
                 ),
                 "cost_basis_status": cost_basis_status,
                 "total_invested_eur": str(total_cost.quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)),
-                "total_purchases_eur": str(total_cost.quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)),
+                "total_purchases_eur": str(buy_cost.quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)),
                 "total_sales_eur": str(
                     agg["total_sales_eur"].quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)
                 ),
@@ -218,7 +234,7 @@ class HoldingsService:
                     total_sales.quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)
                 ),
                 "current_invested_eur": str(
-                    (total_purchases - total_sales).quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)
+                    (total_invested - total_sales).quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)
                 ),
                 "total_dividends_eur": str(
                     total_dividends.quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)
