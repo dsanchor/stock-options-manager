@@ -33,10 +33,6 @@ function Skeleton() {
   );
 }
 
-function formatEur(value: string) {
-  return `€${Number(value).toLocaleString("es-ES", { minimumFractionDigits: 2 })}`;
-}
-
 /** Client-side holdings table with account filter, empty, loading, and error states. */
 export default function PortfolioHoldingsTable() {
   const [data, setData] = useState<HoldingsResponse | null>(null);
@@ -171,54 +167,6 @@ export default function PortfolioHoldingsTable() {
               tooltip="Dividendos netos recibidos (tras retenciones)."
             />
           </Reveal>
-        </div>
-
-        {/* Secondary breakdown */}
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Reveal index={0} className="h-full">
-            <StatCard
-              label="Compras totales"
-              value={parseFloat(summary.total_purchase_outflow_eur ?? summary.total_purchases_eur)}
-              prefix="€"
-              decimals={2}
-              tone="neutral"
-              tooltip="Desembolso total en compras de acciones (principal + comisiones)."
-            />
-          </Reveal>
-          {summary.cost_basis_sold_eur != null && (
-            <Reveal index={1} className="h-full">
-              <StatCard
-                label="Coste de las acciones vendidas"
-                value={parseFloat(summary.cost_basis_sold_eur)}
-                prefix="€"
-                decimals={2}
-                tone="neutral"
-                tooltip="Coste medio de adquisición asignado a las acciones vendidas (media ponderada móvil)."
-              />
-            </Reveal>
-          )}
-          <Reveal index={2} className="h-full">
-            <StatCard
-              label="Ventas netas"
-              value={parseFloat(summary.total_sale_proceeds_eur ?? summary.total_sales_eur)}
-              prefix="€"
-              decimals={2}
-              tone="neutral"
-              tooltip="Dinero recibido por ventas de acciones y derechos (bruto − comisiones)."
-            />
-          </Reveal>
-          {summary.rights_proceeds_eur != null && parseFloat(summary.rights_proceeds_eur) > 0 && (
-            <Reveal index={3} className="h-full">
-              <StatCard
-                label="Ventas de derechos"
-                value={parseFloat(summary.rights_proceeds_eur)}
-                prefix="€"
-                decimals={2}
-                tone="neutral"
-                tooltip="Parte de ingresos procedente de venta de derechos de suscripción."
-              />
-            </Reveal>
-          )}
         </div>
 
         {/* Indicators + warning + actions */}
