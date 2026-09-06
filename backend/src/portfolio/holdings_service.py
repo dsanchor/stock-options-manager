@@ -1,8 +1,15 @@
 """Derived holdings computation from ledger movements.
 
-Holdings = SUM(BUY quantities) - SUM(SELL quantities) per security.
-Average cost basis uses BUY movements only (excluding zero-cost acquisitions).
-Dividends are summed separately.
+Cost method: chronological moving weighted average (CMP).
+- BUY COMPLETE: adds shares to pool; pool_cost += gross_eur + commission_eur.
+- BUY INCOMPLETE: adds unpaid_shares (no pool cost fabricated).
+- SELL ACCIONES: removes shares; assigns cost = sold_qty × current avg (pool_cost/pool_shares).
+- SELL DERECHOS: no share/pool change; net proceeds counted in sales and rights.
+- TRANSFER_IN: adds qty to pool at carried_cost_basis_eur; not counted in purchase_outflow.
+- TRANSFER_OUT: removes qty at current CMP avg; not counted in sale_proceeds.
+- DIVIDEND: net_eur accumulated separately.
+- Superseded, voided, deleted movements are excluded before reaching this function.
+- Negative inventory: pool capped at 0; excess quantity sold at cost 0; warning emitted.
 
 All arithmetic in Decimal for precision.
 """
@@ -20,21 +27,30 @@ logger = logging.getLogger(__name__)
 
 _TWO_PLACES = Decimal("0.01")
 _SIX_PLACES = Decimal("0.000001")
+_ZERO = Decimal("0")
 
 
 def _d(v: Any) -> Decimal:
     if isinstance(v, Decimal):
         return v
     if v is None:
-        return Decimal("0")
+        return _ZERO
     try:
         return Decimal(str(v))
     except Exception:
-        return Decimal("0")
+        return _ZERO
+
+
+def _fmt2(v: Decimal) -> str:
+    return str(v.quantize(_TWO_PLACES, rounding=ROUND_HALF_UP))
+
+
+def _fmt6(v: Decimal) -> str:
+    return str(v.quantize(_SIX_PLACES, rounding=ROUND_HALF_UP))
 
 
 class HoldingsService:
-    """Compute derived holdings from the portfolio ledger."""
+    """Compute derived holdings from the portfolio ledger using CMP cost basis."""
 
     def __init__(
         self,
@@ -63,7 +79,11 @@ class HoldingsService:
                 m for m in movements if m.get("account_id") == account_id
             ]
 
-        # Aggregate per security
+        # Chronological ordering is required for CMP correctness.
+        # Tie-break on id for determinism when trade_date is identical.
+        movements.sort(key=lambda m: (m.get("trade_date") or "", m.get("id") or ""))
+
+        # Per-security CMP state and accumulators
         per_security: Dict[str, Dict[str, Any]] = {}
 
         for m in movements:
@@ -74,12 +94,17 @@ class HoldingsService:
                 per_security[security_id] = {
                     "security_id": security_id,
                     "ticker": m.get("ticker", security_id.split(":")[-1]),
-                    "total_shares": Decimal("0"),
-                    "total_cost_eur": Decimal("0"),      # BUY + TRANSFER_IN carried basis
-                    "total_buy_cost_eur": Decimal("0"),  # BUY outflows only (not TRANSFER_IN)
-                    "paid_buy_shares": Decimal("0"),
-                    "total_dividends_eur": Decimal("0"),
-                    "total_sales_eur": Decimal("0"),
+                    # CMP pool state
+                    "pool_shares": _ZERO,    # shares with known cost
+                    "pool_cost": _ZERO,      # EUR cost of pool shares
+                    "unpaid_shares": _ZERO,  # INCOMPLETE BUY shares (no cost)
+                    "total_shares": _ZERO,   # all shares (pool + unpaid)
+                    # Accumulators
+                    "total_purchase_outflow_eur": _ZERO,  # Σ(gross+fee) BUY COMPLETE
+                    "cost_basis_sold_eur": _ZERO,         # Σ CMP cost → SELL ACCIONES
+                    "total_sale_proceeds_eur": _ZERO,     # Σ(gross-fee) all SELL types
+                    "rights_proceeds_eur": _ZERO,         # Σ(gross-fee) SELL DERECHOS
+                    "total_dividends_eur": _ZERO,
                     "buy_count": 0,
                     "zero_cost_count": 0,
                     "accounts": set(),
@@ -92,80 +117,114 @@ class HoldingsService:
             gross_eur = _d((m.get("gross") or {}).get("eur_amount", "0"))
             commission_eur = _d((m.get("fees") or {}).get("total_eur", "0"))
             cost_basis_status = m.get("cost_basis_status", "COMPLETE")
-
             txn_type = m.get("txn_type", "")
+
             if txn_type == "BUY":
                 agg["total_shares"] += qty
+                agg["buy_count"] += 1
                 if cost_basis_status != "INCOMPLETE":
                     cost = gross_eur + commission_eur
-                    agg["total_cost_eur"] += cost
-                    agg["total_buy_cost_eur"] += cost  # BUY-only accumulator
-                    agg["paid_buy_shares"] += qty
+                    agg["pool_shares"] += qty
+                    agg["pool_cost"] += cost
+                    agg["total_purchase_outflow_eur"] += cost
                 else:
+                    agg["unpaid_shares"] += qty
                     agg["zero_cost_count"] += 1
-                agg["buy_count"] += 1
+
             elif txn_type == "SELL":
-                # DERECHOS sales contribute to proceeds but do NOT decrement share count.
-                # Existing movements without sales_type default to ACCIONES behaviour.
+                # DERECHOS sales contribute to proceeds but do NOT decrement shares.
+                # Movements without sales_type default to ACCIONES behaviour.
                 sale_type = m.get("sales_type") or "ACCIONES"
+                net_proceeds = gross_eur - commission_eur
+                agg["total_sale_proceeds_eur"] += net_proceeds
+
                 if sale_type == "ACCIONES":
                     agg["total_shares"] -= qty
-                agg["total_sales_eur"] += gross_eur - commission_eur
+                    if agg["pool_shares"] > _ZERO:
+                        avg_cost = agg["pool_cost"] / agg["pool_shares"]
+                        sold_from_pool = min(qty, agg["pool_shares"])
+                        cost_sold = sold_from_pool * avg_cost
+                        agg["pool_shares"] -= sold_from_pool
+                        agg["pool_cost"] -= cost_sold
+                        agg["cost_basis_sold_eur"] += cost_sold
+                    # Excess qty beyond pool (unpaid shares or negative inventory) → cost 0.
+                else:
+                    # DERECHOS: no pool or share count change.
+                    agg["rights_proceeds_eur"] += net_proceeds
+
             elif txn_type == "DIVIDEND":
                 net_eur = _d((m.get("net") or {}).get("eur_amount", "0"))
                 agg["total_dividends_eur"] += net_eur
+
             elif txn_type == "TRANSFER_IN":
-                # Adds shares to the destination account; carries cost basis; not a purchase.
+                # Carries shares at explicitly stored cost basis; not a purchase outflow.
                 agg["total_shares"] += qty
                 carried_cost = _d(m.get("transfer_cost_basis_eur", "0"))
-                agg["total_cost_eur"] += carried_cost
-                if qty > Decimal("0") and carried_cost > Decimal("0"):
-                    agg["paid_buy_shares"] += qty
-            elif txn_type == "TRANSFER_OUT":
-                # Subtracts shares and proportional cost from source account.
-                agg["total_shares"] -= qty
-                carried_cost = _d(m.get("transfer_cost_basis_eur", "0"))
-                agg["total_cost_eur"] = max(Decimal("0"), agg["total_cost_eur"] - carried_cost)
-                if qty > Decimal("0"):
-                    agg["paid_buy_shares"] = max(Decimal("0"), agg["paid_buy_shares"] - qty)
+                if carried_cost > _ZERO:
+                    agg["pool_shares"] += qty
+                    agg["pool_cost"] += carried_cost
 
-            # Carry per-movement warnings to holding warnings
+            elif txn_type == "TRANSFER_OUT":
+                # Removes shares proportionally at CMP; not counted in sale proceeds.
+                agg["total_shares"] -= qty
+                if agg["pool_shares"] > _ZERO:
+                    avg_cost = agg["pool_cost"] / agg["pool_shares"]
+                    transferred_from_pool = min(qty, agg["pool_shares"])
+                    cost_removed = transferred_from_pool * avg_cost
+                    agg["pool_shares"] -= transferred_from_pool
+                    agg["pool_cost"] -= cost_removed
+
             for w in m.get("warnings", []):
                 agg["movement_warnings"].append(w)
+
         security_names = _resolve_security_names(
             list(per_security.keys()), self.securities_svc
         )
 
-        # Build holdings list
+        # Build holdings list and portfolio-wide summary accumulators
         holdings_list = []
-        total_invested = Decimal("0")
-        total_dividends = Decimal("0")
-        total_purchases = Decimal("0")
-        total_sales = Decimal("0")
+        summary_purchase_outflow = _ZERO
+        summary_cost_basis_sold = _ZERO
+        summary_remaining = _ZERO
+        summary_sale_proceeds = _ZERO
+        summary_rights_proceeds = _ZERO
+        summary_dividends = _ZERO
+        global_has_incomplete = False
 
         for security_id, agg in per_security.items():
+            pool_shares = agg["pool_shares"]
+            pool_cost = agg["pool_cost"]
             total_shares = agg["total_shares"]
-            total_cost = agg["total_cost_eur"]      # BUY + TRANSFER_IN basis
-            buy_cost = agg["total_buy_cost_eur"]    # BUY outflows only
-            paid_shares = agg["paid_buy_shares"]
 
-            # Average cost basis: total paid cost / total paid shares
+            # CMP average: pool_cost / pool_shares (null when pool is empty)
             avg_cost: Optional[Decimal] = None
-            if paid_shares > Decimal("0") and total_cost > Decimal("0"):
-                avg_cost = (total_cost / paid_shares).quantize(
+            if pool_shares > _ZERO:
+                avg_cost = (pool_cost / pool_shares).quantize(
                     _TWO_PLACES, rounding=ROUND_HALF_UP
                 )
 
-            # Cost basis status
             zero_cost_count = agg["zero_cost_count"]
-            if zero_cost_count > 0:
-                cost_basis_status = "INCOMPLETE"
-            else:
-                cost_basis_status = "COMPLETE"
+            holding_cost_basis_status = "INCOMPLETE" if zero_cost_count > 0 else "COMPLETE"
+            if agg["unpaid_shares"] > _ZERO:
+                global_has_incomplete = True
 
-            # Per-holding warnings
+            purchase_outflow = agg["total_purchase_outflow_eur"]
+            cost_sold = agg["cost_basis_sold_eur"]
+            remaining = pool_cost          # remaining_cost_basis = pool_cost residual
+            sale_proceeds = agg["total_sale_proceeds_eur"]
+            rights_proceeds = agg["rights_proceeds_eur"]
+            realized = sale_proceeds - cost_sold
+            dividends = agg["total_dividends_eur"]
+
+            summary_purchase_outflow += purchase_outflow
+            summary_cost_basis_sold += cost_sold
+            summary_remaining += remaining
+            summary_sale_proceeds += sale_proceeds
+            summary_rights_proceeds += rights_proceeds
+            summary_dividends += dividends
+
             item_warnings = []
-            if total_shares < Decimal("0"):
+            if total_shares < _ZERO:
                 item_warnings.append({
                     "type": "NEGATIVE_INVENTORY",
                     "message": (
@@ -181,64 +240,62 @@ class HoldingsService:
                     ),
                 })
 
-            total_invested += total_cost
-            total_purchases += buy_cost   # BUY outflows only, excludes TRANSFER_IN
-            total_sales += agg["total_sales_eur"]
-            total_dividends += agg["total_dividends_eur"]
-
             company_name = security_names.get(security_id, "")
-            ticker = agg["ticker"]
 
             holdings_list.append({
                 "security_id": security_id,
-                "ticker": ticker,
+                "ticker": agg["ticker"],
                 "company_name": company_name,
-                "total_shares": str(
-                    total_shares.quantize(_SIX_PLACES, rounding=ROUND_HALF_UP)
-                ),
+                "total_shares": _fmt6(total_shares),
                 "avg_cost_basis_eur": (
                     str(avg_cost.quantize(_TWO_PLACES)) if avg_cost is not None else None
                 ),
-                "cost_basis_status": cost_basis_status,
-                "total_invested_eur": str(total_cost.quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)),
-                "total_purchases_eur": str(buy_cost.quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)),
-                "total_sales_eur": str(
-                    agg["total_sales_eur"].quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)
-                ),
-                "total_dividends_eur": str(
-                    agg["total_dividends_eur"].quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)
-                ),
+                "cost_basis_status": holding_cost_basis_status,
+                # CMP cost basis fields
+                "total_purchase_outflow_eur": _fmt2(purchase_outflow),
+                "cost_basis_sold_eur": _fmt2(cost_sold),
+                "remaining_cost_basis_eur": _fmt2(remaining),
+                "total_sale_proceeds_eur": _fmt2(sale_proceeds),
+                "rights_proceeds_eur": _fmt2(rights_proceeds),
+                "realized_result_eur": _fmt2(realized),
+                # Backward-compatible aliases
+                "total_invested_eur": _fmt2(purchase_outflow),
+                "total_purchases_eur": _fmt2(purchase_outflow),
+                "total_sales_eur": _fmt2(sale_proceeds),
+                "current_invested_eur": _fmt2(remaining),
+                "total_dividends_eur": _fmt2(dividends),
                 "accounts": sorted(agg["accounts"]),
                 "warnings": item_warnings,
             })
 
-        # Sort: negative holdings last, then by security_id
+        # Sort: negative holdings last, then by security_id for stable output
         holdings_list.sort(
             key=lambda h: (
-                Decimal(h["total_shares"]) < Decimal("0"),
+                Decimal(h["total_shares"]) < _ZERO,
                 h["security_id"],
             )
         )
+
+        summary_realized = summary_sale_proceeds - summary_cost_basis_sold
 
         return {
             "holdings": holdings_list,
             "summary": {
                 "total_securities": len(holdings_list),
-                "total_invested_eur": str(
-                    total_invested.quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)
-                ),
-                "total_purchases_eur": str(
-                    total_purchases.quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)
-                ),
-                "total_sales_eur": str(
-                    total_sales.quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)
-                ),
-                "current_invested_eur": str(
-                    (total_invested - total_sales).quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)
-                ),
-                "total_dividends_eur": str(
-                    total_dividends.quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)
-                ),
+                # CMP cost basis fields
+                "total_purchase_outflow_eur": _fmt2(summary_purchase_outflow),
+                "cost_basis_sold_eur": _fmt2(summary_cost_basis_sold),
+                "remaining_cost_basis_eur": _fmt2(summary_remaining),
+                "total_sale_proceeds_eur": _fmt2(summary_sale_proceeds),
+                "rights_proceeds_eur": _fmt2(summary_rights_proceeds),
+                "realized_result_eur": _fmt2(summary_realized),
+                "has_incomplete_cost_basis": global_has_incomplete,
+                # Backward-compatible aliases
+                "total_invested_eur": _fmt2(summary_purchase_outflow),
+                "total_purchases_eur": _fmt2(summary_purchase_outflow),
+                "total_sales_eur": _fmt2(summary_sale_proceeds),
+                "current_invested_eur": _fmt2(summary_remaining),
+                "total_dividends_eur": _fmt2(summary_dividends),
             },
         }
 

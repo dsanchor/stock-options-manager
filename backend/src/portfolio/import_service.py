@@ -23,6 +23,9 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from .cosmos_portfolio import CosmosPortfolioService, StorageUnavailableError, _SESSION_TTL_SECONDS
+
+# Alias for readability in the commit loop
+_VoidedMovementError = CosmosPortfolioService.VoidedMovementError
 from .cosmos_securities import CosmosSecuritiesService, _CollisionError, make_security_id
 from .parsers.common import normalize_company_name, row_idempotency_hash
 from .parsers.dividends import parse_dividends
@@ -298,6 +301,13 @@ class ImportService:
             try:
                 self.portfolio_svc.write_ledger_txn(movement)
                 committed += 1
+            except _VoidedMovementError as exc:
+                # Voided/superseded movement: skip silently and preserve integrity
+                logger.warning(
+                    "Skipping voided/superseded movement %s during commit: %s",
+                    movement.get("id"), exc,
+                )
+                skipped_count += 1
             except Exception as exc:
                 logger.warning("Failed to write ledger_txn %s: %s", movement.get("id"), exc)
                 skipped_count += 1

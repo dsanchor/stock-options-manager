@@ -172,15 +172,30 @@ export interface HoldingEntry {
   total_dividends_eur: string;
   accounts: string[];
   warnings: MovementWarning[];
+  // Cost-basis v2 fields (Danny's contract §3.2; optional until backend ships)
+  total_purchase_outflow_eur?: string;
+  cost_basis_sold_eur?: string;
+  remaining_cost_basis_eur?: string;
+  total_sale_proceeds_eur?: string;
+  rights_proceeds_eur?: string;
+  realized_result_eur?: string;
 }
 
 export interface HoldingsSummary {
   total_securities: number;
   total_invested_eur: string;       // kept (= total_purchases_eur, backward compat)
   total_dividends_eur: string;      // kept
-  total_purchases_eur: string;      // NEW
-  total_sales_eur: string;          // NEW
-  current_invested_eur: string;     // NEW
+  total_purchases_eur: string;      // kept
+  total_sales_eur: string;          // kept
+  current_invested_eur: string;     // kept (alias for remaining_cost_basis_eur post-migration)
+  // Cost-basis v2 fields (Danny's contract §3.1; optional until backend ships)
+  total_purchase_outflow_eur?: string;
+  cost_basis_sold_eur?: string;
+  remaining_cost_basis_eur?: string;
+  total_sale_proceeds_eur?: string;
+  rights_proceeds_eur?: string;
+  realized_result_eur?: string;
+  has_incomplete_cost_basis?: boolean;
 }
 
 export interface HoldingsResponse {

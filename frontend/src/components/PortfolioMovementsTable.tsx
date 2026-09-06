@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import Link from "next/link";
-import { FileUp, Plus } from "lucide-react";
+import { FileUp, Plus, RefreshCw } from "lucide-react";
 import { getMovements, deleteMovement, listAccounts } from "@/lib/portfolio-api";
 import type { MovementsResponse, LedgerMovement, TxnType, WarningType } from "@/types/portfolio";
 import type { BrokerAccount } from "@/types/portfolio";
@@ -131,7 +131,36 @@ export default function PortfolioMovementsTable() {
 
   return (
     <div className="space-y-5">
-      {/* Filter bar */}
+      {/* Action row — outside the filter card */}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => load(offset, buildFilter())}
+          disabled={loading}
+          aria-label="Refresh movements"
+          className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-border px-3 py-1.5 text-sm text-text-muted hover:bg-bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <RefreshCw size={14} className={`shrink-0 ${loading ? "animate-spin" : ""}`} aria-hidden />
+          Refresh
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowAddMovement(true)}
+          className="inline-flex items-center gap-1.5 rounded-[var(--radius)] bg-accent-blue/15 px-3 py-1.5 text-sm text-accent-blue hover:bg-accent-blue/25"
+        >
+          <Plus size={14} className="shrink-0" aria-hidden />
+          Add movement
+        </button>
+        <Link
+          href="/portfolio/import"
+          className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-border px-3 py-1.5 text-sm text-text-muted hover:bg-bg-hover"
+        >
+          <FileUp size={14} className="shrink-0" aria-hidden />
+          Bulk import
+        </Link>
+      </div>
+
+      {/* Filter card */}
       <div className="flex flex-wrap gap-3 rounded-[var(--radius)] border border-border bg-bg-card px-4 py-3">
         {/* Account filter */}
         <select
@@ -151,6 +180,7 @@ export default function PortfolioMovementsTable() {
           value={txnType}
           onChange={(e) => setTxnType(e.target.value)}
           className={`${inputCls} w-32`}
+          aria-label="Filter by transaction type"
         >
           <option value="">All types</option>
           <option value="BUY">BUY</option>
@@ -164,12 +194,14 @@ export default function PortfolioMovementsTable() {
           onChange={(e) => setSecurityId(e.target.value)}
           placeholder="Security ID"
           className={`${inputCls} w-36`}
+          aria-label="Filter by security ID"
         />
         <input
           type="date"
           value={dateFrom}
           onChange={(e) => setDateFrom(e.target.value)}
           className={`${inputCls} w-36`}
+          aria-label="From date"
           title="From date"
         />
         <input
@@ -177,6 +209,7 @@ export default function PortfolioMovementsTable() {
           value={dateTo}
           onChange={(e) => setDateTo(e.target.value)}
           className={`${inputCls} w-36`}
+          aria-label="To date"
           title="To date"
         />
         <button
@@ -193,23 +226,6 @@ export default function PortfolioMovementsTable() {
         >
           Reset
         </button>
-        <div className="ml-auto flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setShowAddMovement(true)}
-            className="inline-flex items-center gap-1.5 rounded-[var(--radius)] bg-accent-blue/15 px-3 py-1.5 text-sm text-accent-blue hover:bg-accent-blue/25"
-          >
-            <Plus size={14} className="shrink-0" />
-            Add movement
-          </button>
-          <Link
-            href="/portfolio/import"
-            className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-border px-3 py-1.5 text-sm text-text-muted hover:bg-bg-hover"
-          >
-            <FileUp size={14} className="shrink-0" />
-            Bulk import
-          </Link>
-        </div>
       </div>
 
       {deleteError && (

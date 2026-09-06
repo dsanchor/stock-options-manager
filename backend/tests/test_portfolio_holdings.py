@@ -423,7 +423,12 @@ class TestSummaryTotals:
         assert s["current_invested_eur"] == "1010.00"
 
     def test_purchases_and_sales(self):
-        """BUY 100@€1000 (€10 fee) + SELL 30@€350 (€5 fee) → purchases=1010, sales=345, current=665."""
+        """BUY 100@€1000 (€10 fee) + SELL 30@€350 (€5 fee).
+
+        CMP avg = 1010/100 = 10.10.  cost_sold = 30×10.10 = 303.00.
+        remaining = 1010 − 303 = 707.00.
+        purchases=1010, sales=345, current_invested=remaining=707.00.
+        """
         movements = [
             _make_movement("t1", "XNYS:AAPL", "BUY", "100", "1000.00", commission_eur="10.00"),
             _make_movement("t2", "XNYS:AAPL", "SELL", "30", "350.00", commission_eur="5.00"),
@@ -434,10 +439,15 @@ class TestSummaryTotals:
         s = result["summary"]
         assert s["total_purchases_eur"] == "1010.00"
         assert s["total_sales_eur"] == "345.00"
-        assert s["current_invested_eur"] == "665.00"
+        assert s["current_invested_eur"] == "707.00"
 
     def test_sales_exceed_purchases(self):
-        """BUY 100@€500 (€0 fee) + SELL 100@€800 (€0 fee) → current_invested=-300.00 (profit)."""
+        """BUY 100@€500 + SELL 100@€800 (no fees).
+
+        CMP avg = 5.00.  cost_sold = 500.  remaining = 0.00.
+        realized = 800 − 500 = 300.00.
+        current_invested_eur = remaining_cost_basis = 0.00 (pool empty, not negative).
+        """
         movements = [
             _make_movement("t1", "XNYS:AAPL", "BUY", "100", "500.00"),
             _make_movement("t2", "XNYS:AAPL", "SELL", "100", "800.00"),
@@ -448,7 +458,7 @@ class TestSummaryTotals:
         s = result["summary"]
         assert s["total_purchases_eur"] == "500.00"
         assert s["total_sales_eur"] == "800.00"
-        assert s["current_invested_eur"] == "-300.00"
+        assert s["current_invested_eur"] == "0.00"
 
     def test_dividends_excluded_from_current_invested(self):
         """BUY + DIVIDEND → current_invested_eur equals total_purchases_eur (dividend excluded)."""
@@ -477,7 +487,14 @@ class TestSummaryTotals:
         assert s["current_invested_eur"] == "0.00"
 
     def test_multi_security_aggregation(self):
-        """2 securities, mixed buys/sells → summary totals are portfolio-wide sums."""
+        """2 securities, mixed buys/sells → summary totals are portfolio-wide sums.
+
+        AAPL: BUY 10@€1000 (€5 fee) cost=1005, avg=100.50.
+              SELL 5@€600 (€3 fee): cost_sold=502.50, remaining=502.50.
+        TEF: BUY 100@€400 (€2 fee) cost=402, avg=4.02.
+             SELL 20@€90 (€1 fee): cost_sold=80.40, remaining=321.60.
+        Portfolio remaining = 502.50 + 321.60 = 824.10.
+        """
         movements = [
             _make_movement("t1", "XNYS:AAPL", "BUY", "10", "1000.00", commission_eur="5.00"),
             _make_movement("t2", "XNYS:AAPL", "SELL", "5", "600.00", commission_eur="3.00"),
@@ -492,7 +509,8 @@ class TestSummaryTotals:
         assert Decimal(s["total_purchases_eur"]) == Decimal("1407.00")
         # AAPL sales: 600-3=597; TEF sales: 90-1=89 → 686
         assert Decimal(s["total_sales_eur"]) == Decimal("686.00")
-        assert Decimal(s["current_invested_eur"]) == Decimal("721.00")
+        # remaining_cost_basis = 502.50 + 321.60 = 824.10
+        assert Decimal(s["current_invested_eur"]) == Decimal("824.10")
         assert s["total_securities"] == 2
 
     def test_backward_compat_total_invested(self):
@@ -727,3 +745,295 @@ class TestRightsSaleHoldings:
         result = svc.compute_holdings()
         h = result["holdings"][0]
         assert Decimal(h["total_shares"]) == Decimal("100")
+
+
+# ---------------------------------------------------------------------------
+# CMP acceptance tests — Danny contract §9.1 (S1–S15)
+# ---------------------------------------------------------------------------
+
+class TestCMPAcceptance:
+    """Acceptance matrix for the CMP cost-basis algorithm per Danny's contract."""
+
+    def test_s1_buy_only(self):
+        """S1: BUY 100@€10 (€5 fee) → remaining=1005, cost_sold=0, realized=0."""
+        movements = [
+            _make_movement("s1t1", "XNYS:AAPL", "BUY", "100", "1000.00", commission_eur="5.00"),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        h = result["holdings"][0]
+        s = result["summary"]
+        assert Decimal(h["remaining_cost_basis_eur"]) == Decimal("1005.00")
+        assert Decimal(h["cost_basis_sold_eur"]) == Decimal("0.00")
+        assert Decimal(h["realized_result_eur"]) == Decimal("0.00")
+        assert Decimal(s["remaining_cost_basis_eur"]) == Decimal("1005.00")
+
+    def test_s2_buy_partial_sell(self):
+        """S2: BUY 100@€10 (€5 fee) → SELL 30@€15 (€3 fee).
+        avg=10.05, cost_sold=301.50, remaining=703.50, proceeds=447, realized=145.50.
+        """
+        movements = [
+            _make_movement("s2t1", "XNYS:AAPL", "BUY", "100", "1000.00", commission_eur="5.00"),
+            _make_movement("s2t2", "XNYS:AAPL", "SELL", "30", "450.00", commission_eur="3.00"),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        h = result["holdings"][0]
+        assert Decimal(h["cost_basis_sold_eur"]) == Decimal("301.50")
+        assert Decimal(h["remaining_cost_basis_eur"]) == Decimal("703.50")
+        assert Decimal(h["total_sale_proceeds_eur"]) == Decimal("447.00")
+        assert Decimal(h["realized_result_eur"]) == Decimal("145.50")
+
+    def test_s3_buy_full_sell(self):
+        """S3: BUY 100@€10 → SELL 100@€15. remaining=0, cost_sold=1000, realized=500."""
+        movements = [
+            _make_movement("s3t1", "XNYS:AAPL", "BUY", "100", "1000.00"),
+            _make_movement("s3t2", "XNYS:AAPL", "SELL", "100", "1500.00"),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        h = result["holdings"][0]
+        assert Decimal(h["remaining_cost_basis_eur"]) == Decimal("0.00")
+        assert Decimal(h["cost_basis_sold_eur"]) == Decimal("1000.00")
+        assert Decimal(h["realized_result_eur"]) == Decimal("500.00")
+
+    def test_s4_two_buys_then_sell(self):
+        """S4: BUY 100@€10, BUY 50@€20 → SELL 60. avg=13.333, cost_sold=800, remaining=1200."""
+        movements = [
+            _make_movement("s4t1", "XNYS:AAPL", "BUY", "100", "1000.00",
+                           trade_date="2024-01-10"),
+            _make_movement("s4t2", "XNYS:AAPL", "BUY", "50", "1000.00",
+                           trade_date="2024-02-10"),
+            _make_movement("s4t3", "XNYS:AAPL", "SELL", "60", "1080.00",
+                           trade_date="2024-03-10"),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        h = result["holdings"][0]
+        assert Decimal(h["cost_basis_sold_eur"]) == Decimal("800.00")
+        assert Decimal(h["remaining_cost_basis_eur"]) == Decimal("1200.00")
+        assert Decimal(h["total_sale_proceeds_eur"]) == Decimal("1080.00")
+
+    def test_s5_derechos_only(self):
+        """S5: BUY 100@€10 → SELL DERECHOS 20@€5.
+        remaining=1000 (unchanged), cost_sold=0, rights=100, realized=100.
+        """
+        movements = [
+            _make_movement("s5t1", "XNYS:AAPL", "BUY", "100", "1000.00"),
+            _make_movement_with_sales_type(
+                "s5t2", "XNYS:AAPL", "SELL", "20", "100.00", sales_type="DERECHOS"
+            ),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        h = result["holdings"][0]
+        assert Decimal(h["remaining_cost_basis_eur"]) == Decimal("1000.00")
+        assert Decimal(h["cost_basis_sold_eur"]) == Decimal("0.00")
+        assert Decimal(h["rights_proceeds_eur"]) == Decimal("100.00")
+        assert Decimal(h["total_sale_proceeds_eur"]) == Decimal("100.00")
+        assert Decimal(h["realized_result_eur"]) == Decimal("100.00")
+        assert Decimal(h["total_shares"]) == Decimal("100")
+
+    def test_s6_acciones_and_derechos(self):
+        """S6: BUY 100@€10 → SELL 30 ACCIONES@€15 → SELL DERECHOS 10@€5.
+        cost_sold=300, remaining=700, proceeds=500, rights=50, realized=200.
+        """
+        movements = [
+            _make_movement("s6t1", "XNYS:AAPL", "BUY", "100", "1000.00"),
+            _make_movement_with_sales_type(
+                "s6t2", "XNYS:AAPL", "SELL", "30", "450.00", sales_type="ACCIONES"
+            ),
+            _make_movement_with_sales_type(
+                "s6t3", "XNYS:AAPL", "SELL", "10", "50.00", sales_type="DERECHOS"
+            ),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        h = result["holdings"][0]
+        assert Decimal(h["cost_basis_sold_eur"]) == Decimal("300.00")
+        assert Decimal(h["remaining_cost_basis_eur"]) == Decimal("700.00")
+        assert Decimal(h["total_sale_proceeds_eur"]) == Decimal("500.00")
+        assert Decimal(h["rights_proceeds_eur"]) == Decimal("50.00")
+        assert Decimal(h["realized_result_eur"]) == Decimal("200.00")
+
+    def test_s7_incomplete_buy_then_sell(self):
+        """S7: BUY 50 INCOMPLETE + BUY 50@€10 → SELL 70.
+        Pool: 50 shares, €500. Sell 70: 50 from pool (cost=500) + 20 at cost 0.
+        cost_sold=500, remaining=0, has_incomplete=True.
+        """
+        movements = [
+            _make_movement("s7t1", "XNYS:AAPL", "BUY", "50", "0",
+                           cost_basis_status="INCOMPLETE",
+                           trade_date="2024-01-10"),
+            _make_movement("s7t2", "XNYS:AAPL", "BUY", "50", "500.00",
+                           trade_date="2024-01-15"),
+            _make_movement("s7t3", "XNYS:AAPL", "SELL", "70", "1050.00",
+                           trade_date="2024-06-01"),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        h = result["holdings"][0]
+        s = result["summary"]
+        assert Decimal(h["cost_basis_sold_eur"]) == Decimal("500.00")
+        assert Decimal(h["remaining_cost_basis_eur"]) == Decimal("0.00")
+        assert s["has_incomplete_cost_basis"] is True
+        assert any(w["type"] == "ZERO_COST_ACQUISITION" for w in h["warnings"])
+
+    def test_s8_transfer_preserves_basis(self):
+        """S8: BUY 100@€10 acct-A → TRANSFER_OUT 40 → TRANSFER_IN 40 (carried=400).
+        Global: remaining=1000. Acct-A: 600. Acct-B: 400.
+        """
+        movements = [
+            _make_movement("s8t1", "XNYS:AAPL", "BUY", "100", "1000.00", account_id="acct-a"),
+            {
+                **_make_movement("s8t2", "XNYS:AAPL", "TRANSFER_OUT", "40", "0",
+                                 account_id="acct-a"),
+                "transfer_cost_basis_eur": "400",
+            },
+            {
+                **_make_movement("s8t3", "XNYS:AAPL", "TRANSFER_IN", "40", "0",
+                                 account_id="acct-b"),
+                "transfer_cost_basis_eur": "400",
+            },
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+
+        global_result = svc.compute_holdings()
+        assert Decimal(global_result["summary"]["remaining_cost_basis_eur"]) == Decimal("1000.00")
+
+        acct_a = svc.compute_holdings(account_id="acct-a")
+        assert Decimal(acct_a["summary"]["remaining_cost_basis_eur"]) == Decimal("600.00")
+
+        acct_b = svc.compute_holdings(account_id="acct-b")
+        assert Decimal(acct_b["summary"]["remaining_cost_basis_eur"]) == Decimal("400.00")
+
+    def test_s9_negative_inventory(self):
+        """S9: SELL 30@€15 (no prior buy). cost_sold=0, remaining=0, proceeds=450."""
+        movements = [
+            _make_movement("s9t1", "XNYS:AAPL", "SELL", "30", "450.00"),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        h = result["holdings"][0]
+        assert Decimal(h["cost_basis_sold_eur"]) == Decimal("0.00")
+        assert Decimal(h["remaining_cost_basis_eur"]) == Decimal("0.00")
+        assert Decimal(h["total_sale_proceeds_eur"]) == Decimal("450.00")
+        assert any(w["type"] == "NEGATIVE_INVENTORY" for w in h["warnings"])
+
+    def test_s10_multi_security(self):
+        """S10: AAPL BUY+SELL (remaining=500), TEF BUY only (remaining=800). Sum=1300."""
+        movements = [
+            _make_movement("s10t1", "XNYS:AAPL", "BUY", "100", "1000.00"),
+            _make_movement("s10t2", "XNYS:AAPL", "SELL", "50", "600.00"),
+            _make_movement("s10t3", "XMAD:TEF", "BUY", "200", "800.00"),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        s = result["summary"]
+        assert Decimal(s["remaining_cost_basis_eur"]) == Decimal("1300.00")
+        assert s["total_securities"] == 2
+
+    def test_s11_backward_compat_aliases(self):
+        """S11: aliases equal their canonical counterpart."""
+        movements = [
+            _make_movement("s11t1", "XNYS:AAPL", "BUY", "100", "1000.00", commission_eur="5.00"),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        s = result["summary"]
+        assert s["total_purchases_eur"] == s["total_purchase_outflow_eur"]
+        assert s["total_sales_eur"] == s["total_sale_proceeds_eur"]
+        assert s["total_invested_eur"] == s["total_purchase_outflow_eur"]
+        assert s["current_invested_eur"] == s["remaining_cost_basis_eur"]
+
+    def test_s12_avg_cost_stable_after_sell(self):
+        """S12: BUY 100@€10, BUY 100@€20 → SELL 50. CMP avg=15.00 unchanged by sell."""
+        movements = [
+            _make_movement("s12t1", "XNYS:AAPL", "BUY", "100", "1000.00",
+                           trade_date="2024-01-01"),
+            _make_movement("s12t2", "XNYS:AAPL", "BUY", "100", "2000.00",
+                           trade_date="2024-02-01"),
+            _make_movement("s12t3", "XNYS:AAPL", "SELL", "50", "900.00",
+                           trade_date="2024-03-01"),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        h = result["holdings"][0]
+        assert h["avg_cost_basis_eur"] == "15.00"
+
+    def test_s13_full_sell_avg_null(self):
+        """S13: BUY 100@€10 → SELL 100. avg_cost_basis_eur is None (pool empty)."""
+        movements = [
+            _make_movement("s13t1", "XNYS:AAPL", "BUY", "100", "1000.00"),
+            _make_movement("s13t2", "XNYS:AAPL", "SELL", "100", "1200.00"),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        h = result["holdings"][0]
+        assert h["avg_cost_basis_eur"] is None
+
+    def test_s15_superseded_excluded(self):
+        """S15: Only active replacement BUY + SELL; SUPERSEDED excluded by query."""
+        replacement_buy = _make_movement("s15t1r", "XNYS:AAPL", "BUY", "100", "1000.00")
+        sell = _make_movement("s15t2", "XNYS:AAPL", "SELL", "50", "600.00")
+        portfolio_svc, securities_svc = _make_services([replacement_buy, sell])
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        h = result["holdings"][0]
+        assert Decimal(h["total_purchase_outflow_eur"]) == Decimal("1000.00")
+        assert Decimal(h["cost_basis_sold_eur"]) == Decimal("500.00")
+        assert Decimal(h["remaining_cost_basis_eur"]) == Decimal("500.00")
+
+    def test_new_fields_present_on_holding(self):
+        """All new CMP fields must be present in every holding."""
+        movements = [_make_movement("pf1", "XNYS:AAPL", "BUY", "10", "100.00")]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        h = svc.compute_holdings()["holdings"][0]
+        for field in (
+            "total_purchase_outflow_eur", "cost_basis_sold_eur",
+            "remaining_cost_basis_eur", "total_sale_proceeds_eur",
+            "rights_proceeds_eur", "realized_result_eur",
+        ):
+            assert field in h, f"Missing holding field: {field}"
+
+    def test_new_fields_present_on_summary(self):
+        """All new CMP fields must be present in the summary."""
+        portfolio_svc, securities_svc = _make_services([])
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        s = svc.compute_holdings()["summary"]
+        for field in (
+            "total_purchase_outflow_eur", "cost_basis_sold_eur",
+            "remaining_cost_basis_eur", "total_sale_proceeds_eur",
+            "rights_proceeds_eur", "realized_result_eur",
+            "has_incomplete_cost_basis",
+        ):
+            assert field in s, f"Missing summary field: {field}"
+
+    def test_has_incomplete_false_when_complete(self):
+        movements = [_make_movement("hif1", "XNYS:AAPL", "BUY", "10", "100.00")]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        assert svc.compute_holdings()["summary"]["has_incomplete_cost_basis"] is False
+
+    def test_has_incomplete_true_when_incomplete(self):
+        movements = [
+            _make_movement("hit1", "XNYS:AAPL", "BUY", "10", "0",
+                           cost_basis_status="INCOMPLETE"),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        assert svc.compute_holdings()["summary"]["has_incomplete_cost_basis"] is True

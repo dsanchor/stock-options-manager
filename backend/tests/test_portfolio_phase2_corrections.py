@@ -297,3 +297,109 @@ class TestCorrectionHoldingsExclusion:
         result = svc.compute_holdings()
         san = next(h for h in result["holdings"] if h["security_id"] == "XMAD:SAN")
         assert Decimal(san["total_shares"]) == Decimal("480")
+
+
+# ===========================================================================
+# write_ledger_txn — safety guard against restoring voided/superseded movements
+# ===========================================================================
+
+class FakePortfolioForWriteGuard:
+    """Minimal fake that supports upsert_item and read_item for the write guard tests."""
+    def __init__(self, initial_docs=None):
+        self._store: dict = {}
+        for d in (initial_docs or []):
+            self._store[d["id"]] = dict(d)
+
+    def upsert_item(self, body):
+        self._store[body["id"]] = dict(body)
+        return dict(body)
+
+    def read_item(self, item=None, partition_key=None, **kw):
+        key = item
+        if key not in self._store:
+            raise CosmosResourceNotFoundError(message="not found", response=None)
+        doc = self._store[key]
+        if partition_key is not None and doc.get("account_id") != partition_key:
+            raise CosmosResourceNotFoundError(message="not found", response=None)
+        return dict(doc)
+
+    def read(self): return {}
+
+    def query_items(self, **kw): return iter([])
+    def replace_item(self, i, b): return b
+    def create_item(self, b): self._store[b["id"]] = b; return b
+
+
+def _make_svc(initial_docs=None):
+    fake_container = FakePortfolioForWriteGuard(initial_docs)
+    return CosmosPortfolioService(fake_container, None), fake_container
+
+
+class TestWriteLedgerTxnSafetyGuard:
+    """write_ledger_txn must never silently restore VOIDED/SUPERSEDED movements."""
+
+    def test_new_document_upserted_normally(self):
+        svc, container = _make_svc()
+        doc = {
+            "id": "mvt_new_001", "account_id": "_unassigned",
+            "doc_type": "ledger_txn", "txn_type": "BUY",
+        }
+        result = svc.write_ledger_txn(doc)
+        assert result["id"] == "mvt_new_001"
+        assert "mvt_new_001" in container._store
+
+    def test_active_document_upserted_normally(self):
+        existing = {
+            "id": "mvt_active_001", "account_id": "_unassigned",
+            "doc_type": "ledger_txn", "txn_type": "BUY",
+            "correction_status": "ACTIVE",
+        }
+        svc, container = _make_svc([existing])
+        new_doc = {**existing, "quantity": "200"}
+        result = svc.write_ledger_txn(new_doc)
+        assert result["id"] == "mvt_active_001"
+        assert container._store["mvt_active_001"]["quantity"] == "200"
+
+    def test_voided_document_raises_not_overwritten(self):
+        voided = {
+            "id": "mvt_voided_001", "account_id": "_unassigned",
+            "doc_type": "ledger_txn", "txn_type": "BUY",
+            "correction_status": "VOIDED",
+        }
+        svc, container = _make_svc([voided])
+        incoming = {
+            "id": "mvt_voided_001", "account_id": "_unassigned",
+            "doc_type": "ledger_txn", "txn_type": "BUY",
+            # No correction_status — would silently restore if not guarded
+        }
+        with pytest.raises(CosmosPortfolioService.VoidedMovementError) as exc_info:
+            svc.write_ledger_txn(incoming)
+        assert exc_info.value.status == "VOIDED"
+        assert exc_info.value.movement_id == "mvt_voided_001"
+        # Document must remain VOIDED in store
+        assert container._store["mvt_voided_001"]["correction_status"] == "VOIDED"
+
+    def test_superseded_document_raises_not_overwritten(self):
+        superseded = {
+            "id": "mvt_sup_guard_001", "account_id": "_unassigned",
+            "doc_type": "ledger_txn", "txn_type": "SELL",
+            "correction_status": "SUPERSEDED",
+        }
+        svc, container = _make_svc([superseded])
+        incoming = {
+            "id": "mvt_sup_guard_001", "account_id": "_unassigned",
+            "doc_type": "ledger_txn", "txn_type": "SELL",
+        }
+        with pytest.raises(CosmosPortfolioService.VoidedMovementError) as exc_info:
+            svc.write_ledger_txn(incoming)
+        assert exc_info.value.status == "SUPERSEDED"
+        # Document must remain SUPERSEDED in store
+        assert container._store["mvt_sup_guard_001"]["correction_status"] == "SUPERSEDED"
+
+    def test_document_without_account_id_skips_guard(self):
+        """If account_id is missing, the guard cannot query Cosmos — proceed with upsert."""
+        svc, container = _make_svc()
+        doc = {"id": "mvt_no_acct_001", "doc_type": "ledger_txn"}
+        # Should not raise — guard skipped when account_id is absent
+        result = svc.write_ledger_txn(doc)
+        assert result["id"] == "mvt_no_acct_001"

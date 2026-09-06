@@ -6,6 +6,8 @@ import { getHoldings, listAccounts } from "@/lib/portfolio-api";
 import type { HoldingEntry, HoldingsResponse, WarningType } from "@/types/portfolio";
 import type { BrokerAccount } from "@/types/portfolio";
 import ReassignmentDialog from "./ReassignmentDialog";
+import StatCard from "@/components/StatCard";
+import Reveal from "@/components/Reveal";
 
 const WARNING_SHORT: Record<WarningType, string> = {
   NEGATIVE_INVENTORY: "Negative inventory",
@@ -126,37 +128,114 @@ export default function PortfolioHoldingsTable() {
 
   const { summary } = data;
   const isFiltered = searchQuery.trim() !== "" || accountFilter !== "" || (hideZeroShares && data.holdings.some((h) => parseFloat(h.total_shares) === 0));
-  const currentInvestedNegative = parseFloat(summary.current_invested_eur) < 0;
 
   return (
     <div className="space-y-5">
-      {/* Summary bar */}
-      <div className="rounded-[var(--radius)] border border-border bg-bg-card px-5 py-4">
-        <div className="flex flex-wrap gap-6 text-sm">
-          <div>
-            <div className="text-xs text-text-muted mb-1">Total Purchases</div>
-            <div className="text-lg font-semibold text-text">{formatEur(summary.total_purchases_eur)}</div>
-          </div>
-          <div>
-            <div className="text-xs text-text-muted mb-1">Total Sales</div>
-            <div className="text-lg font-semibold text-text">{formatEur(summary.total_sales_eur)}</div>
-          </div>
-          <div>
-            <div className="text-xs text-text-muted mb-1">Current Invested</div>
-            <div className={`text-lg font-semibold ${currentInvestedNegative ? "text-accent-green" : "text-text"}`}>
-              {formatEur(summary.current_invested_eur)}
-            </div>
-          </div>
-          <div className="hidden sm:block w-px bg-border/50 self-stretch" aria-hidden="true" />
-          <div className="opacity-70">
-            <div className="text-xs text-text-muted mb-1">Total Dividends</div>
-            <div className="text-base font-medium text-accent-green">{formatEur(summary.total_dividends_eur)}</div>
-          </div>
-          <div className="opacity-70">
-            <div className="text-xs text-text-muted mb-1">Securities</div>
-            <div className="text-base font-medium text-text">{summary.total_securities}</div>
-          </div>
-          <div className="ml-auto flex items-start gap-2">
+      {/* ── Portfolio summary — StatCard grid (same pattern as Economics/Dashboard) ── */}
+      <div className="space-y-4">
+        {/* Primary KPIs */}
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Reveal index={0} className="h-full">
+            <StatCard
+              label="Inversión actual"
+              value={parseFloat(summary.remaining_cost_basis_eur ?? summary.current_invested_eur)}
+              prefix="€"
+              decimals={2}
+              tone="neutral"
+              tooltip="Base de coste de las acciones que aún posees. = Total compras − Coste asignado a acciones vendidas. Calculado con media ponderada móvil (CMP). No es FIFO ni válido para fines fiscales."
+            />
+          </Reveal>
+          <Reveal index={1} className="h-full">
+            <StatCard
+              label="Resultado realizado"
+              value={summary.realized_result_eur != null ? parseFloat(summary.realized_result_eur) : undefined}
+              prefix="€"
+              decimals={2}
+              tone={
+                summary.realized_result_eur == null
+                  ? "neutral"
+                  : parseFloat(summary.realized_result_eur) >= 0
+                  ? "green"
+                  : "red"
+              }
+              tooltip="Ganancia o pérdida cerrada: ingresos por ventas de acciones y derechos menos el coste de adquisición de las acciones vendidas (media ponderada móvil). No válido para fines fiscales."
+            />
+          </Reveal>
+          <Reveal index={2} className="h-full">
+            <StatCard
+              label="Dividendos netos"
+              value={parseFloat(summary.total_dividends_eur)}
+              prefix="€"
+              decimals={2}
+              tone="green"
+              tooltip="Dividendos netos recibidos (tras retenciones)."
+            />
+          </Reveal>
+        </div>
+
+        {/* Secondary breakdown */}
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Reveal index={0} className="h-full">
+            <StatCard
+              label="Compras totales"
+              value={parseFloat(summary.total_purchase_outflow_eur ?? summary.total_purchases_eur)}
+              prefix="€"
+              decimals={2}
+              tone="neutral"
+              tooltip="Desembolso total en compras de acciones (principal + comisiones)."
+            />
+          </Reveal>
+          {summary.cost_basis_sold_eur != null && (
+            <Reveal index={1} className="h-full">
+              <StatCard
+                label="Coste de las acciones vendidas"
+                value={parseFloat(summary.cost_basis_sold_eur)}
+                prefix="€"
+                decimals={2}
+                tone="neutral"
+                tooltip="Coste medio de adquisición asignado a las acciones vendidas (media ponderada móvil)."
+              />
+            </Reveal>
+          )}
+          <Reveal index={2} className="h-full">
+            <StatCard
+              label="Ventas netas"
+              value={parseFloat(summary.total_sale_proceeds_eur ?? summary.total_sales_eur)}
+              prefix="€"
+              decimals={2}
+              tone="neutral"
+              tooltip="Dinero recibido por ventas de acciones y derechos (bruto − comisiones)."
+            />
+          </Reveal>
+          {summary.rights_proceeds_eur != null && parseFloat(summary.rights_proceeds_eur) > 0 && (
+            <Reveal index={3} className="h-full">
+              <StatCard
+                label="Ventas de derechos"
+                value={parseFloat(summary.rights_proceeds_eur)}
+                prefix="€"
+                decimals={2}
+                tone="neutral"
+                tooltip="Parte de ingresos procedente de venta de derechos de suscripción."
+              />
+            </Reveal>
+          )}
+        </div>
+
+        {/* Indicators + warning + actions */}
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-xs text-text-muted">
+            Valores: <strong className="font-medium text-text">{summary.total_securities}</strong>
+          </span>
+          {summary.has_incomplete_cost_basis && (
+            <span
+              role="alert"
+              className="inline-flex items-center gap-1.5 rounded-full bg-accent-orange/10 px-2.5 py-1 text-xs font-medium text-accent-orange"
+            >
+              <span aria-hidden="true">⚠</span>
+              Algún valor tiene coste incompleto — los cálculos de inversión pueden no ser exactos
+            </span>
+          )}
+          <div className="ml-auto flex items-center gap-2">
             <button
               type="button"
               onClick={() => setShowReassign(true)}

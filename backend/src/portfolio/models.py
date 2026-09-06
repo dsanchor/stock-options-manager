@@ -238,11 +238,21 @@ class HoldingItem(BaseModel):
     ticker: str
     company_name: str
     total_shares: str
+    # CMP-adjusted average: pool_cost / pool_shares (null when pool is empty)
     avg_cost_basis_eur: Optional[str]
     cost_basis_status: str
-    total_invested_eur: str
-    total_purchases_eur: str
-    total_sales_eur: str
+    # CMP cost basis fields (Danny contract §3.2)
+    total_purchase_outflow_eur: str   # Σ(gross+fee) BUY COMPLETE
+    cost_basis_sold_eur: str          # Σ CMP cost assigned to SELL ACCIONES
+    remaining_cost_basis_eur: str     # pool_cost residual
+    total_sale_proceeds_eur: str      # Σ(gross-fee) SELL (all types)
+    rights_proceeds_eur: str          # Σ(gross-fee) SELL DERECHOS
+    realized_result_eur: str          # total_sale_proceeds − cost_basis_sold
+    # Backward-compatible aliases
+    total_invested_eur: str           # alias: total_purchase_outflow_eur
+    total_purchases_eur: str          # alias: total_purchase_outflow_eur
+    total_sales_eur: str              # alias: total_sale_proceeds_eur
+    current_invested_eur: str         # alias: remaining_cost_basis_eur
     total_dividends_eur: str
     accounts: List[str]
     warnings: List[ImportWarning]
@@ -250,10 +260,19 @@ class HoldingItem(BaseModel):
 
 class HoldingsSummary(BaseModel):
     total_securities: int
-    total_invested_eur: str
-    total_purchases_eur: str
-    total_sales_eur: str
-    current_invested_eur: str
+    # CMP cost basis fields (Danny contract §3.1)
+    total_purchase_outflow_eur: str   # Σ(gross+fee) BUY COMPLETE
+    cost_basis_sold_eur: str          # Σ CMP cost assigned to SELL ACCIONES
+    remaining_cost_basis_eur: str     # pool_cost residual (= "Inversión actual")
+    total_sale_proceeds_eur: str      # Σ(gross-fee) SELL (all types)
+    rights_proceeds_eur: str          # Σ(gross-fee) SELL DERECHOS
+    realized_result_eur: str          # total_sale_proceeds − cost_basis_sold
+    has_incomplete_cost_basis: bool   # true if any security has unpaid_shares > 0
+    # Backward-compatible aliases
+    total_invested_eur: str           # alias: total_purchase_outflow_eur
+    total_purchases_eur: str          # alias: total_purchase_outflow_eur
+    total_sales_eur: str              # alias: total_sale_proceeds_eur
+    current_invested_eur: str         # alias: remaining_cost_basis_eur (BREAKING: was purchases−sale_proceeds)
     total_dividends_eur: str
 
 

@@ -275,9 +275,40 @@ class CosmosPortfolioService:
 
     # ── Ledger (portfolio container) ─────────────────────────────────────
 
+    class VoidedMovementError(Exception):
+        """Raised when write_ledger_txn would silently restore a voided/superseded movement."""
+        def __init__(self, movement_id: str, status: str) -> None:
+            self.movement_id = movement_id
+            self.status = status
+            super().__init__(
+                f"Refusing to overwrite {status} movement {movement_id!r}. "
+                "Use correct_movement or delete-and-recreate instead."
+            )
+
     def write_ledger_txn(self, txn_doc: Dict[str, Any]) -> Dict[str, Any]:
-        """Upsert a ledger_txn document into the portfolio container."""
+        """Upsert a ledger_txn document into the portfolio container.
+
+        Safety guard: if a document with the same ID already exists and has
+        correction_status VOIDED or SUPERSEDED, this method raises
+        VoidedMovementError instead of silently restoring the movement to active
+        status. Callers (import commit loop) catch this and count it as skipped.
+        """
         self._require_portfolio()
+        doc_id = txn_doc.get("id")
+        account_id = txn_doc.get("account_id")
+
+        # Guard: do not overwrite voided/superseded documents
+        if doc_id and account_id:
+            try:
+                existing = self.portfolio_container.read_item(
+                    item=doc_id, partition_key=account_id
+                )
+                cs = existing.get("correction_status")
+                if cs in _EXCLUDED_CORRECTION_STATUSES:
+                    raise CosmosPortfolioService.VoidedMovementError(doc_id, cs)
+            except CosmosResourceNotFoundError:
+                pass  # New document — proceed with upsert
+
         created = self.portfolio_container.upsert_item(txn_doc)
         return _clean(created)
 
