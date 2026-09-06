@@ -54,7 +54,26 @@ az ad sp create --id "$APP_ID"
 
 `APP_ID` is the value to store as the `AZURE_CLIENT_ID` secret.
 
-#### 2. Add the Federated Credential (OIDC)
+#### 2. Enable Immutable-ID OIDC Subject on the Repository
+
+> **Why this is required.** By default, GitHub's OIDC token subject uses the human-readable slug (`repo:owner/repo:environment:...`). When immutable subjects are enabled the token instead uses the repository's numeric owner/repo IDs, producing the form observed at runtime: `repo:dsanchor@18459098/option-income-lab@1194091654:environment:production`. Azure's federated credential performs an **exact-match** on the subject, so enabling this setting before creating the credential guarantees the tokens GitHub emits always match the credential that Azure trusts — even if the repository is renamed or transferred.
+
+```bash
+gh api -X PUT repos/dsanchor/option-income-lab/actions/oidc/customization/sub \
+  -F use_default=true \
+  -F use_immutable_subject=true
+```
+
+> **Note:** Both fields are required. Omitting `use_default` causes HTTP 422 `object is missing required key: use_default`.
+
+Run this once with a token that has the `repo` scope and Owner/Admin access. Verify the change with:
+
+```bash
+gh api repos/dsanchor/option-income-lab/actions/oidc/customization/sub
+# → {"use_default": true, "use_immutable_subject": true}
+```
+
+#### 3. Add the Federated Credential (OIDC)
 
 > **Prerequisite:** A GitHub Environment named **`production`** must exist in the repository before this credential will match. Create it at **Settings → Environments → New environment → `production`**.
 
@@ -62,16 +81,18 @@ az ad sp create --id "$APP_ID"
 az ad app federated-credential create --id "$APP_ID" --parameters '{
   "name": "github-actions-production-env",
   "issuer": "https://token.actions.githubusercontent.com",
-  "subject": "repo:dsanchor/option-income-lab:environment:production",
+  "subject": "repo:dsanchor@18459098/option-income-lab@1194091654:environment:production",
   "audiences": ["api://AzureADTokenExchange"],
   "description": "GitHub Actions OIDC for option-income-lab production environment"
 }'
 ```
 
-**Federated subject:** `repo:dsanchor/option-income-lab:environment:production`
+**Federated subject:** `repo:dsanchor@18459098/option-income-lab@1194091654:environment:production`
 Only the `deploy` job, which runs with `environment: production`, can authenticate. Azure AD performs an exact-match on this subject — a branch-ref subject (`ref:refs/heads/main`) would not match and would be rejected.
 
-#### 3. Assign the Least-Privilege RBAC Role
+> **Note:** GitHub generates the OIDC subject using the repository's immutable numeric ID, not the display name. If the repository is renamed or transferred, the owner-slug portion changes but the numeric IDs remain stable. The subject above is the immutable-ID form that is registered as the federated credential.
+
+#### 4. Assign the Least-Privilege RBAC Role
 
 ```bash
 SP_OBJECT_ID=$(az ad sp list \
@@ -87,7 +108,7 @@ az role assignment create \
 
 **Role:** `Container Apps Contributor` (not `Contributor`) — sufficient for `az containerapp update` and `az containerapp revision list`. This is the minimum required scope: resource-group level on `stock-options-manager-rg`.
 
-#### 4. Set the GitHub Secrets
+#### 5. Set the GitHub Secrets
 
 Secrets can be set at **repository scope** (accessible to all workflows) or scoped to the **`production` environment** (Settings → Environments → production → Environment secrets). Either scope works; environment secrets take precedence if both exist.
 
@@ -120,9 +141,17 @@ az containerapp registry set \
 
 Use a PAT with `read:packages` scope. After reconfiguring, re-run the workflow.
 
----
+### CI/CD Amendments
 
-## Azure Deployment
+> **Amendment — 2026-09-06 (commit `eac9ce7` follow-up):**
+>
+> **Readiness check semantics corrected.** Previous workflow polled `properties.runningState == "Running"` which never matches when Azure scales the app to its configured replica count — the real healthy response is `runningState: "RunningAtMaxScale"` (or `RunningAtMinScale`). The readiness check now polls the *exact* revision name captured from `az containerapp update` and declares success when `properties.healthState == "Healthy"` **and** `properties.active == true`, regardless of `runningState` variant. It fails fast on `healthState == "Unhealthy"` or `runningState` in `{Failed, Degraded, ProvisionFailed, ActivationFailed}`.
+>
+> **Azure logout made best-effort.** `az logout || true` prevents a secondary workflow failure when OIDC login itself fails.
+>
+> **OIDC subject corrected to immutable-ID form.** GitHub issues tokens using the repository's numeric owner/repo IDs, not the display-name slug. The registered federated credential subject is `repo:dsanchor@18459098/option-income-lab@1194091654:environment:production`; the name-form subject used in earlier documentation would have caused an OIDC token mismatch.
+
+---
 
 ### Prerequisites
 

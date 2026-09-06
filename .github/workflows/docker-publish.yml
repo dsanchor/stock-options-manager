@@ -82,65 +82,99 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Deploy API to Container Apps
+        id: deploy-api
         run: |
-          az containerapp update \
+          REVISION=$(az containerapp update \
             --name ca-stock-options-manager-api \
             --resource-group stock-options-manager-rg \
-            --image ghcr.io/dsanchor/option-income-lab-api:${{ steps.tag.outputs.tag }}
+            --image ghcr.io/dsanchor/option-income-lab-api:${{ steps.tag.outputs.tag }} \
+            --query "properties.latestRevisionName" -o tsv)
+          if [ -z "$REVISION" ]; then
+            echo "❌ Could not determine revision name from az containerapp update output"
+            exit 1
+          fi
+          echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
+          echo "API revision: $REVISION"
 
       - name: Verify API revision is ready
         run: |
+          REVISION="${{ steps.deploy-api.outputs.revision }}"
+          echo "Polling revision: $REVISION"
+          PROV="Unknown"; HEALTH="Unknown"; ACTIVE="false"
           for i in $(seq 1 30); do
-            PROV=$(az containerapp revision list \
+            JSON=$(az containerapp revision show \
               --name ca-stock-options-manager-api \
               --resource-group stock-options-manager-rg \
-              --query "sort_by([],&properties.createdTime)[-1].properties.runningState" \
-              -o tsv 2>/dev/null || echo "Unknown")
-            echo "Attempt $i/30 — latest revision running state: $PROV"
-            if [ "$PROV" = "Running" ]; then
-              echo "✅ API revision is running"
+              --revision "$REVISION" \
+              -o json 2>/dev/null || echo "{}")
+            PROV=$(echo "$JSON" | jq -r '.properties.runningState // "Unknown"')
+            HEALTH=$(echo "$JSON" | jq -r '.properties.healthState // "Unknown"')
+            ACTIVE=$(echo "$JSON" | jq -r '.properties.active // false')
+            echo "Attempt $i/30 — runningState: $PROV  healthState: $HEALTH  active: $ACTIVE"
+            if [ "$HEALTH" = "Healthy" ] && [ "$ACTIVE" = "true" ]; then
+              echo "✅ API revision is healthy and active"
               break
-            elif [ "$PROV" = "Failed" ]; then
-              echo "❌ API revision failed"
+            elif [ "$HEALTH" = "Unhealthy" ]; then
+              echo "❌ API revision is unhealthy"
+              exit 1
+            elif [ "$PROV" = "Failed" ] || [ "$PROV" = "Degraded" ] || [ "$PROV" = "ProvisionFailed" ] || [ "$PROV" = "ActivationFailed" ]; then
+              echo "❌ API revision provisioning failed (runningState: $PROV)"
               exit 1
             fi
             sleep 10
           done
-          if [ "$PROV" != "Running" ]; then
-            echo "❌ API revision did not become ready within 5 minutes"
+          if [ "$HEALTH" != "Healthy" ] || [ "$ACTIVE" != "true" ]; then
+            echo "❌ API revision did not become healthy within 5 minutes (runningState: $PROV  healthState: $HEALTH  active: $ACTIVE)"
             exit 1
           fi
 
       - name: Deploy Frontend to Container Apps
+        id: deploy-front
         run: |
-          az containerapp update \
+          REVISION=$(az containerapp update \
             --name ca-stock-options-manager-front \
             --resource-group stock-options-manager-rg \
-            --image ghcr.io/dsanchor/option-income-lab-front:${{ steps.tag.outputs.tag }}
+            --image ghcr.io/dsanchor/option-income-lab-front:${{ steps.tag.outputs.tag }} \
+            --query "properties.latestRevisionName" -o tsv)
+          if [ -z "$REVISION" ]; then
+            echo "❌ Could not determine revision name from az containerapp update output"
+            exit 1
+          fi
+          echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
+          echo "Frontend revision: $REVISION"
 
       - name: Verify Frontend revision is ready
         run: |
+          REVISION="${{ steps.deploy-front.outputs.revision }}"
+          echo "Polling revision: $REVISION"
+          PROV="Unknown"; HEALTH="Unknown"; ACTIVE="false"
           for i in $(seq 1 30); do
-            PROV=$(az containerapp revision list \
+            JSON=$(az containerapp revision show \
               --name ca-stock-options-manager-front \
               --resource-group stock-options-manager-rg \
-              --query "sort_by([],&properties.createdTime)[-1].properties.runningState" \
-              -o tsv 2>/dev/null || echo "Unknown")
-            echo "Attempt $i/30 — latest revision running state: $PROV"
-            if [ "$PROV" = "Running" ]; then
-              echo "✅ Frontend revision is running"
+              --revision "$REVISION" \
+              -o json 2>/dev/null || echo "{}")
+            PROV=$(echo "$JSON" | jq -r '.properties.runningState // "Unknown"')
+            HEALTH=$(echo "$JSON" | jq -r '.properties.healthState // "Unknown"')
+            ACTIVE=$(echo "$JSON" | jq -r '.properties.active // false')
+            echo "Attempt $i/30 — runningState: $PROV  healthState: $HEALTH  active: $ACTIVE"
+            if [ "$HEALTH" = "Healthy" ] && [ "$ACTIVE" = "true" ]; then
+              echo "✅ Frontend revision is healthy and active"
               break
-            elif [ "$PROV" = "Failed" ]; then
-              echo "❌ Frontend revision failed"
+            elif [ "$HEALTH" = "Unhealthy" ]; then
+              echo "❌ Frontend revision is unhealthy"
+              exit 1
+            elif [ "$PROV" = "Failed" ] || [ "$PROV" = "Degraded" ] || [ "$PROV" = "ProvisionFailed" ] || [ "$PROV" = "ActivationFailed" ]; then
+              echo "❌ Frontend revision provisioning failed (runningState: $PROV)"
               exit 1
             fi
             sleep 10
           done
-          if [ "$PROV" != "Running" ]; then
-            echo "❌ Frontend revision did not become ready within 5 minutes"
+          if [ "$HEALTH" != "Healthy" ] || [ "$ACTIVE" != "true" ]; then
+            echo "❌ Frontend revision did not become healthy within 5 minutes (runningState: $PROV  healthState: $HEALTH  active: $ACTIVE)"
             exit 1
           fi
 
       - name: Azure Logout
         if: always()
-        run: az logout
+        run: az logout || true
