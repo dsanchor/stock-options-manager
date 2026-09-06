@@ -2,6 +2,126 @@
 
 [← Back to README](../README.md)
 
+## Automated CI/CD (GitHub Actions → Azure Container Apps)
+
+The workflow at `.github/workflows/docker-publish.yml` runs two jobs:
+
+| Job | Trigger | What it does |
+|-----|---------|--------------|
+| `build-and-push` | Every push (all branches) + `workflow_dispatch` | Builds API & frontend images, pushes to GHCR |
+| `deploy` | Push to `main` + `workflow_dispatch` on `main` | Deploys both Container Apps with the immutable `sha-<7char>` tag |
+
+`deploy` runs only after **both** matrix legs of `build-and-push` succeed (`needs: build-and-push`).
+Concurrency group `deploy-production` (with `cancel-in-progress: false`) ensures deploys are queued, never skipped out of order.
+
+### Required GitHub Secrets
+
+> The `deploy` job runs with `environment: production`. Secrets may be stored at **repository scope** (Settings → Secrets and variables → Actions → Secrets) or at **environment scope** (Settings → Environments → production → Environment secrets). Either scope works for OIDC; environment secrets take precedence if both exist. The GitHub Environment named **`production`** must exist before the first deploy.
+
+| Secret | Description |
+|--------|-------------|
+| `AZURE_CLIENT_ID` | App registration Application (client) ID |
+| `AZURE_TENANT_ID` | Microsoft Entra tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | Azure subscription ID |
+
+> **Never** store `AZURE_CREDENTIALS` (JSON blob) or `AZURE_CLIENT_SECRET`. The workflow uses passwordless OIDC — no long-lived credential is required.
+
+### Optional GitHub Variables
+
+The resource group and app names are hardcoded in the workflow (single-environment deployment). No GitHub Variables are required. If you later need multi-environment support, extract the following to repository Variables:
+
+| Name | Default |
+|------|---------|
+| `AZURE_RESOURCE_GROUP` | `stock-options-manager-rg` |
+| `AZURE_API_APP` | `ca-stock-options-manager-api` |
+| `AZURE_FRONT_APP` | `ca-stock-options-manager-front` |
+
+### One-Time Azure OIDC Setup
+
+Run these commands once from a terminal with **Owner** or **User Access Administrator** privileges on the resource group.
+
+#### 1. Create the App Registration
+
+```bash
+az ad app create --display-name "github-actions-option-income-lab"
+
+APP_ID=$(az ad app list \
+  --display-name "github-actions-option-income-lab" \
+  --query "[0].appId" -o tsv)
+
+az ad sp create --id "$APP_ID"
+```
+
+`APP_ID` is the value to store as the `AZURE_CLIENT_ID` secret.
+
+#### 2. Add the Federated Credential (OIDC)
+
+> **Prerequisite:** A GitHub Environment named **`production`** must exist in the repository before this credential will match. Create it at **Settings → Environments → New environment → `production`**.
+
+```bash
+az ad app federated-credential create --id "$APP_ID" --parameters '{
+  "name": "github-actions-production-env",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:dsanchor/option-income-lab:environment:production",
+  "audiences": ["api://AzureADTokenExchange"],
+  "description": "GitHub Actions OIDC for option-income-lab production environment"
+}'
+```
+
+**Federated subject:** `repo:dsanchor/option-income-lab:environment:production`
+Only the `deploy` job, which runs with `environment: production`, can authenticate. Azure AD performs an exact-match on this subject — a branch-ref subject (`ref:refs/heads/main`) would not match and would be rejected.
+
+#### 3. Assign the Least-Privilege RBAC Role
+
+```bash
+SP_OBJECT_ID=$(az ad sp list \
+  --filter "appId eq '$APP_ID'" \
+  --query "[0].id" -o tsv)
+
+az role assignment create \
+  --assignee-object-id "$SP_OBJECT_ID" \
+  --assignee-principal-type ServicePrincipal \
+  --role "Container Apps Contributor" \
+  --scope "/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/stock-options-manager-rg"
+```
+
+**Role:** `Container Apps Contributor` (not `Contributor`) — sufficient for `az containerapp update` and `az containerapp revision list`. This is the minimum required scope: resource-group level on `stock-options-manager-rg`.
+
+#### 4. Set the GitHub Secrets
+
+Secrets can be set at **repository scope** (accessible to all workflows) or scoped to the **`production` environment** (Settings → Environments → production → Environment secrets). Either scope works; environment secrets take precedence if both exist.
+
+```bash
+# Repository-level (recommended for simplicity)
+gh secret set AZURE_CLIENT_ID     --body "<APP_ID from step 1>"
+gh secret set AZURE_TENANT_ID     --body "<your-tenant-id>"
+gh secret set AZURE_SUBSCRIPTION_ID --body "<your-subscription-id>"
+
+# Alternatively, environment-scoped (Settings → Environments → production → Secrets)
+gh secret set AZURE_CLIENT_ID     --env production --body "<APP_ID from step 1>"
+gh secret set AZURE_TENANT_ID     --env production --body "<your-tenant-id>"
+gh secret set AZURE_SUBSCRIPTION_ID --env production --body "<your-subscription-id>"
+```
+
+### GHCR Pull Credentials Caveat
+
+The deploy workflow does **not** configure GHCR registry credentials on the Container Apps. It assumes both `ca-stock-options-manager-api` and `ca-stock-options-manager-front` were already created with a GHCR pull credential set (e.g., a GitHub PAT with `read:packages`).
+
+If a Container App is recreated or the GHCR credential expires, `az containerapp update` will succeed but the new revision will fail to pull the image. In that case, reconfigure the registry credential:
+
+```bash
+az containerapp registry set \
+  --name <APP_NAME> \
+  --resource-group stock-options-manager-rg \
+  --server ghcr.io \
+  --username <GITHUB_USERNAME> \
+  --password <GHCR_PAT>
+```
+
+Use a PAT with `read:packages` scope. After reconfiguring, re-run the workflow.
+
+---
+
 ## Azure Deployment
 
 ### Prerequisites

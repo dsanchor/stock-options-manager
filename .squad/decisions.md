@@ -12477,3 +12477,78 @@ Current custody of a security may differ from the broker where historical purcha
 
 ---
 
+
+## Azure Container Apps CI/CD via GitHub Actions
+
+**Date:** 2026-09-06
+**Author:** Danny (Lead)
+**Status:** APPROVED — merged to main
+**Target files:** `.github/workflows/docker-publish.yml`, `docs/deployment.md`
+
+### Summary
+
+Automated deployment of API and frontend Docker images to Azure Container Apps on push to `main`. Authentication uses passwordless OIDC via `azure/login@v2`. No long-lived credentials stored.
+
+### Key Decisions
+
+- **OIDC passwordless auth** via `azure/login@v2` — no client secrets required
+- **`Container Apps Contributor` role** — least-privilege, scoped to resource group only
+- **Federated credential subject:** `repo:dsanchor/option-income-lab:environment:production` (exact-match OIDC binding)
+- **Immutable `sha-<7char>` tags** — deterministic, never `latest` for deploys
+- **Sequential rollout:** API first with 5-min timeout, then frontend with same verification
+- **Concurrency** `cancel-in-progress: false` at deploy job level — queues (never skips) deployments
+- **Hardcoded resource names** — single environment; no GitHub Variables indirection needed
+
+### Workflow Structure
+
+| Job | Trigger | Behavior |
+|-----|---------|----------|
+| `build-and-push` | All pushes + `workflow_dispatch` | Builds & pushes API/frontend images to GHCR (unchanged) |
+| `deploy` | `main` push + `workflow_dispatch` on `main` | Deploys both apps; waits for both matrix legs to succeed |
+
+### Deployment Flow
+
+1. Compute `sha-<7char>` tag from git SHA
+2. Azure Login via OIDC (federated credential)
+3. Deploy API with new image tag
+4. Poll revision status for 5 min (30 × 10s attempts); fail if not Running
+5. Deploy frontend with new image tag
+6. Poll revision status for 5 min; fail if not Running
+7. Azure Logout (always)
+
+### Required Secrets (Repository or Environment Scope)
+
+- `AZURE_CLIENT_ID` — App registration client ID
+- `AZURE_TENANT_ID` — Microsoft Entra tenant ID
+- `AZURE_SUBSCRIPTION_ID` — Azure subscription ID
+
+### GitHub Environment
+
+- **Environment name:** `production` (must exist; create at Settings → Environments)
+- **Protection rules:** Optional (can restrict to main branch, required reviewers, deployment history)
+
+### Azure Setup (One-Time)
+
+1. Create app registration + service principal
+2. Add federated credential for `repo:dsanchor/option-income-lab:environment:production`
+3. Assign `Container Apps Contributor` role at resource-group scope (`stock-options-manager-rg`)
+4. Set GitHub secrets at repository or environment scope
+
+### Implementation Status
+
+- ✅ Workflow file validated (YAML parser clean)
+- ✅ All 21 contract requirements verified
+- ✅ Documentation updated (`docs/deployment.md` § "Automated CI/CD")
+- ✅ Approval: Danny APPROVE
+- ✅ Cloud setup: GitHub Environment + Azure OIDC + RBAC complete
+- ✅ Ready for production deployment
+
+### Lessons & Rationale
+
+- Job-level concurrency (not workflow-level) ensures builds on other branches are unaffected
+- `sort_by([],&properties.createdTime)[-1]` query is more robust than `[0]` for revision ordering
+- OIDC `id-token: write` belongs on deploy job only (build job keeps `contents: read, packages: write`)
+- `type=sha` in metadata-action uses 7-char short SHA; replicate with `head -c 7` (no action dependency)
+- Hardcoded resource names reduce indirection for single-environment deployments
+- 5-minute timeout (30 × 10s) is generous but bounded; fails visibly if exceeded
+

@@ -56,3 +56,91 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # OIDC token for azure/login
+      contents: read
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false   # queue; do not cancel running deploys
+
+    steps:
+      - name: Compute image tag
+        id: tag
+        run: echo "tag=sha-$(echo '${{ github.sha }}' | head -c 7)" >> "$GITHUB_OUTPUT"
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy API to Container Apps
+        run: |
+          az containerapp update \
+            --name ca-stock-options-manager-api \
+            --resource-group stock-options-manager-rg \
+            --image ghcr.io/dsanchor/option-income-lab-api:${{ steps.tag.outputs.tag }}
+
+      - name: Verify API revision is ready
+        run: |
+          for i in $(seq 1 30); do
+            PROV=$(az containerapp revision list \
+              --name ca-stock-options-manager-api \
+              --resource-group stock-options-manager-rg \
+              --query "sort_by([],&properties.createdTime)[-1].properties.runningState" \
+              -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $i/30 — latest revision running state: $PROV"
+            if [ "$PROV" = "Running" ]; then
+              echo "✅ API revision is running"
+              break
+            elif [ "$PROV" = "Failed" ]; then
+              echo "❌ API revision failed"
+              exit 1
+            fi
+            sleep 10
+          done
+          if [ "$PROV" != "Running" ]; then
+            echo "❌ API revision did not become ready within 5 minutes"
+            exit 1
+          fi
+
+      - name: Deploy Frontend to Container Apps
+        run: |
+          az containerapp update \
+            --name ca-stock-options-manager-front \
+            --resource-group stock-options-manager-rg \
+            --image ghcr.io/dsanchor/option-income-lab-front:${{ steps.tag.outputs.tag }}
+
+      - name: Verify Frontend revision is ready
+        run: |
+          for i in $(seq 1 30); do
+            PROV=$(az containerapp revision list \
+              --name ca-stock-options-manager-front \
+              --resource-group stock-options-manager-rg \
+              --query "sort_by([],&properties.createdTime)[-1].properties.runningState" \
+              -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $i/30 — latest revision running state: $PROV"
+            if [ "$PROV" = "Running" ]; then
+              echo "✅ Frontend revision is running"
+              break
+            elif [ "$PROV" = "Failed" ]; then
+              echo "❌ Frontend revision failed"
+              exit 1
+            fi
+            sleep 10
+          done
+          if [ "$PROV" != "Running" ]; then
+            echo "❌ Frontend revision did not become ready within 5 minutes"
+            exit 1
+          fi
+
+      - name: Azure Logout
+        if: always()
+        run: az logout
