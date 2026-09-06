@@ -22,6 +22,7 @@ from src.portfolio.import_service import (
     UnresolvedQuestionsError,
     AlreadyCommittedError,
 )
+from src.portfolio.provider_symbols import validate_provider_symbols
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,7 @@ async def list_securities(request: Request):
                     "listing_currency": d.get("listing_currency"),
                     "isin": d.get("isin"),
                     "status": d.get("status", "ACTIVE"),
+                    **({"provider_symbols": d["provider_symbols"]} if d.get("provider_symbols") else {}),
                 }
                 for d in docs
             ]
@@ -125,6 +127,15 @@ async def create_security(request: Request):
             f"Missing required fields: {', '.join(missing)}",
             400,
         )
+
+    # Validate and normalise provider_symbols if provided
+    raw_ps = body.get("provider_symbols")
+    if raw_ps is not None:
+        try:
+            cleaned_ps = validate_provider_symbols(raw_ps)
+        except ValueError as exc:
+            return _err("validation_error", str(exc), 400)
+        body["provider_symbols"] = cleaned_ps if cleaned_ps else None
 
     try:
         svc = _get_securities_svc(request)
@@ -303,6 +314,15 @@ async def inline_create_security(request: Request, session_id: str):
             f"Missing required fields: {', '.join(missing)}",
             400,
         )
+
+    # Validate and normalise provider_symbols if provided
+    raw_ps = body.get("provider_symbols")
+    if raw_ps is not None:
+        try:
+            cleaned_ps = validate_provider_symbols(raw_ps)
+        except ValueError as exc:
+            return _err("validation_error", str(exc), 400)
+        body["provider_symbols"] = cleaned_ps if cleaned_ps else None
 
     try:
         svc = _get_import_service(request)

@@ -1423,3 +1423,21 @@ Per strict lockout policy: author of rejected code cannot participate in revisio
 **Result:** 171 tests pass (11 new, 160 pre-existing). No regressions.
 
 **Learning:** `parse_spanish_date` is the single boundary for all CSV date input across all three parsers. It must be idempotent — calling it on an already-normalised ISO value must return the same ISO value. The existing test that expected `ValueError` for `"2024-06-15"` was a specification error that blocked real-world import files.
+
+---
+
+## 2026-09-06 — Provider-Specific Symbol Support (danny-provider-symbol-import-contract.md)
+
+**Contract:** `danny-provider-symbol-import-contract.md` — FROZEN, backend scope only.
+
+**Files changed:**
+- `backend/src/portfolio/provider_symbols.py` (**NEW**): `MIC_TO_YFINANCE_SUFFIX` (10 MICs), `suggest_yfinance_symbol()`, `validate_provider_symbols()` with key regex `[a-z][a-z0-9_]{0,29}` and value regex `[A-Za-z0-9._^-]{1,30}`.
+- `backend/src/portfolio/models.py`: Added `provider_symbols: Optional[Dict[str, str]] = None` to `SecurityMasterCreate` and `SecurityMasterDoc`.
+- `backend/src/portfolio/cosmos_securities.py`: `create_security()` persists `provider_symbols` when non-empty (same pattern as `isin`/`cusip`/`broker_ids`).
+- `backend/web/portfolio_routes.py`: Imported `validate_provider_symbols`; `POST /api/securities` and `POST /api/import/sessions/{sid}/securities` validate+normalise `provider_symbols` (400 on error, empty map → field absent); `GET /api/securities` list includes `provider_symbols` only when present.
+- `backend/tests/test_portfolio_endpoints.py`: Added `TestProviderSymbolsEndpoints` (PS-B1 through PS-B9, PS-B13, plus backward-compat and valid-value variants — 16 tests).
+- `backend/tests/test_provider_symbols.py` (**NEW**): 29 unit tests covering `suggest_yfinance_symbol` (PS-B10, PS-B11, PS-B12, all known MICs, case-insensitivity) and `validate_provider_symbols` (valid values incl. hyphen/dot/caret, invalid key, value-with-space, value-too-long, empty/whitespace, too-many-keys, non-dict).
+
+**Result:** 132 portfolio/provider_symbols tests pass (45 new). Pre-existing yfinance/screener failures are unrelated and unchanged. No commit.
+
+**Learning:** Bloomberg MIC codes use `:` (e.g. `ENG:SM`), which is NOT in the contract's value regex `[A-Za-z0-9._^-]`. Do not include colons in multi-provider test fixtures. The `validate_provider_symbols` approach of validating-then-setting `body["provider_symbols"] = None` when cleaned map is empty ensures the Cosmos layer sees `None` (not `{}`), so no empty map is ever stored.

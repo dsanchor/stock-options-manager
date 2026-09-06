@@ -34,6 +34,7 @@ export interface SecurityMaster {
   sedol?: string;
   aliases?: SecurityAlias[];
   broker_ids?: Record<string, string>;
+  provider_symbols?: Record<string, string>;   // e.g. { yfinance: "ENG.MC" }
   status: SecurityStatus;
   created_at?: string;
   updated_at?: string;
@@ -49,6 +50,7 @@ export interface CreateSecurityRequest {
   cusip?: string;
   sedol?: string;
   aliases?: SecurityAlias[];
+  provider_symbols?: Record<string, string>;   // e.g. { yfinance: "ENG.MC" }
 }
 
 export interface SecuritiesResponse {

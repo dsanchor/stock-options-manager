@@ -114,6 +114,7 @@ class SecurityMasterCreate(BaseModel):
     sedol: Optional[str] = None
     broker_ids: Optional[Dict[str, str]] = None
     aliases: Optional[List[SecurityAlias]] = None
+    provider_symbols: Optional[Dict[str, str]] = None
 
     @field_validator("ticker")
     @classmethod
@@ -136,6 +137,7 @@ class SecurityMasterDoc(BaseModel):
     listing_currency: str
     isin: Optional[str] = None
     status: str = "ACTIVE"
+    provider_symbols: Optional[Dict[str, str]] = None
 
 
 # ---------------------------------------------------------------------------

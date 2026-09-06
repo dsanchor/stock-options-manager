@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { createSecurity } from "@/lib/portfolio-api";
+import { suggestYfinanceSymbol } from "@/lib/provider-symbols";
 import type { CreateSecurityRequest, SecurityMaster } from "@/types/portfolio";
 
 interface Props {
@@ -23,9 +24,20 @@ export default function SecurityCreateForm({ onCreated, onCancel, prefillName }:
   const [isin, setIsin] = useState("");
   const [cusip, setCusip] = useState("");
   const [sedol, setSedol] = useState("");
+  // null = auto-suggest mode; string = user has taken ownership of the value
+  const [yfinanceOverride, setYfinanceOverride] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showOptional, setShowOptional] = useState(false);
+
+  // Derived: auto-suggested Yahoo Finance symbol from ticker+MIC; empty string for unknown MICs
+  const yfinanceSuggestion = useMemo(
+    () => suggestYfinanceSymbol(ticker, mic) ?? "",
+    [ticker, mic],
+  );
+
+  // Final displayed/submitted value: user override takes precedence, otherwise follow the suggestion
+  const yfinanceSymbol = yfinanceOverride ?? yfinanceSuggestion;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -42,6 +54,7 @@ export default function SecurityCreateForm({ onCreated, onCancel, prefillName }:
     if (isin.trim()) payload.isin = isin.trim().toUpperCase();
     if (cusip.trim()) payload.cusip = cusip.trim().toUpperCase();
     if (sedol.trim()) payload.sedol = sedol.trim().toUpperCase();
+    if (yfinanceSymbol.trim()) payload.provider_symbols = { yfinance: yfinanceSymbol.trim() };
 
     try {
       const created = await createSecurity(payload);
@@ -129,39 +142,57 @@ export default function SecurityCreateForm({ onCreated, onCancel, prefillName }:
         onClick={() => setShowOptional((v) => !v)}
         className="text-xs text-accent-blue hover:underline"
       >
-        {showOptional ? "▲ Hide identifiers" : "▶ Add ISIN / CUSIP / SEDOL (optional)"}
+        {showOptional ? "▲ Hide identifiers" : "▶ Add ISIN / CUSIP / SEDOL / Yahoo Finance symbol (optional)"}
       </button>
 
       {showOptional && (
-        <div className="grid grid-cols-3 gap-3">
+        <>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className={labelCls}>ISIN</label>
+              <input
+                value={isin}
+                onChange={(e) => setIsin(e.target.value)}
+                placeholder="US0378331005"
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className={labelCls}>CUSIP</label>
+              <input
+                value={cusip}
+                onChange={(e) => setCusip(e.target.value)}
+                placeholder="037833100"
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className={labelCls}>SEDOL</label>
+              <input
+                value={sedol}
+                onChange={(e) => setSedol(e.target.value)}
+                placeholder="2046251"
+                className={inputCls}
+              />
+            </div>
+          </div>
+
           <div>
-            <label className={labelCls}>ISIN</label>
+            <label className={labelCls}>Yahoo Finance symbol</label>
+            <p className="text-xs text-text-muted mb-1">
+              The Exchange MIC identifies the market; this symbol is Yahoo Finance&rsquo;s
+              provider-specific identifier (e.g.&nbsp;
+              <span className="font-mono">ENG.MC</span> for BME, <span className="font-mono">AAPL</span> for NYSE).
+              Auto-suggested from ticker&nbsp;+&nbsp;MIC; leave blank to omit.
+            </p>
             <input
-              value={isin}
-              onChange={(e) => setIsin(e.target.value)}
-              placeholder="US0378331005"
+              value={yfinanceSymbol}
+              onChange={(e) => setYfinanceOverride(e.target.value)}
+              placeholder="e.g. ENG.MC"
               className={inputCls}
             />
           </div>
-          <div>
-            <label className={labelCls}>CUSIP</label>
-            <input
-              value={cusip}
-              onChange={(e) => setCusip(e.target.value)}
-              placeholder="037833100"
-              className={inputCls}
-            />
-          </div>
-          <div>
-            <label className={labelCls}>SEDOL</label>
-            <input
-              value={sedol}
-              onChange={(e) => setSedol(e.target.value)}
-              placeholder="2046251"
-              className={inputCls}
-            />
-          </div>
-        </div>
+        </>
       )}
 
       <div className="flex gap-2 justify-end">

@@ -12275,3 +12275,205 @@ Result: Build succeeded (EIO cleanup on OneDrive path is pre-existing env artifa
 
 ---
 
+### 2. Provider-Specific Symbols for Security Creation During Import
+
+**Date:** 2026-09-06
+**Author:** Danny (Lead)
+**Status:** ✅ APPROVED (implementation frozen) — production-ready
+**Scope:** Security catalog schema + creation flows only; no yfinance consumer refactoring
+**Impact:** Enables portfolio import with exchange-specific symbol mappings; supports Yahoo Finance data fetches for non-US exchanges
+
+#### Problem
+
+The canonical `security_id` uses `MIC:TICKER` (e.g. `XMAD:ENG`), but yfinance requires exchange-specific suffixes (e.g. `ENG.MC`). Securities created during portfolio import have no provider symbol, so downstream data fetches fail for non-US exchanges.
+
+#### Solution: `provider_symbols` Schema
+
+**Optional `provider_symbols` map** added to `security_master` documents:
+```json
+{
+  "provider_symbols": {
+    "yfinance": "ENG.MC"
+  }
+}
+```
+
+**Suffix table (MIC → yfinance suffix):**
+| MIC | Suffix | Example |
+|-----|--------|---------|
+| XMAD | .MC | ENG.MC |
+| XAMS | .AS | SAN.AS |
+| XLON | .L | SAN.L |
+| XPAR | .PA | SAN.PA |
+| XETR | .DE | SAN.DE |
+| XNYS, XNAS | (empty) | SAN |
+
+#### Implementation Summary
+
+**Backend:**
+- New `backend/src/portfolio/provider_symbols.py`: suffix table, validation, suggestion helper
+- Pydantic models extended: `provider_symbols: Optional[Dict[str, str]]` on `SecurityMasterCreate` and `SecurityMasterDoc`
+- API validation (keys lowercase, values 1–30 chars `[A-Za-z0-9._^-]`)
+- No auto-population; user input stored as-is
+
+**Frontend:**
+- New `frontend/src/lib/provider-symbols.ts`: suffix table + `suggestYfinanceSymbol()` pure helper
+- `SecurityMaster` and `CreateSecurityRequest` types extended with `provider_symbols` field
+- `SecurityCreateForm` updated: yfinance symbol field with auto-suggest + user-edit guard
+
+**Backward compatibility:** Existing securities without `provider_symbols` continue working unchanged. No migration required.
+
+#### Test Coverage
+
+**Backend (13 tests):**
+- PS-B1 to PS-B5: POST/GET with/without `provider_symbols`
+- PS-B6 to PS-B9: validation (invalid key, space in value, max length, empty value)
+- PS-B10 to PS-B13: suggestion formula + inline create
+
+**Frontend (3 tests):**
+- PS-F1 to PS-F3: `suggestYfinanceSymbol()` helper
+- PS-F4 to PS-F6: form auto-suggest + user-edit guard
+
+#### File Inventory
+
+**New files:**
+- `backend/src/portfolio/provider_symbols.py`
+- `backend/tests/test_provider_symbols.py`
+- `frontend/src/lib/provider-symbols.ts`
+
+**Modified files:**
+- `backend/src/portfolio/models.py`, `cosmos_securities.py`, `web/portfolio_routes.py`
+- `backend/tests/test_portfolio_endpoints.py`
+- `frontend/src/types/portfolio.ts`, `components/SecurityCreateForm.tsx`
+
+#### Future
+
+- Consumer wiring: Separate contract will update `YFinanceDataProvider` to prefer `provider_symbols.yfinance` when available
+- Backfill: Deferred to Phase 2 (opt-in migration of existing securities)
+
+**Approval:** Danny (author) — Implementation frozen, awaiting deployment
+
+---
+
+### 3. Symbols Menu Reorganization & Navigation Consolidation
+
+**Date:** 2026-09-06
+**Author:** Copilot (User Directive)
+**Status:** ✅ APPROVED (production-ready) — implemented per user request
+**Scope:** Navigation structure, menu reorganization
+**Impact:** Unified Symbols hub; cleaner portfolio navigation; simplified bulk import workflow
+
+#### User Directives (Consolidated)
+
+**2026-09-06T09:11:23+02:00 directive:**
+Keep the Symbols top-level menu and move the Portfolio functions under it in order:
+1. Portfolio (renamed from "Holdings")
+2. Watchlist
+3. Movements
+4. Calendar
+5. Action Plans
+
+Remove Import from navigation; expose as "Bulk import" button beside Apply/Reset in Movements.
+
+#### Implementation Summary
+
+**Navigation structure changes:**
+- Symbols menu now contains: Portfolio, Watchlist, Movements, Calendar, Action Plans
+- "Holdings" page title renamed to "Portfolio"
+- Portfolio section remains at `/portfolio/*` routes (URL structure unchanged)
+- Import/Bulk Import button added to Movements table control bar
+
+**Files modified:**
+- `frontend/src/components/TopNav.tsx`: menu reorganization
+- `frontend/src/app/portfolio/holdings/page.tsx`: page title rename
+- `frontend/src/components/PortfolioMovementsTable.tsx`: Bulk import button added
+
+**Backward compatibility:** URLs and component state unchanged; navigation-only visual restructure.
+
+#### Rationale
+
+- **Single Symbols hub:** Watchlist, Portfolio, Calendar, Action Plans all data-driven by the symbols catalog
+- **Clearer hierarchy:** Portfolio functions logically grouped; not a separate top-level menu to avoid duplication
+- **Simplified import:** Bulk import as contextual action (in Movements) rather than top-level nav item
+
+---
+
+### 4. Portfolio Transfer Operations — Roadmap Entry (Design-Only)
+
+**Date:** 2026-09-06
+**Author:** Danny (Lead)
+**Status:** PLANNING ONLY — no production implementation
+**Scope:** Broker-to-broker custody transfer model; NOT in current implementation
+**Directive:** `.squad/decisions/inbox/copilot-directive-20260906T090638+0200.md`
+
+#### Problem Statement
+
+Current custody of a security may differ from the broker where historical purchase occurred. Without a transfer model, imported data from multiple brokers would produce negative inventory or unexplained positions — reconciliation deadlock.
+
+#### Chosen Model (Specification Only)
+
+**Paired atomic `TRANSFER_OUT` / `TRANSFER_IN` documents** linked by a shared `transfer_group_id`:
+- Each leg lives in its own `/account_id` partition (natural Cosmos layout)
+- `TRANSFER_OUT` subtracts from source; `TRANSFER_IN` adds to destination
+- Holdings derivation unchanged: identical replay logic to BUY/SELL
+- Atomicity via `transfer_group_id` idempotency protocol (application-level two-phase write)
+
+#### Key Design Decisions
+
+| Factor | Paired OUT/IN (chosen) | Alternative (parent doc) |
+|--------|------------------------|----|
+| **Partition alignment** | ✅ Each leg in its own partition | ❌ Breaks partition pattern |
+| **Holdings derivation** | ✅ Same BUY/SELL logic | ❌ Requires special-case branching |
+| **Per-account query** | ✅ No cross-partition joins | ❌ Other account must cross-partition query |
+
+#### Status in Roadmap
+
+**Currently:** Design specification only. Transfer operations not implemented. Portfolio import works for single-broker scenarios. When a user owns the same security at multiple brokers, manual entry of transfers is a workaround.
+
+**Phase 3+ feature:** Formal implementation dependent on multi-broker portfolio reconciliation and user requirements for transfer fee tracking.
+
+**What this does NOT do:** No production code for transfers, void workflows, or import parsers for transfer detection. No UI forms for transfer entry. No impact on current Holdings/Movements/Dividends.
+
+---
+
+## Implementation History (2026-09-06)
+
+### Livingston — Backend (Provider Symbols)
+
+**Files changed:**
+- `backend/src/portfolio/provider_symbols.py` — NEW: MIC_TO_YFINANCE_SUFFIX map, validate_provider_symbols(), suggest_yfinance_symbol()
+- `backend/src/portfolio/models.py` — Added `provider_symbols` to SecurityMasterCreate and SecurityMasterDoc
+- `backend/src/portfolio/cosmos_securities.py` — Persist provider_symbols in create_security()
+- `backend/web/portfolio_routes.py` — Validate + include in GET/POST responses
+- `backend/tests/test_provider_symbols.py` — NEW: 13 tests (PS-B1 to PS-B13)
+- `backend/tests/test_portfolio_endpoints.py` — Added provider_symbols test cases
+
+**Test results:** 216 backend tests PASS; no regressions
+
+### Rusty — Frontend (Provider Symbols + Navigation)
+
+**Files changed:**
+- `frontend/src/lib/provider-symbols.ts` — NEW: MIC_TO_YFINANCE_SUFFIX map + suggestYfinanceSymbol()
+- `frontend/src/types/portfolio.ts` — Added `provider_symbols?: Record<string, string>` to SecurityMaster and CreateSecurityRequest
+- `frontend/src/components/SecurityCreateForm.tsx` — Yfinance symbol field with auto-suggest + userEdited guard
+- `frontend/src/components/TopNav.tsx` — Menu reorganization (Symbols hub with Portfolio, Watchlist, Movements, Calendar, Action Plans)
+- `frontend/src/app/portfolio/holdings/page.tsx` — Page title rename (Holdings → Portfolio)
+- `frontend/src/components/PortfolioMovementsTable.tsx` — Bulk import button added to control bar
+
+**Validation:** TypeScript clean (tsc --noEmit: exit 0); eslint all changed files clean
+
+### Basher — Final Validation
+
+**Backend:**
+- 216 tests PASS (160 portfolio + 56 existing)
+- No regressions
+
+**Frontend:**
+- TypeScript: clean
+- ESLint: all changed files clean
+- Eslint output: clean on SecurityCreateForm.tsx, TopNav.tsx, PortfolioMovementsTable.tsx, holdings/page.tsx
+
+**Status:** ✅ PRODUCTION READY — Ready for merge and deploy
+
+---
+

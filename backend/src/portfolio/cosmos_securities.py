@@ -128,6 +128,9 @@ class CosmosSecuritiesService:
             if data.get(optional_field) is not None:
                 doc[optional_field] = data[optional_field]
 
+        if data.get("provider_symbols"):
+            doc["provider_symbols"] = data["provider_symbols"]
+
         created = self.container.create_item(doc)
         return _clean(created)
 

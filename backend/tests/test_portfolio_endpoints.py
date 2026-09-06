@@ -633,3 +633,231 @@ class TestF5PreviewDividendQuantityNull:
         m = movements[0]
         assert m["txn_type"] == "DIVIDEND"
         assert m["quantity"] is None, f"Expected null/None, got {m['quantity']!r}"
+
+
+# ---------------------------------------------------------------------------
+# PS-B1 through PS-B9, PS-B13 — provider_symbols contract tests
+# ---------------------------------------------------------------------------
+
+class TestProviderSymbolsEndpoints:
+    """Backend acceptance tests for PS-B1 … PS-B9 and PS-B13."""
+
+    def test_ps_b1_create_with_provider_symbols_201(self, client):
+        """PS-B1: POST /api/securities with provider_symbols → 201 + round-trip."""
+        c, _ = client
+        resp = c.post("/api/securities", json={
+            "ticker": "ENG",
+            "company_name": "Enagás S.A.",
+            "exchange_mic": "XMAD",
+            "listing_currency": "EUR",
+            "provider_symbols": {"yfinance": "ENG.MC"},
+        })
+        assert resp.status_code == 201
+        doc = resp.json()
+        assert doc["security_id"] == "XMAD:ENG"
+        assert "provider_symbols" in doc
+        assert doc["provider_symbols"] == {"yfinance": "ENG.MC"}
+
+    def test_ps_b2_create_without_provider_symbols_201(self, client):
+        """PS-B2: POST /api/securities without provider_symbols → 201 + field absent."""
+        c, _ = client
+        resp = c.post("/api/securities", json={
+            "ticker": "IBM",
+            "company_name": "International Business Machines",
+            "exchange_mic": "XNYS",
+        })
+        assert resp.status_code == 201
+        doc = resp.json()
+        assert "provider_symbols" not in doc
+
+    def test_ps_b3_get_security_with_provider_symbols(self, client):
+        """PS-B3: GET /api/securities/{id} for doc with provider_symbols includes the map."""
+        c, _ = client
+        c.post("/api/securities", json={
+            "ticker": "SAN",
+            "company_name": "Banco Santander S.A.",
+            "exchange_mic": "XMAD",
+            "listing_currency": "EUR",
+            "provider_symbols": {"yfinance": "SAN.MC"},
+        })
+        resp = c.get("/api/securities/XMAD:SAN")
+        assert resp.status_code == 200
+        doc = resp.json()
+        assert "provider_symbols" in doc
+        assert doc["provider_symbols"] == {"yfinance": "SAN.MC"}
+
+    def test_ps_b4_get_security_without_provider_symbols(self, client):
+        """PS-B4: GET /api/securities/{id} for doc without provider_symbols → field absent (not null)."""
+        c, _ = client
+        c.post("/api/securities", json={
+            "ticker": "GOOGL",
+            "company_name": "Alphabet Inc.",
+            "exchange_mic": "XNAS",
+        })
+        resp = c.get("/api/securities/XNAS:GOOGL")
+        assert resp.status_code == 200
+        doc = resp.json()
+        assert "provider_symbols" not in doc
+
+    def test_ps_b5_list_includes_provider_symbols(self, client):
+        """PS-B5: GET /api/securities list includes provider_symbols when present."""
+        c, _ = client
+        c.post("/api/securities", json={
+            "ticker": "BBVA",
+            "company_name": "BBVA S.A.",
+            "exchange_mic": "XMAD",
+            "listing_currency": "EUR",
+            "provider_symbols": {"yfinance": "BBVA.MC"},
+        })
+        resp = c.get("/api/securities")
+        assert resp.status_code == 200
+        securities = resp.json()["securities"]
+        bbva = next((s for s in securities if s["security_id"] == "XMAD:BBVA"), None)
+        assert bbva is not None
+        assert "provider_symbols" in bbva
+        assert bbva["provider_symbols"] == {"yfinance": "BBVA.MC"}
+
+    def test_ps_b6_invalid_key_400(self, client):
+        """PS-B6: provider_symbols with invalid key (Yahoo!) → 400."""
+        c, _ = client
+        resp = c.post("/api/securities", json={
+            "ticker": "TST",
+            "company_name": "Test Corp.",
+            "exchange_mic": "XNYS",
+            "provider_symbols": {"Yahoo!": "TST"},
+        })
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "validation_error"
+
+    def test_ps_b7_invalid_value_with_space_400(self, client):
+        """PS-B7: provider_symbols value with space → 400."""
+        c, _ = client
+        resp = c.post("/api/securities", json={
+            "ticker": "TST",
+            "company_name": "Test Corp.",
+            "exchange_mic": "XNYS",
+            "provider_symbols": {"yfinance": "ENG MC"},
+        })
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "validation_error"
+
+    def test_ps_b8_value_too_long_400(self, client):
+        """PS-B8: provider_symbols value > 30 chars → 400."""
+        c, _ = client
+        resp = c.post("/api/securities", json={
+            "ticker": "TST",
+            "company_name": "Test Corp.",
+            "exchange_mic": "XNYS",
+            "provider_symbols": {"yfinance": "A" * 31},
+        })
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "validation_error"
+
+    def test_ps_b9_empty_value_key_dropped(self, client):
+        """PS-B9: provider_symbols with empty value → key not stored."""
+        c, _ = client
+        resp = c.post("/api/securities", json={
+            "ticker": "AMZN",
+            "company_name": "Amazon.com Inc.",
+            "exchange_mic": "XNAS",
+            "provider_symbols": {"yfinance": ""},
+        })
+        assert resp.status_code == 201
+        doc = resp.json()
+        # Empty value → provider_symbols cleaned to {} → not stored
+        assert "provider_symbols" not in doc
+
+    def test_ps_b9_whitespace_value_dropped(self, client):
+        """PS-B9 variant: whitespace-only value is treated as empty → not stored."""
+        c, _ = client
+        resp = c.post("/api/securities", json={
+            "ticker": "META",
+            "company_name": "Meta Platforms Inc.",
+            "exchange_mic": "XNAS",
+            "provider_symbols": {"yfinance": "   "},
+        })
+        assert resp.status_code == 201
+        doc = resp.json()
+        assert "provider_symbols" not in doc
+
+    def test_valid_hyphen_in_value(self, client):
+        """yfinance class-B share symbol BRK-B passes validation."""
+        c, _ = client
+        resp = c.post("/api/securities", json={
+            "ticker": "BRK-B",
+            "company_name": "Berkshire Hathaway Inc.",
+            "exchange_mic": "XNYS",
+            "provider_symbols": {"yfinance": "BRK-B"},
+        })
+        assert resp.status_code == 201
+        assert resp.json()["provider_symbols"] == {"yfinance": "BRK-B"}
+
+    def test_valid_dot_suffix_in_value(self, client):
+        """yfinance '.MC' suffix passes validation."""
+        c, _ = client
+        resp = c.post("/api/securities", json={
+            "ticker": "REP",
+            "company_name": "Repsol S.A.",
+            "exchange_mic": "XMAD",
+            "listing_currency": "EUR",
+            "provider_symbols": {"yfinance": "REP.MC"},
+        })
+        assert resp.status_code == 201
+        assert resp.json()["provider_symbols"] == {"yfinance": "REP.MC"}
+
+    def test_ps_b13_inline_create_with_provider_symbols(self, client):
+        """PS-B13: inline create via import session persists provider_symbols."""
+        c, _ = client
+        # Create a session that has an entity question
+        create_resp = c.post(
+            "/api/import/sessions",
+            files={"file": ("test.csv", io.BytesIO(_PURCHASES_CSV), "text/csv")},
+            data={"format_hint": "purchases"},
+        )
+        assert create_resp.status_code == 201
+        session = create_resp.json()
+        session_id = session["session_id"]
+
+        # Find the entity question
+        q = next((q for q in session["questions"] if q["scope"] == "ENTITY"), None)
+        assert q is not None, "Expected at least one ENTITY question"
+
+        # Inline-create a new security with provider_symbols
+        resp = c.post(f"/api/import/sessions/{session_id}/securities", json={
+            "question_id": q["question_id"],
+            "ticker": "AAPL",
+            "company_name": "Apple Inc.",
+            "exchange_mic": "XNYS",
+            "provider_symbols": {"yfinance": "AAPL"},
+        })
+        assert resp.status_code == 200
+
+        # Verify the security was created with provider_symbols
+        sec_resp = c.get("/api/securities/XNYS:AAPL")
+        assert sec_resp.status_code == 200
+        sec_doc = sec_resp.json()
+        assert "provider_symbols" in sec_doc
+        assert sec_doc["provider_symbols"] == {"yfinance": "AAPL"}
+
+    def test_backward_compatible_absent_field(self, client):
+        """Backward compatibility: security without provider_symbols works unchanged."""
+        c, _ = client
+        # Create without provider_symbols
+        resp = c.post("/api/securities", json={
+            "ticker": "TSLA",
+            "company_name": "Tesla Inc.",
+            "exchange_mic": "XNAS",
+        })
+        assert resp.status_code == 201
+        # GET list → no provider_symbols key
+        list_resp = c.get("/api/securities")
+        tsla = next(
+            (s for s in list_resp.json()["securities"] if s["security_id"] == "XNAS:TSLA"),
+            None,
+        )
+        assert tsla is not None
+        assert "provider_symbols" not in tsla
+        # GET by ID → no provider_symbols key
+        get_resp = c.get("/api/securities/XNAS:TSLA")
+        assert get_resp.status_code == 200
+        assert "provider_symbols" not in get_resp.json()

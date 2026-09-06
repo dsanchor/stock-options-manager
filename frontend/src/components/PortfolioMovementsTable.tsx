@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import Link from "next/link";
+import { FileUp } from "lucide-react";
 import { getMovements, deleteMovement } from "@/lib/portfolio-api";
 import type { MovementsResponse, LedgerMovement, TxnType, WarningType } from "@/types/portfolio";
 import type { MovementsFilter } from "@/lib/portfolio-api";
@@ -149,6 +150,13 @@ export default function PortfolioMovementsTable() {
         >
           Reset
         </button>
+        <Link
+          href="/portfolio/import"
+          className="ml-auto inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-border px-3 py-1.5 text-sm text-text-muted hover:bg-bg-hover"
+        >
+          <FileUp size={14} className="shrink-0" />
+          Bulk import
+        </Link>
       </div>
 
       {deleteError && (
