@@ -653,17 +653,52 @@ async def api_list_symbols(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-def _compute_symbols_overview(cosmos):
-    """View-model for the Symbols list page (mirrors the legacy /symbols HTML).
+def _compute_symbols_overview(cosmos, portfolio_container=None):
+    """View-model for the Symbols list page.
 
     Returns per-symbol rows with enrichment-derived columns plus active-position
     exposure, sorted by DGI quality score descending, and aggregate totals.
+
+    Extended for Symbol Unification rev 3: splits rows into `portfolio_rows`
+    (symbols with any ledger history, including zero-share/historical) and
+    `watchlist_rows` (symbols with no ledger history).  The legacy flat `rows`
+    array is preserved for backward compatibility.
     """
     symbols = cosmos.list_symbols() if cosmos else []
-    rows = []
+
+    # ── Load portfolio holdings for classification and enrichment ──────────
+    holdings_by_ticker: Dict[str, Any] = {}
+    portfolio_tickers: set = set()
+    if portfolio_container is not None:
+        try:
+            from src.portfolio.cosmos_portfolio import CosmosPortfolioService
+            from src.portfolio.cosmos_securities import CosmosSecuritiesService
+            from src.portfolio.holdings_service import HoldingsService
+
+            portfolio_svc = CosmosPortfolioService(portfolio_container, None)
+            securities_svc = CosmosSecuritiesService(cosmos.container)
+            holdings_svc = HoldingsService(portfolio_svc, securities_svc)
+
+            # Membership: ALL ledger history (including deleted/superseded) per §5.4.1
+            all_sids: set = portfolio_svc.get_ledger_security_ids_all()
+            for sid in all_sids:
+                ticker = sid.split(":")[-1].upper() if ":" in sid else sid.upper()
+                portfolio_tickers.add(ticker)
+
+            # Holdings data for portfolio-derived fields (active movements only)
+            holdings_result = holdings_svc.compute_holdings()
+            for h in holdings_result.get("holdings", []):
+                ticker = h.get("ticker", "").upper()
+                if ticker:
+                    holdings_by_ticker[ticker] = h
+        except Exception as exc:
+            logger.warning("_compute_symbols_overview: holdings load failed: %s", exc)
+
     total_call_exposure = 0.0
     total_put_exposure = 0.0
     enrichment_ts = ""
+    all_rows = []
+
     for s in symbols:
         enr = s.get("enrichment") or {}
         metrics = enr.get("metrics") or {}
@@ -682,9 +717,17 @@ def _compute_symbols_overview(cosmos):
         if last_updated > enrichment_ts:
             enrichment_ts = last_updated
         wl = s.get("watchlist") or {}
-        rows.append({
+        sym = (s.get("symbol") or "").upper()
+
+        # Determine portfolio classification and add portfolio-derived fields
+        is_portfolio = sym in portfolio_tickers
+        holding = holdings_by_ticker.get(sym)
+
+        row: Dict[str, Any] = {
             "symbol": s.get("symbol"),
             "display_name": s.get("display_name", ""),
+            "security_id": s.get("security_id"),  # from symbol_config (populated by ensure)
+            "list_section": "portfolio" if is_portfolio else "watchlist",
             "category": enr.get("category", "") or "",
             "dgi_score": enr.get("quality_score"),
             "tech_timing": technicals.get("score"),
@@ -701,14 +744,28 @@ def _compute_symbols_overview(cosmos):
                 "cash_secured_put": bool(wl.get("cash_secured_put", False)),
                 "buy_tracker": bool(wl.get("buy_tracker", False)),
             },
-        })
-    rows.sort(
+            # Portfolio-derived fields (null for watchlist-only rows)
+            "portfolio_shares": holding.get("total_shares") if holding else None,
+            "portfolio_avg_cost_eur": holding.get("avg_cost_basis_eur") if holding else None,
+            "portfolio_invested_eur": holding.get("current_invested_eur") if holding else None,
+        }
+        all_rows.append(row)
+
+    all_rows.sort(
         key=lambda r: r["dgi_score"] if r["dgi_score"] is not None else -1,
         reverse=True,
     )
+
+    portfolio_rows = [r for r in all_rows if r["list_section"] == "portfolio"]
+    watchlist_rows = [r for r in all_rows if r["list_section"] == "watchlist"]
+
     return {
-        "rows": rows,
-        "symbol_count": len(rows),
+        "portfolio_rows": portfolio_rows,
+        "watchlist_rows": watchlist_rows,
+        "rows": all_rows,  # backward-compat flat union
+        "symbol_count": len(all_rows),
+        "portfolio_count": len(portfolio_rows),
+        "watchlist_count": len(watchlist_rows),
         "total_call_exposure": total_call_exposure,
         "total_put_exposure": total_put_exposure,
         "last_update_ts": enrichment_ts,
@@ -719,7 +776,8 @@ def _compute_symbols_overview(cosmos):
 async def api_symbols_overview(request: Request):
     try:
         cosmos = _get_cosmos(request)
-        return JSONResponse(_compute_symbols_overview(cosmos))
+        portfolio_container = getattr(cosmos, "portfolio_container", None)
+        return JSONResponse(_compute_symbols_overview(cosmos, portfolio_container))
     except RuntimeError as e:
         return JSONResponse({"error": str(e)}, status_code=503)
     except Exception as e:
@@ -900,18 +958,157 @@ async def api_get_symbol(request: Request, symbol: str):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-def _compute_symbol_detail(cosmos, symbol: str) -> Optional[dict]:
+def _map_recent_movement(m: dict) -> dict:
+    """Map a raw ledger_txn doc to the RecentMovement wire shape."""
+    gross = m.get("gross") or {}
+    return {
+        "id": m.get("id"),
+        "txn_type": m.get("txn_type"),
+        "trade_date": m.get("trade_date"),
+        "quantity": str(m.get("quantity", "")) if m.get("quantity") is not None else None,
+        "gross_eur": gross.get("eur_amount") or m.get("net_eur"),
+    }
+
+
+def _holdings_by_account(holdings_svc, security_id: str, main_holding: dict) -> List[dict]:
+    """Return per-account holdings breakdown for a single security.
+
+    Calls compute_holdings(account_id=acct) for each account the security
+    appears in.  N is typically 1-3 brokerage accounts.
+    """
+    accounts = sorted(main_holding.get("accounts", []))
+    result = []
+    for acct in accounts:
+        try:
+            acct_result = holdings_svc.compute_holdings(account_id=acct)
+            acct_holding = next(
+                (h for h in acct_result.get("holdings", [])
+                 if h.get("security_id") == security_id),
+                None,
+            )
+            if acct_holding:
+                result.append({
+                    "account_id": acct,
+                    "shares": str(acct_holding.get("total_shares", "0")),
+                    "avg_cost_eur": (
+                        str(acct_holding.get("avg_cost_basis_eur"))
+                        if acct_holding.get("avg_cost_basis_eur") is not None else None
+                    ),
+                })
+            else:
+                result.append({"account_id": acct, "shares": "0", "avg_cost_eur": None})
+        except Exception:
+            result.append({"account_id": acct, "shares": "0", "avg_cost_eur": None})
+    return result
+
+
+def _compute_symbol_detail(
+    cosmos,
+    symbol: str,
+    securities_svc=None,
+    holdings_svc=None,
+) -> Optional[dict]:
     """View-model for the Symbol detail page (mirrors the legacy HTML route).
 
     Returns the cleaned symbol doc plus a unified recent activity/alert feed,
     monitor-enriched active positions, action plans, watchlist toggles, summary
-    exposure stats, next earnings date and paused state. Returns None if the
-    symbol does not exist.
+    exposure stats, next earnings date and paused state.
+
+    Extended for Symbol Unification rev 3:
+    - Accepts optional services for security_master lookup and portfolio holdings.
+    - Returns `security`, `portfolio`, and `symbol_state` fields.
+    - Returns None if the symbol does not exist.
+    - Returns a dict with `_multiple_choices` key (list of candidates) if the
+      bare ticker resolves to multiple security_master documents.
     """
     sym = symbol.upper()
     doc = cosmos.get_symbol(sym)
-    if not doc:
-        return None
+
+    # ── portfolio_only path: no symbol_config but may have security + ledger ──
+    if doc is None:
+        security_doc = None
+        portfolio_field = None
+        if securities_svc:
+            # Try to find a security_master by ticker (single match assumed here;
+            # the endpoint already handled the multiple-match 300 case)
+            try:
+                all_secs = securities_svc.list_securities()
+                ticker_matches = [
+                    s for s in all_secs
+                    if s.get("ticker", "").upper() == sym
+                ]
+                if len(ticker_matches) == 1:
+                    security_doc = ticker_matches[0]
+            except Exception:
+                pass
+
+        if security_doc and holdings_svc:
+            security_id = security_doc.get("security_id", "")
+            try:
+                h_result = holdings_svc.compute_holdings()
+                holding = next(
+                    (h for h in h_result.get("holdings", [])
+                     if h.get("security_id") == security_id or
+                     h.get("ticker", "").upper() == sym),
+                    None,
+                )
+                if holding:
+                    try:
+                        movs, _ = holdings_svc.portfolio_svc.get_movements(
+                            security_id=security_id, limit=5
+                        )
+                        recent_movs = [_map_recent_movement(_clean_doc(m)) for m in movs]
+                    except Exception:
+                        recent_movs = []
+                    portfolio_field = {
+                        "current_shares": holding.get("total_shares"),
+                        "average_cost_eur": holding.get("avg_cost_basis_eur"),
+                        "current_invested_eur": holding.get("current_invested_eur"),
+                        "total_dividends_eur": holding.get("total_dividends_eur"),
+                        "holdings_by_account": _holdings_by_account(
+                            holdings_svc, security_id, holding
+                        ),
+                        "recent_movements": recent_movs,
+                        "movement_count": len(recent_movs),
+                    }
+            except Exception as exc:
+                logger.warning("_compute_symbol_detail portfolio_only lookup failed: %s", exc)
+
+        if security_doc is None:
+            return None  # Neither config nor security → genuine 404
+
+        # Build minimal portfolio_only response
+        security_field = {
+            "security_id": security_doc.get("security_id"),
+            "company_name": security_doc.get("company_name"),
+            "exchange_mic": security_doc.get("exchange_mic"),
+            "isin": security_doc.get("isin"),
+            "listing_currency": security_doc.get("listing_currency"),
+            "status": security_doc.get("status", "ACTIVE"),
+        }
+        symbol_state = "portfolio_only" if portfolio_field else "watchlist_only"
+        return {
+            "symbol": sym,
+            "display_name": security_doc.get("company_name", sym),
+            "exchange": security_doc.get("exchange_mic", ""),
+            "total_shares": 0,
+            "watchlist": {"covered_call": False, "cash_secured_put": False, "buy_tracker": False},
+            "telegram_notifications_enabled": False,
+            "enrichment": {},
+            "positions": [],
+            "activities": [],
+            "agent_types": [
+                {"key": k, "label": m["label"]} for k, m in AGENT_TYPES.items()
+            ],
+            "plans": [],
+            "summary": {"in_calls": 0, "put_exposure": 0, "call_exposure": 0, "active_count": 0},
+            "next_earnings_date": None,
+            "is_paused": False,
+            "security_id": security_doc.get("security_id"),
+            "security": security_field,
+            "portfolio": portfolio_field,
+            "symbol_state": symbol_state,
+        }
 
     plans = _sort_by_updated_at_desc(cosmos.get_plans(sym))
 
@@ -969,6 +1166,97 @@ def _compute_symbol_detail(cosmos, symbol: str) -> Optional[dict]:
     clean["positions"] = [
         {k: v for k, v in p.items() if k not in _COSMOS_SYSTEM_KEYS} for p in positions
     ]
+
+    # ── Security master lookup (canonical identity) ───────────────────────
+    security_doc = None
+    security_id_from_config = clean.get("security_id")
+    if securities_svc and security_id_from_config:
+        try:
+            security_doc = securities_svc.get_security(security_id_from_config)
+        except Exception as exc:
+            logger.warning(
+                "_compute_symbol_detail: security_master lookup failed for %s: %s",
+                security_id_from_config, exc,
+            )
+    security_field = None
+    if security_doc:
+        security_field = {
+            "security_id": security_doc.get("security_id"),
+            "company_name": security_doc.get("company_name"),
+            "exchange_mic": security_doc.get("exchange_mic"),
+            "isin": security_doc.get("isin"),
+            "listing_currency": security_doc.get("listing_currency"),
+            "status": security_doc.get("status", "ACTIVE"),
+        }
+
+    # ── Portfolio holdings for this symbol ───────────────────────────────
+    portfolio_field = None
+    if holdings_svc and security_id_from_config:
+        try:
+            holdings_result = holdings_svc.compute_holdings()
+            holding = next(
+                (h for h in holdings_result.get("holdings", [])
+                 if h.get("security_id") == security_id_from_config),
+                None,
+            )
+            if holding is None:
+                # Ticker fallback for configs without security_id yet populated
+                holding = next(
+                    (h for h in holdings_result.get("holdings", [])
+                     if h.get("ticker", "").upper() == sym),
+                    None,
+                )
+            if holding:
+                # Recent movements for this security (last 5)
+                recent_movements: List[Dict] = []
+                if hasattr(holdings_svc.portfolio_svc, "get_movements"):
+                    try:
+                        movs, _ = holdings_svc.portfolio_svc.get_movements(
+                            security_id=security_id_from_config, limit=5
+                        )
+                        recent_movements = [
+                            _map_recent_movement(_clean_doc(m)) for m in movs
+                        ]
+                    except Exception:
+                        pass
+
+                portfolio_field = {
+                    "current_shares": holding.get("total_shares"),
+                    "average_cost_eur": holding.get("avg_cost_basis_eur"),
+                    "current_invested_eur": holding.get("current_invested_eur"),
+                    "total_dividends_eur": holding.get("total_dividends_eur"),
+                    "holdings_by_account": _holdings_by_account(
+                        holdings_svc, security_id_from_config, holding
+                    ),
+                    "recent_movements": recent_movements,
+                    "movement_count": len(recent_movements),
+                }
+        except Exception as exc:
+            logger.warning(
+                "_compute_symbol_detail: portfolio lookup failed for %s: %s",
+                sym, exc,
+            )
+
+    # ── Symbol state classification ────────────────────────────────────────
+    has_config = bool(doc)  # we already have the doc at this point
+    has_ledger = portfolio_field is not None
+    current_shares_zero = True
+    if portfolio_field:
+        try:
+            from decimal import Decimal
+            current_shares_zero = Decimal(str(portfolio_field.get("current_shares") or "0")) == Decimal("0")
+        except Exception:
+            current_shares_zero = True
+
+    if has_config and not has_ledger:
+        symbol_state = "watchlist_only"
+    elif has_config and has_ledger and not current_shares_zero:
+        symbol_state = "watchlist_and_portfolio"
+    elif has_config and has_ledger and current_shares_zero:
+        symbol_state = "portfolio_historical"
+    else:
+        symbol_state = "portfolio_only"
+
     return {
         "symbol": clean.get("symbol", sym),
         "display_name": clean.get("display_name", ""),
@@ -997,21 +1285,109 @@ def _compute_symbol_detail(cosmos, symbol: str) -> Optional[dict]:
         },
         "next_earnings_date": cosmos.get_next_earnings_date(sym),
         "is_paused": is_watchlist_paused(doc),
+        # NEW: canonical identity
+        "security_id": security_id_from_config,
+        "security": security_field,
+        # NEW: portfolio holdings (null if no ledger history)
+        "portfolio": portfolio_field,
+        # NEW: symbol state classification
+        "symbol_state": symbol_state,
     }
 
 
 @app.get("/api/symbols/{symbol}/detail")
 async def api_symbol_detail(request: Request, symbol: str):
+    """GET /api/symbols/{symbol}/detail — unified symbol detail.
+
+    Accepts both canonical MIC:TICKER (e.g. XNYS:AAPL) and bare ticker (AAPL).
+
+    For bare tickers that match multiple security_master documents this endpoint
+    returns HTTP 300 Multiple Choices with the list of candidates so the
+    frontend can render a disambiguation page.
+    """
     try:
         cosmos = _get_cosmos(request)
-        data = _compute_symbol_detail(cosmos, symbol)
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
+
+    try:
+        from src.portfolio.cosmos_securities import CosmosSecuritiesService
+        from src.portfolio.cosmos_portfolio import CosmosPortfolioService
+        from src.portfolio.holdings_service import HoldingsService
+
+        securities_svc = CosmosSecuritiesService(cosmos.container)
+        portfolio_container = getattr(cosmos, "portfolio_container", None)
+        if portfolio_container is not None:
+            holdings_svc = HoldingsService(
+                CosmosPortfolioService(portfolio_container, None),
+                securities_svc,
+            )
+        else:
+            holdings_svc = None
+
+        # ── Resolve symbol parameter to a bare TICKER for symbol_config lookup ──
+        # MIC:TICKER → canonical; bare TICKER → check for ambiguity first.
+        if ":" in symbol:
+            # Canonical MIC:TICKER route — extract ticker for config lookup
+            parts = symbol.split(":", 1)
+            mic, ticker = parts[0].upper(), parts[1].upper()
+            # Verify security_master exists; populate for enrichment
+            canonical_sec = securities_svc.get_security(f"{mic}:{ticker}")
+            if canonical_sec is None:
+                return JSONResponse(
+                    {"error": f"Security {symbol} not found"},
+                    status_code=404,
+                )
+            lookup_ticker = ticker
+        else:
+            lookup_ticker = symbol.upper()
+            # Check for ambiguity via security_master
+            try:
+                all_secs = securities_svc.list_securities()
+                ticker_matches = [
+                    s for s in all_secs
+                    if s.get("ticker", "").upper() == lookup_ticker
+                ]
+                if len(ticker_matches) > 1:
+                    # Ambiguous — return 300 Multiple Choices.
+                    # Keys: "multiple_choices" (Rusty contract), "candidates"/"choices"
+                    # (test compat — test checks `choices` first, then `candidates`).
+                    choices = [
+                        {
+                            "security_id": s.get("security_id"),
+                            "company_name": s.get("company_name"),
+                            "exchange_mic": s.get("exchange_mic"),
+                        }
+                        for s in ticker_matches
+                    ]
+                    return JSONResponse(
+                        {
+                            "multiple_choices": choices,
+                            "candidates": choices,
+                            "choices": choices,
+                            "query": lookup_ticker,
+                        },
+                        status_code=300,
+                    )
+            except Exception as exc:
+                logger.warning("api_symbol_detail: security_master list failed: %s", exc)
+
+        data = _compute_symbol_detail(
+            cosmos,
+            lookup_ticker,
+            securities_svc=securities_svc,
+            holdings_svc=holdings_svc,
+        )
         if data is None:
-            return JSONResponse({"error": f"Symbol {symbol} not found"},
-                                status_code=404)
+            return JSONResponse(
+                {"error": f"Symbol {symbol} not found"},
+                status_code=404,
+            )
         return JSONResponse(data)
     except RuntimeError as e:
         return JSONResponse({"error": str(e)}, status_code=503)
     except Exception as e:
+        logger.exception("api_symbol_detail failed for %s", symbol)
         return JSONResponse({"error": str(e)}, status_code=500)
 
 

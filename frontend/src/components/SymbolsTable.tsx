@@ -12,10 +12,22 @@ import {
   type SymbolSuitabilityFilter,
 } from "@/lib/symbolSuitability";
 import SymbolInfoModal from "@/components/SymbolInfoModal";
-import type { SymbolRow } from "@/types/symbols";
+import type { SymbolRow, SymbolListSection } from "@/types/symbols";
 
 function num(n: number | null | undefined, digits = 1): string {
   return typeof n === "number" && isFinite(n) ? n.toFixed(digits) : "—";
+}
+function eur(v: string | null | undefined): string {
+  if (!v) return "—";
+  const n = parseFloat(v);
+  if (!isFinite(n)) return "—";
+  return new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(n);
+}
+function portfolioShares(v: string | null | undefined): string {
+  if (!v) return "—";
+  const n = parseFloat(v);
+  if (!isFinite(n)) return "—";
+  return n % 1 === 0 ? n.toFixed(0) : n.toFixed(4).replace(/0+$/, "");
 }
 function momentumClass(m: string): string {
   const t = (m || "").toLowerCase();
@@ -31,7 +43,8 @@ function Pill({ text, className }: { text: string; className: string }) {
 
 type SortKey =
   | "symbol" | "category" | "dgi_score" | "tech_timing" | "entry_tag"
-  | "momentum" | "price" | "total_shares" | "in_calls" | "put_exposure";
+  | "momentum" | "price" | "total_shares" | "in_calls" | "put_exposure"
+  | "portfolio_shares" | "portfolio_avg_cost_eur" | "portfolio_invested_eur";
 
 const SUITABILITY_FILTERS: { key: SymbolSuitabilityFilter; label: string }[] = [
   { key: "all", label: "All" },
@@ -41,7 +54,7 @@ const SUITABILITY_FILTERS: { key: SymbolSuitabilityFilter; label: string }[] = [
   { key: "no_calls", label: "No Calls" },
 ];
 
-const COLUMNS: { key: SortKey; label: string; align?: "right"; num?: boolean }[] = [
+const BASE_COLUMNS: { key: SortKey; label: string; align?: "right"; num?: boolean }[] = [
   { key: "symbol", label: "Symbol" },
   { key: "category", label: "Category" },
   { key: "dgi_score", label: "DGI", align: "right", num: true },
@@ -49,18 +62,43 @@ const COLUMNS: { key: SortKey; label: string; align?: "right"; num?: boolean }[]
   { key: "entry_tag", label: "Entry" },
   { key: "momentum", label: "Momentum" },
   { key: "price", label: "Price", align: "right", num: true },
+];
+
+const PORTFOLIO_EXTRA_COLUMNS: { key: SortKey; label: string; align?: "right"; num?: boolean }[] = [
+  { key: "portfolio_shares", label: "Shares", align: "right" },
+  { key: "portfolio_avg_cost_eur", label: "Avg Cost", align: "right" },
+  { key: "portfolio_invested_eur", label: "Invested", align: "right" },
+];
+
+const WATCHLIST_EXTRA_COLUMNS: { key: SortKey; label: string; align?: "right"; num?: boolean }[] = [
   { key: "total_shares", label: "Shares", align: "right", num: true },
+];
+
+const TAIL_COLUMNS: { key: SortKey; label: string; align?: "right"; num?: boolean }[] = [
   { key: "in_calls", label: "In Calls", align: "right", num: true },
   { key: "put_exposure", label: "Puts $", align: "right", num: true },
 ];
 
-export default function SymbolsTable({ rows }: { rows: SymbolRow[] }) {
+export default function SymbolsTable({
+  rows,
+  listSection,
+}: {
+  rows: SymbolRow[];
+  listSection?: SymbolListSection;
+}) {
   const router = useRouter();
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<SortKey>("symbol");
   const [dir, setDir] = useState<"asc" | "desc">("asc");
   const [suitabilityFilter, setSuitabilityFilter] = useState<SymbolSuitabilityFilter>("all");
   const [modalSymbol, setModalSymbol] = useState<string | null>(null);
+
+  const isPortfolio = listSection === "portfolio";
+  const COLUMNS = [
+    ...BASE_COLUMNS,
+    ...(isPortfolio ? PORTFOLIO_EXTRA_COLUMNS : WATCHLIST_EXTRA_COLUMNS),
+    ...TAIL_COLUMNS,
+  ];
 
   // Inline shares editing
   const [editingShares, setEditingShares] = useState<string | null>(null);
@@ -276,6 +314,11 @@ export default function SymbolsTable({ rows }: { rows: SymbolRow[] }) {
             )}
             {filtered.map((r) => {
               const effectiveShares = localShares[r.symbol] ?? r.total_shares;
+              const portfolioSharesNum = parseFloat(r.portfolio_shares ?? "0") || 0;
+              // Canonical link: use security_id when available for MIC:TICKER route
+              const symbolHref = r.security_id
+                ? `/symbols/${encodeURIComponent(r.security_id)}`
+                : `/symbols/${r.symbol}`;
               return (
                 <tr
                 key={r.symbol}
@@ -284,7 +327,7 @@ export default function SymbolsTable({ rows }: { rows: SymbolRow[] }) {
               >
                 <td className="px-4 py-3">
                   <Link
-                    href={`/symbols/${r.symbol}`}
+                    href={symbolHref}
                     onClick={(e) => e.stopPropagation()}
                     className="font-semibold text-text hover:text-accent-blue"
                   >
@@ -297,50 +340,73 @@ export default function SymbolsTable({ rows }: { rows: SymbolRow[] }) {
                 <td className="px-4 py-3"><Pill text={r.entry_tag} className={entryClass(r.entry_tag)} /></td>
                 <td className="px-4 py-3"><Pill text={r.momentum} className={momentumClass(r.momentum)} /></td>
                 <td className="px-4 py-3 text-right font-mono">{r.price != null ? `$${num(r.price, 2)}` : "—"}</td>
-                <td
-                  className="px-4 py-3 text-right font-mono"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {editingShares === r.symbol ? (
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={sharesInput}
-                      onChange={(e) => setSharesInput(e.target.value)}
-                      onBlur={() => saveShares(r.symbol, r.total_shares)}
-                      onKeyDown={(e) => {
-                        e.stopPropagation();
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          e.currentTarget.blur();
-                        }
-                        if (e.key === "Escape") {
-                          e.preventDefault();
-                          cancelEdit();
-                        }
-                      }}
-                      className="w-20 rounded border border-accent-blue bg-bg-input px-2 py-0.5 text-right font-mono text-sm focus:outline-none"
-                      autoFocus
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  ) : sharesSaving === r.symbol ? (
-                    <span className="text-text-muted">…</span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); startEdit(r.symbol, effectiveShares); }}
-                      className="cursor-text hover:text-accent-blue hover:underline"
-                      title="Click to edit shares"
-                    >
-                      {effectiveShares > 0 ? effectiveShares : <span className="text-text-muted">—</span>}
-                    </button>
-                  )}
-                </td>
+
+                {/* Section-specific columns */}
+                {isPortfolio ? (
+                  <>
+                    <td className="px-4 py-3 text-right font-mono">
+                      {r.portfolio_shares != null
+                        ? (parseFloat(r.portfolio_shares) === 0
+                          ? <span className="text-text-muted">0 (hist.)</span>
+                          : portfolioShares(r.portfolio_shares))
+                        : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono text-xs">{eur(r.portfolio_avg_cost_eur)}</td>
+                    <td className="px-4 py-3 text-right font-mono text-xs">{eur(r.portfolio_invested_eur)}</td>
+                  </>
+                ) : (
+                  <td
+                    className="px-4 py-3 text-right font-mono"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {editingShares === r.symbol ? (
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={sharesInput}
+                        onChange={(e) => setSharesInput(e.target.value)}
+                        onBlur={() => saveShares(r.symbol, r.total_shares)}
+                        onKeyDown={(e) => {
+                          e.stopPropagation();
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            e.currentTarget.blur();
+                          }
+                          if (e.key === "Escape") {
+                            e.preventDefault();
+                            cancelEdit();
+                          }
+                        }}
+                        className="w-20 rounded border border-accent-blue bg-bg-input px-2 py-0.5 text-right font-mono text-sm focus:outline-none"
+                        autoFocus
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    ) : sharesSaving === r.symbol ? (
+                      <span className="text-text-muted">…</span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); startEdit(r.symbol, effectiveShares); }}
+                        className="cursor-text hover:text-accent-blue hover:underline"
+                        title="Click to edit shares"
+                      >
+                        {effectiveShares > 0 ? effectiveShares : <span className="text-text-muted">—</span>}
+                      </button>
+                    )}
+                  </td>
+                )}
+
                 <td className="px-4 py-3 text-right font-mono">
-                  <span className={effectiveShares > 0 && r.in_calls >= effectiveShares ? "text-accent-orange" : ""}>
-                    {r.in_calls > 0 ? r.in_calls : effectiveShares >= 100 ? "0" : "—"}
-                  </span>
+                  {isPortfolio ? (
+                    <span className={portfolioSharesNum > 0 && r.in_calls >= portfolioSharesNum ? "text-accent-orange" : ""}>
+                      {r.in_calls > 0 ? r.in_calls : portfolioSharesNum >= 100 ? "0" : "—"}
+                    </span>
+                  ) : (
+                    <span className={effectiveShares > 0 && r.in_calls >= effectiveShares ? "text-accent-orange" : ""}>
+                      {r.in_calls > 0 ? r.in_calls : effectiveShares >= 100 ? "0" : "—"}
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-right font-mono">{r.put_exposure > 0 ? `$${usd(r.put_exposure)}` : "—"}</td>
                 <td
@@ -352,7 +418,9 @@ export default function SymbolsTable({ rows }: { rows: SymbolRow[] }) {
                     onClick={() => deleteSymbol(r.symbol)}
                     disabled={deletingSymbols.has(r.symbol)}
                     aria-label={`Delete ${r.symbol} and all its data`}
-                    title={`Delete ${r.symbol} and all its data`}
+                    title={isPortfolio
+                      ? `Remove ${r.symbol} config (ledger data is preserved)`
+                      : `Delete ${r.symbol} and all its data`}
                     className="inline-flex items-center justify-center rounded-[var(--radius-pill)] border border-accent-red/40 p-1.5 text-accent-red transition-colors hover:bg-accent-red/10 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-red/60"
                   >
                     <Trash2 size={14} className="shrink-0" aria-hidden />

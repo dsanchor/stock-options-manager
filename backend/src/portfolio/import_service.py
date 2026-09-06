@@ -31,6 +31,7 @@ from .parsers.common import normalize_company_name, row_idempotency_hash
 from .parsers.dividends import parse_dividends
 from .parsers.purchases import parse_purchases
 from .parsers.sales import parse_sales
+from .symbol_config_sync import ensure_symbol_config
 
 logger = logging.getLogger(__name__)
 
@@ -312,18 +313,44 @@ class ImportService:
                 logger.warning("Failed to write ledger_txn %s: %s", movement.get("id"), exc)
                 skipped_count += 1
 
+        # ── Synchronous best-effort enrollment in symbol_config ──────────
+        # Ledger writes are already committed above.  Config enrollment is a
+        # secondary write to a different Cosmos container.  Failure must never
+        # roll back the ledger — log and continue.
+        symbols_container = self.securities_svc.container
+        enrolled_ids: set = set()
+        enrollment_warnings: List[str] = []
+        for movement in movements:
+            sid = movement.get("security_id")
+            if sid and sid not in enrolled_ids:
+                try:
+                    ensure_symbol_config(symbols_container, sid, source="import_commit")
+                    enrolled_ids.add(sid)
+                except Exception as exc:
+                    logger.warning(
+                        "ensure_symbol_config failed for %s during import_commit: %s",
+                        sid,
+                        exc,
+                        exc_info=True,
+                    )
+                    enrollment_warnings.append(f"{sid}: {exc}")
+
         # Mark session as COMMITTED
         doc["state"] = "COMMITTED"
         doc["committed_count"] = committed
         doc["skipped_count"] = skipped_count
         self.portfolio_svc.update_session(doc)
 
-        return {
+        result: Dict[str, Any] = {
             "session_id": session_id,
             "state": "COMMITTED",
             "committed_count": committed,
             "skipped_count": skipped_count,
+            "enrolled_security_ids": sorted(enrolled_ids),
         }
+        if enrollment_warnings:
+            result["enrollment_warnings"] = enrollment_warnings
+        return result
 
     def inline_create_security(
         self,

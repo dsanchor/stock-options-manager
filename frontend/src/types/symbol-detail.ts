@@ -98,6 +98,59 @@ export interface SymbolSummary {
   active_count: number;
 }
 
+// Symbol Unification rev 3 — new types
+
+export interface SecurityMasterInfo {
+  security_id: string;
+  company_name: string;
+  exchange_mic: string;
+  isin?: string | null;
+  listing_currency?: string;
+  status?: string;
+}
+
+export interface HoldingsByAccount {
+  account_id: string;
+  account_name?: string;
+  shares: string;
+  avg_cost_eur?: string | null;
+}
+
+export interface RecentMovement {
+  id: string;
+  txn_type: string;
+  trade_date: string;
+  quantity?: string | null;
+  gross_eur?: string | null;
+}
+
+export interface PortfolioSection {
+  current_shares: string;
+  average_cost_eur?: string | null;
+  current_invested_eur?: string | null;
+  total_dividends_eur?: string | null;
+  holdings_by_account?: HoldingsByAccount[];
+  recent_movements?: RecentMovement[];
+  movement_count?: number;
+}
+
+export type SymbolState =
+  | "watchlist_only"
+  | "portfolio_only"
+  | "watchlist_and_portfolio"
+  | "portfolio_historical";
+
+export interface DisambiguationChoice {
+  security_id: string;
+  company_name: string;
+  exchange_mic: string;
+}
+
+export interface SymbolDisambiguationResult {
+  multiple_choices: DisambiguationChoice[];
+  query: string;
+}
+
 export interface SymbolDetail {
   symbol: string;
   display_name: string;
@@ -113,5 +166,10 @@ export interface SymbolDetail {
   summary: SymbolSummary;
   next_earnings_date?: string | null;
   is_paused: boolean;
+  // Symbol Unification rev 3 — new fields (null when not yet deployed by backend)
+  security_id?: string | null;
+  security?: SecurityMasterInfo | null;
+  portfolio?: PortfolioSection | null;
+  symbol_state?: SymbolState | null;
   error?: string;
 }

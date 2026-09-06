@@ -1,4 +1,4 @@
-import { apiFetch } from "@/lib/api";
+import { API_BASE_URL } from "@/lib/api";
 import SymbolActions from "@/components/SymbolActions";
 import RecentActivities from "@/components/RecentActivities";
 import PositionsTable from "@/components/PositionsTable";
@@ -7,18 +7,41 @@ import AddPositionForm from "@/components/AddPositionForm";
 import SymbolPlansTable from "@/components/SymbolPlansTable";
 import RtChart from "@/components/RtChart";
 import TradingViewSymbolInfo from "@/components/TradingViewSymbolInfo";
-import type { SymbolDetail } from "@/types/symbol-detail";
+import PortfolioHoldingsCard from "@/components/PortfolioHoldingsCard";
+import SymbolMovementsTable from "@/components/SymbolMovementsTable";
+import SymbolDisambiguation from "@/components/SymbolDisambiguation";
+import type { SymbolDetail, SymbolDisambiguationResult } from "@/types/symbol-detail";
 import type { Plan as PlanRow } from "@/types/plans";
 
 export const dynamic = "force-dynamic";
 
-async function getData(symbol: string): Promise<SymbolDetail> {
+type DetailResult =
+  | { kind: "detail"; data: SymbolDetail }
+  | { kind: "disambiguation"; data: SymbolDisambiguationResult }
+  | { kind: "error"; message: string };
+
+async function getData(symbol: string): Promise<DetailResult> {
   try {
-    return await apiFetch<SymbolDetail>(`/api/symbols/${encodeURIComponent(symbol)}/detail`);
+    const url = `${API_BASE_URL}/api/symbols/${encodeURIComponent(symbol)}/detail`;
+    const res = await fetch(url, { headers: { Accept: "application/json" } });
+
+    if (res.status === 300) {
+      const body = await res.json() as SymbolDisambiguationResult;
+      return { kind: "disambiguation", data: { ...body, query: body.query ?? symbol } };
+    }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      return { kind: "error", message: `API ${res.status} for ${symbol}: ${body.slice(0, 200)}` };
+    }
+
+    const data = await res.json() as SymbolDetail;
+    return { kind: "detail", data };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : "Failed to load symbol",
-    } as SymbolDetail;
+      kind: "error",
+      message: err instanceof Error ? err.message : "Failed to load symbol",
+    };
   }
 }
 
@@ -28,26 +51,80 @@ export default async function SymbolDetailPage({
   params: Promise<{ symbol: string }>;
 }) {
   const { symbol } = await params;
-  const d = await getData(symbol);
+  const result = await getData(symbol);
 
-  if (d.error) {
+  if (result.kind === "error") {
     return (
       <div className="space-y-4">
         <div className="rounded-[var(--radius)] border border-accent-red/40 bg-accent-red/10 px-4 py-3 text-sm">
-          ⚠️ {d.error}
+          ⚠️ {result.message}
         </div>
       </div>
     );
   }
 
+  if (result.kind === "disambiguation") {
+    return (
+      <SymbolDisambiguation
+        query={result.data.query}
+        choices={result.data.multiple_choices}
+      />
+    );
+  }
+
+  const d = result.data;
   const enr = d.enrichment ?? {};
   const positions = d.positions ?? [];
   const activities = d.activities ?? [];
   const plans = d.plans ?? [];
+  const symbolState = d.symbol_state ?? null;
+
+  const hasPortfolio = d.portfolio != null;
+  const isHistoricalOrZero =
+    symbolState === "portfolio_historical" ||
+    (hasPortfolio && parseFloat(d.portfolio!.current_shares) === 0);
+  const hasAgentContent =
+    symbolState === "watchlist_only" ||
+    symbolState === "watchlist_and_portfolio" ||
+    symbolState == null; // legacy — show if state unknown
+
+  // Canonical security badge
+  const securityBadge = d.security_id
+    ? d.security_id
+    : d.exchange
+    ? `${d.exchange}:${d.symbol}`
+    : d.symbol;
 
   return (
     <div className="space-y-6">
-      {/* Toolbar: actions (symbol title/price/badges live in the widget + Summary) */}
+      {/* Canonical identity badge */}
+      {d.security && (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-text-muted">
+          <span className="font-mono font-semibold text-text">{d.security.security_id}</span>
+          <span>·</span>
+          <span>{d.security.company_name}</span>
+          {d.security.isin && (
+            <>
+              <span>·</span>
+              <span className="font-mono">ISIN {d.security.isin}</span>
+            </>
+          )}
+          {d.security.listing_currency && (
+            <>
+              <span>·</span>
+              <span>{d.security.listing_currency}</span>
+            </>
+          )}
+          {/* Membership badge */}
+          {symbolState && (
+            <span className={`inline-block rounded-[var(--radius-pill)] border px-2 py-0.5 ${membershipBadgeClass(symbolState)}`}>
+              {membershipBadgeLabel(symbolState)}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Toolbar: actions */}
       <div className="flex flex-wrap items-center justify-end gap-4">
         <SymbolActions
           symbol={d.symbol}
@@ -64,7 +141,7 @@ export default async function SymbolDetailPage({
       <TradingViewSymbolInfo symbol={d.symbol} exchange={d.exchange} />
       <RtChart symbol={d.symbol} exchange={d.exchange} />
 
-      {/* Summary (click to open Timing & Score modal) */}
+      {/* Summary */}
       <SymbolSummary
         symbol={symbol}
         enrichment={enr}
@@ -72,8 +149,24 @@ export default async function SymbolDetailPage({
         totalShares={d.total_shares}
       />
 
-      {/* Positions */}
-      <PositionsTable symbol={symbol} positions={positions} />
+      {/* Portfolio Holdings — shown for all portfolio states */}
+      {hasPortfolio && (
+        <PortfolioHoldingsCard portfolio={d.portfolio!} symbolState={symbolState} />
+      )}
+
+      {/* Recent Movements — shown for all portfolio states */}
+      {hasPortfolio && d.portfolio!.recent_movements && (
+        <SymbolMovementsTable
+          movements={d.portfolio!.recent_movements}
+          movementCount={d.portfolio!.movement_count}
+          securityId={d.security_id}
+        />
+      )}
+
+      {/* Options Positions — hidden for portfolio-only/historical unless agents enabled */}
+      {(hasAgentContent || positions.length > 0) && (
+        <PositionsTable symbol={symbol} positions={positions} />
+      )}
 
       {/* Add position */}
       <AddPositionForm symbol={symbol} />
@@ -81,8 +174,30 @@ export default async function SymbolDetailPage({
       {/* Plans */}
       <SymbolPlansTable plans={plans as unknown as PlanRow[]} />
 
-      {/* Recent activity */}
-      <RecentActivities activities={activities} agentTypes={d.agent_types ?? []} />
+      {/* Recent agent activity — hidden for portfolio-only states without active agents */}
+      {(hasAgentContent || activities.length > 0) && (
+        <RecentActivities activities={activities} agentTypes={d.agent_types ?? []} />
+      )}
     </div>
   );
+}
+
+function membershipBadgeLabel(state: string): string {
+  switch (state) {
+    case "watchlist_only": return "Watchlist";
+    case "portfolio_only": return "Portfolio";
+    case "watchlist_and_portfolio": return "Portfolio + Watchlist";
+    case "portfolio_historical": return "Portfolio (historical)";
+    default: return state;
+  }
+}
+
+function membershipBadgeClass(state: string): string {
+  switch (state) {
+    case "watchlist_only": return "border-accent-blue/40 bg-accent-blue/10 text-accent-blue";
+    case "portfolio_only":
+    case "watchlist_and_portfolio": return "border-accent-green/40 bg-accent-green/10 text-accent-green";
+    case "portfolio_historical": return "border-border bg-bg-input text-text-muted";
+    default: return "border-border bg-bg-input text-text-muted";
+  }
 }

@@ -317,7 +317,64 @@ export async function getBatchReassignmentPreview(
   );
 }
 
-// ─── Phase 2: FX Rate Helper ──────────────────────────────────────────────────
+// ─── Symbol Unification rev 3 ─────────────────────────────────────────────────
+
+export interface SecuritySearchCandidate {
+  security_id: string;
+  ticker: string;
+  company_name: string;
+  exchange_mic: string;
+  has_config: boolean;
+}
+
+export interface SecuritySearchResponse {
+  candidates: SecuritySearchCandidate[];
+}
+
+export interface AddSymbolSelectBody {
+  security_id: string;
+}
+
+export interface AddSymbolCreateBody {
+  create: {
+    ticker: string;
+    exchange_mic: string;
+    company_name: string;
+    listing_currency: string;
+    isin?: string;
+    cusip?: string;
+    sedol?: string;
+    provider_symbols?: Record<string, string>;
+  };
+}
+
+export type AddSymbolBody = AddSymbolSelectBody | AddSymbolCreateBody;
+
+export interface AddSymbolResponse {
+  security: SecurityMaster;
+  config_created: boolean;
+  config_existed: boolean;
+  config_warning: string | null;
+  navigate_to: string;
+}
+
+/** GET /api/securities/search?q=...&limit=... */
+export async function searchSecurities(
+  q: string,
+  limit = 10,
+): Promise<SecuritySearchResponse> {
+  const params = new URLSearchParams({ q, limit: String(limit) });
+  return fetchJSON<SecuritySearchResponse>(`/api/securities/search?${params.toString()}`);
+}
+
+/** POST /api/symbols/add — unified add symbol (select or create + ensure config). */
+export async function addSymbol(body: AddSymbolBody): Promise<AddSymbolResponse> {
+  return fetchJSON<AddSymbolResponse>("/api/symbols/add", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
 
 /**
  * GET /api/fx/rates — look up FX rate from ECB.

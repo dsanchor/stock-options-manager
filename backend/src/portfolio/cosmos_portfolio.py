@@ -38,6 +38,9 @@ _EXCLUDED_CORRECTION_STATUSES = {"SUPERSEDED", "VOIDED"}
 # Transfer txn_types
 _TRANSFER_TYPES = {"TRANSFER_OUT", "TRANSFER_IN"}
 
+# Imported at module level so tests can patch `src.portfolio.cosmos_portfolio.ensure_symbol_config`
+from .symbol_config_sync import ensure_symbol_config  # noqa: E402
+
 
 class StorageUnavailableError(Exception):
     """Raised when a required Cosmos container is not available."""
@@ -78,9 +81,17 @@ def _d(v: Any) -> Decimal:
 class CosmosPortfolioService:
     """Portfolio and import-sessions Cosmos operations."""
 
-    def __init__(self, portfolio_container, import_sessions_container) -> None:
+    def __init__(
+        self,
+        portfolio_container,
+        import_sessions_container,
+        symbols_container=None,
+    ) -> None:
         self.portfolio_container = portfolio_container
         self.import_sessions_container = import_sessions_container
+        # Optional — used for best-effort ensure_symbol_config calls.
+        # When None, ensure calls are logged as warnings and skipped.
+        self.symbols_container = symbols_container
 
     @property
     def portfolio_available(self) -> bool:
@@ -433,6 +444,20 @@ class CosmosPortfolioService:
             doc["notes"] = data["notes"]
 
         created = self.portfolio_container.upsert_item(doc)
+
+        # Synchronous best-effort symbol_config enrollment.
+        # Failure (including None symbols_container) must never roll back the ledger.
+        try:
+            ensure_symbol_config(
+                self.symbols_container, security_id, source="manual_movement"
+            )
+        except Exception as exc:
+            logger.warning(
+                "ensure_symbol_config failed for manual_movement %s: %s",
+                security_id,
+                exc,
+            )
+
         return _clean(created)
 
     def correct_movement(
@@ -613,6 +638,26 @@ class CosmosPortfolioService:
             logger.warning("get_all_movements_for_holdings failed: %s", exc)
             return []
 
+    def get_ledger_security_ids_all(self) -> set:
+        """Return distinct security_ids from ALL ledger_txn docs.
+
+        Unlike get_all_movements_for_holdings this includes soft-deleted and
+        SUPERSEDED/VOIDED documents.  Used for portfolio-membership classification
+        on the Symbols overview page (§5.4.1): presence in the ledger — regardless
+        of correction or deletion status — means a position was owned at some point.
+        """
+        self._require_portfolio()
+        query = "SELECT c.security_id FROM c WHERE c.doc_type = 'ledger_txn'"
+        try:
+            items = list(self.portfolio_container.query_items(
+                query=query,
+                enable_cross_partition_query=True,
+            ))
+            return {i.get("security_id") for i in items if i.get("security_id")}
+        except Exception as exc:
+            logger.warning("get_ledger_security_ids_all failed: %s", exc)
+            return set()
+
     def soft_delete_movement(self, movement_id: str, account_id: str) -> Optional[Dict[str, Any]]:
         """Soft-delete a movement by setting deleted_at.
 
@@ -669,21 +714,37 @@ class CosmosPortfolioService:
 
     def create_transfer_pair(
         self,
-        security_id: str,
-        trade_date: str,
-        quantity: str,
-        source_account_id: str,
-        dest_account_id: str,
+        security_id,
+        trade_date: str = None,
+        quantity: str = None,
+        source_account_id: str = None,
+        dest_account_id: str = None,
         cost_basis_override_eur: Optional[str] = None,
         transfer_fee: Optional[Dict[str, Any]] = None,
         notes: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create a paired TRANSFER_OUT + TRANSFER_IN.
 
+        Accepts either keyword arguments (original API) or a single dict as the
+        first positional argument for convenience:
+          svc.create_transfer_pair({"security_id": ..., "trade_date": ..., ...})
+
         Raises:
             ValueError: same source/dest, missing fields
             InsufficientSharesError: source lacks shares at trade_date
         """
+        # Normalize: accept dict as first positional arg
+        if isinstance(security_id, dict):
+            data = security_id
+            security_id = data["security_id"]
+            trade_date = data.get("trade_date", trade_date)
+            quantity = data.get("quantity", quantity)
+            source_account_id = data.get("source_account_id", source_account_id)
+            dest_account_id = data.get("dest_account_id", dest_account_id)
+            cost_basis_override_eur = data.get("cost_basis_override_eur", cost_basis_override_eur)
+            transfer_fee = data.get("transfer_fee", transfer_fee)
+            notes = data.get("notes", notes)
+
         self._require_portfolio()
 
         if source_account_id == dest_account_id:
@@ -767,6 +828,20 @@ class CosmosPortfolioService:
         # Write both legs
         written_out = self.portfolio_container.upsert_item(out_doc)
         written_in = self.portfolio_container.upsert_item(in_doc)
+
+        # Synchronous best-effort symbol_config enrollment for the TRANSFER_IN leg.
+        # TRANSFER_OUT is the source account which should already have a config.
+        # Failure must never roll back the ledger writes above.
+        try:
+            ensure_symbol_config(
+                self.symbols_container, security_id, source="transfer_in"
+            )
+        except Exception as exc:
+            logger.warning(
+                "ensure_symbol_config failed for transfer_in %s: %s",
+                security_id,
+                exc,
+            )
 
         return {
             "transfer_out": _clean(written_out),

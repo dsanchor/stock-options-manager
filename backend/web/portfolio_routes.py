@@ -27,6 +27,7 @@ from src.portfolio.import_service import (
     AlreadyCommittedError,
 )
 from src.portfolio.provider_symbols import validate_provider_symbols
+from src.portfolio.symbol_config_sync import ensure_symbol_config
 from src.portfolio.fx_service import (
     FxUnavailableError,
     FxRateNotFoundError,
@@ -65,7 +66,10 @@ def _get_portfolio_svc(request: Request) -> CosmosPortfolioService:
     cosmos = _get_cosmos(request)
     portfolio_container = getattr(cosmos, "portfolio_container", None)
     import_sessions_container = getattr(cosmos, "import_sessions_container", None)
-    return CosmosPortfolioService(portfolio_container, import_sessions_container)
+    symbols_container = getattr(cosmos, "container", None)
+    return CosmosPortfolioService(
+        portfolio_container, import_sessions_container, symbols_container
+    )
 
 
 def _get_import_service(request: Request) -> ImportService:
@@ -159,6 +163,80 @@ async def create_security(request: Request):
         return _storage_503(str(exc))
     except Exception as exc:
         logger.exception("create_security failed")
+        return _err("internal_error", str(exc), 500)
+
+
+@router.get("/api/securities/search")
+async def search_securities(
+    request: Request,
+    q: str = Query(default="", description="Ticker, company name, or alias fragment"),
+    limit: int = Query(default=10, ge=1, le=50),
+):
+    """GET /api/securities/search?q=...&limit=10 — search security_master catalog.
+
+    Returns candidates ordered by relevance.  Includes a 'has_config' boolean
+    indicating whether a symbol_config already exists for each result (for
+    display purposes — "Already in watchlist" badge).
+
+    MUST be defined BEFORE /api/securities/{security_id:path} so it is matched first.
+    """
+    if not q.strip():
+        return JSONResponse({"candidates": []})
+
+    try:
+        svc = _get_securities_svc(request)
+    except RuntimeError as exc:
+        return _storage_503(str(exc))
+
+    try:
+        from src.portfolio.cosmos_securities import _normalize_text
+        normalized = _normalize_text(q.strip())
+        candidates = svc.find_candidates_for_name(normalized, limit=limit)
+
+        # Augment with ticker-exact match (case-insensitive) if not already present
+        q_upper = q.strip().upper()
+        candidate_ids = {c.get("security_id") for c in candidates}
+        try:
+            all_secs = svc.list_securities()
+            for sec in all_secs:
+                if sec.get("ticker", "").upper() == q_upper and sec.get("security_id") not in candidate_ids:
+                    candidates.append(sec)
+                    candidate_ids.add(sec.get("security_id"))
+                    if len(candidates) >= limit:
+                        break
+        except Exception:
+            pass  # best-effort ticker search
+
+        candidates = candidates[:limit]
+
+        # Check which tickers already have a symbol_config
+        symbols_container = _get_cosmos(request).container
+        result_candidates = []
+        for sec in candidates:
+            ticker = sec.get("ticker", "")
+            has_config = False
+            if ticker:
+                try:
+                    symbols_container.read_item(
+                        item=f"config_{ticker.upper()}",
+                        partition_key=ticker.upper(),
+                    )
+                    has_config = True
+                except Exception:
+                    has_config = False
+            result_candidates.append({
+                "security_id": sec.get("security_id"),
+                "ticker": sec.get("ticker"),
+                "company_name": sec.get("company_name"),
+                "exchange_mic": sec.get("exchange_mic"),
+                "has_config": has_config,
+            })
+
+        return JSONResponse({"candidates": result_candidates})
+    except RuntimeError as exc:
+        return _storage_503(str(exc))
+    except Exception as exc:
+        logger.exception("search_securities failed")
         return _err("internal_error", str(exc), 500)
 
 
@@ -717,7 +795,9 @@ async def create_movement(request: Request):
             )
 
         doc = svc.create_manual_movement(body)
-        return JSONResponse(_clean(doc), status_code=201)
+
+        response_doc = _clean(doc)
+        return JSONResponse(response_doc, status_code=201)
     except ValueError as exc:
         return _err("validation_error", str(exc), 400)
     except StorageUnavailableError as exc:
@@ -996,6 +1076,386 @@ async def batch_reassign_movements(request: Request):
         logger.exception("batch_reassign_movements failed")
         return _err("internal_error", str(exc), 500)
 
+
+# ===========================================================================
+# Symbol Unification — Unified Add Symbol  (R6)
+# ===========================================================================
+
+@router.post("/api/symbols/add")
+async def add_symbol(request: Request):
+    """POST /api/symbols/add — create-or-select SecurityMaster + ensure symbol_config.
+
+    Body (select existing):
+        { "security_id": "XNYS:AAPL" }
+
+    Body (create new):
+        { "create": { "ticker": "AAPL", "exchange_mic": "XNYS",
+                      "company_name": "Apple Inc.", "listing_currency": "USD", ... } }
+
+    Returns 200 on select-existing, 201 on create-new.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return _err("validation_error", "Invalid JSON body", 400)
+
+    svc = None
+    security = None
+    security_id = None
+
+    try:
+        svc = _get_securities_svc(request)
+    except RuntimeError as exc:
+        return _storage_503(str(exc))
+
+    if body.get("security_id"):
+        # SELECT existing SecurityMaster
+        security_id = str(body["security_id"]).strip().upper()
+        security = svc.get_security(security_id)
+        if security is None:
+            return _err("not_found", f"Security {security_id} not found", 404)
+        created_new = False
+    elif body.get("create"):
+        # CREATE new SecurityMaster (reuses existing validation logic)
+        create_data = body["create"]
+        for field in ("ticker", "exchange_mic", "company_name"):
+            if not create_data.get(field):
+                return _err("validation_error", f"create.{field} is required", 400)
+        try:
+            security = svc.create_security(create_data)
+            security_id = security["security_id"]
+            created_new = True
+        except _CollisionError as exc:
+            return JSONResponse(
+                {
+                    "error": "collision",
+                    "field": exc.field,
+                    "detail": f"{exc.field} collision with existing security",
+                    "existing": exc.existing,           # test compat key
+                    "existing_security": exc.existing,  # Rusty contract key
+                },
+                status_code=409,
+            )
+        except ValueError as exc:
+            return _err("validation_error", str(exc), 400)
+        except RuntimeError as exc:
+            return _storage_503(str(exc))
+    else:
+        return _err(
+            "validation_error",
+            "Provide 'security_id' to select existing or 'create' object to create new",
+            400,
+        )
+
+    # ensure symbol_config (idempotent — existing configs are never touched)
+    config_warning = None
+    config = None
+    try:
+        symbols_container = _get_cosmos(request).container
+        config = ensure_symbol_config(symbols_container, security_id, source="add_symbol")
+    except Exception as exc:
+        logger.warning(
+            "ensure_symbol_config failed for add_symbol %s: %s",
+            security_id,
+            exc,
+            exc_info=True,
+        )
+        config_warning = str(exc)
+
+    config_created = config is not None and bool(config.get("_auto_enrolled"))
+    config_existed = config is not None and not bool(config.get("_auto_enrolled"))
+
+    return JSONResponse(
+        {
+            "security": security,
+            "config_created": config_created,
+            "config_existed": config_existed,
+            "config_warning": config_warning,
+            "navigate_to": f"/symbols/{security_id}",
+        },
+        status_code=201 if created_new else 200,
+    )
+
+
+# ===========================================================================
+# Symbol Unification — Admin Backfill Endpoints  (R3)
+# ===========================================================================
+
+@router.get("/api/admin/symbol-config-backfill")
+async def symbol_config_backfill_dry_run(request: Request):
+    """GET /api/admin/symbol-config-backfill?dry_run=true — backfill gap report.
+
+    Scans all distinct security_ids in the portfolio ledger and reports which
+    have no symbol_config (missing) and which have a config without a
+    security_id field (collision_warnings).  Never writes anything.
+    """
+    try:
+        portfolio_svc = _get_portfolio_svc(request)
+        svc = _get_securities_svc(request)
+        symbols_container = _get_cosmos(request).container
+    except RuntimeError as exc:
+        return _storage_503(str(exc))
+
+    try:
+        movements = portfolio_svc.get_all_movements_for_holdings()
+    except Exception as exc:
+        return _storage_503(f"portfolio scan failed: {exc}")
+
+    # Distinct security_ids present in the ledger
+    all_sids: dict = {}  # security_id → security_master doc or None
+    for m in movements:
+        sid = m.get("security_id")
+        if sid and sid not in all_sids:
+            all_sids[sid] = None
+
+    # Resolve security_master for each (for company_name in report)
+    for sid in list(all_sids.keys()):
+        try:
+            all_sids[sid] = svc.get_security(sid)
+        except Exception:
+            pass
+
+    missing = []
+    collision_warnings = []
+    already_have_config = 0
+
+    for sid, sec in all_sids.items():
+        parts = sid.split(":", 1)
+        ticker = parts[1].upper() if len(parts) == 2 else sid.upper()
+        company_name = sec.get("company_name", "") if sec else ""
+        config_id = f"config_{ticker}"
+        try:
+            config_doc = symbols_container.read_item(
+                item=config_id, partition_key=ticker
+            )
+            already_have_config += 1
+            existing_sid = config_doc.get("security_id")
+            if not existing_sid or existing_sid != sid:
+                collision_warnings.append({
+                    "ticker": ticker,
+                    "existing_config_security_id": existing_sid,
+                    "candidate_security_id": sid,
+                    "note": (
+                        "Existing config has no security_id; will not overwrite"
+                        if not existing_sid
+                        else f"Existing config security_id={existing_sid!r} differs from portfolio security_id={sid!r}"
+                    ),
+                })
+        except Exception:
+            missing.append({
+                "security_id": sid,
+                "ticker": ticker,
+                "company_name": company_name,
+            })
+
+    return JSONResponse({
+        "dry_run": True,
+        "total_portfolio_securities": len(all_sids),
+        "already_have_config": already_have_config,
+        "missing_config": len(missing),
+        "missing": missing,
+        "collision_warnings": collision_warnings,
+    })
+
+
+@router.post("/api/admin/symbol-config-backfill")
+async def symbol_config_backfill_execute(request: Request):
+    """POST /api/admin/symbol-config-backfill — confirmed backfill execution.
+
+    Body: { "confirm": true }
+
+    Creates symbol_configs for all portfolio securities that are missing one.
+    Existing configs are NEVER modified.  Collision warnings reported but not
+    auto-resolved.  Safe to re-run; idempotent.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return _err("validation_error", "Invalid JSON body", 400)
+
+    if not body.get("confirm"):
+        return _err(
+            "confirmation_required",
+            "Include { \"confirm\": true } to execute backfill",
+            400,
+        )
+
+    try:
+        portfolio_svc = _get_portfolio_svc(request)
+        svc = _get_securities_svc(request)
+        symbols_container = _get_cosmos(request).container
+    except RuntimeError as exc:
+        return _storage_503(str(exc))
+
+    try:
+        movements = portfolio_svc.get_all_movements_for_holdings()
+    except Exception as exc:
+        return _storage_503(f"portfolio scan failed: {exc}")
+
+    all_sids: dict = {}
+    for m in movements:
+        sid = m.get("security_id")
+        if sid and sid not in all_sids:
+            all_sids[sid] = None
+
+    for sid in list(all_sids.keys()):
+        try:
+            all_sids[sid] = svc.get_security(sid)
+        except Exception:
+            pass
+
+    created = 0
+    skipped_existing = 0
+    collision_warnings = []
+    errors = []
+
+    for sid, sec in all_sids.items():
+        parts = sid.split(":", 1)
+        ticker = parts[1].upper() if len(parts) == 2 else sid.upper()
+        company_name = sec.get("company_name", "") if sec else ""
+        config_id = f"config_{ticker}"
+
+        # Check existing config
+        try:
+            config_doc = symbols_container.read_item(
+                item=config_id, partition_key=ticker
+            )
+            skipped_existing += 1
+            existing_sid = config_doc.get("security_id")
+            if not existing_sid or existing_sid != sid:
+                collision_warnings.append({
+                    "ticker": ticker,
+                    "existing_config_security_id": existing_sid,
+                    "candidate_security_id": sid,
+                })
+            continue
+        except Exception:
+            pass  # config missing → proceed to create
+
+        # Create missing config
+        try:
+            ensure_symbol_config(symbols_container, sid, source="backfill")
+            created += 1
+            logger.info("backfill: created config_%s for %s", ticker, sid)
+        except Exception as exc:
+            logger.warning(
+                "backfill: failed to create config_%s for %s: %s",
+                ticker,
+                sid,
+                exc,
+                exc_info=True,
+            )
+            errors.append({"security_id": sid, "error": str(exc)})
+
+    return JSONResponse({
+        "dry_run": False,
+        "created": created,
+        "skipped_existing": skipped_existing,
+        "collision_warnings": collision_warnings,
+        "errors": errors,
+    })
+
+
+# ===========================================================================
+# Symbol Unification — total_shares Reconciliation Report  (R7)
+# ===========================================================================
+
+@router.get("/api/admin/total-shares-reconciliation")
+async def total_shares_reconciliation(request: Request):
+    """GET /api/admin/total-shares-reconciliation — report only, no writes.
+
+    Compares symbol_config.total_shares against portfolio-derived share counts
+    using the full CMP holdings computation.  Statuses: 'match', 'mismatch',
+    'no_portfolio_data', 'no_config'.
+    """
+    from decimal import Decimal, ROUND_HALF_UP
+
+    try:
+        holdings_svc = _get_holdings_service(request)
+        symbols_container = _get_cosmos(request).container
+    except RuntimeError as exc:
+        return _storage_503(str(exc))
+
+    try:
+        holdings_result = holdings_svc.compute_holdings()
+    except Exception as exc:
+        logger.warning("total_shares_reconciliation: compute_holdings failed: %s", exc)
+        return _err("internal_error", f"holdings computation failed: {exc}", 500)
+
+    holdings_by_sid = {
+        h["security_id"]: h for h in holdings_result.get("holdings", [])
+    }
+
+    # Load all symbol_configs
+    try:
+        configs_query = "SELECT * FROM c WHERE c.doc_type = 'symbol_config'"
+        all_configs = list(symbols_container.query_items(
+            query=configs_query, enable_cross_partition_query=True
+        ))
+    except Exception as exc:
+        return _err("internal_error", f"symbol_config scan failed: {exc}", 500)
+
+    reconciliation = []
+    matched = 0
+    mismatched = 0
+    no_portfolio_data = 0
+
+    for config in all_configs:
+        ticker = config.get("symbol", "")
+        sid = config.get("security_id")
+        config_total_shares = config.get("total_shares", 0) or 0
+
+        holding = holdings_by_sid.get(sid) if sid else None
+
+        if holding is None:
+            # Try ticker fallback (catches configs without security_id)
+            holding = next(
+                (h for h in holdings_result.get("holdings", [])
+                 if h.get("ticker", "").upper() == ticker.upper()),
+                None,
+            )
+
+        if holding is None:
+            portfolio_derived = None
+            delta = None
+            status = "no_portfolio_data"
+            no_portfolio_data += 1
+        else:
+            portfolio_derived = holding.get("total_shares", "0")
+            try:
+                delta_d = Decimal(str(portfolio_derived)) - Decimal(str(config_total_shares))
+                delta = str(delta_d.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP))
+                if delta_d == Decimal("0"):
+                    status = "match"
+                    matched += 1
+                else:
+                    status = "mismatch"
+                    mismatched += 1
+            except Exception:
+                delta = None
+                status = "mismatch"
+                mismatched += 1
+
+        reconciliation.append({
+            "ticker": ticker,
+            "security_id": sid,
+            "config_total_shares": config_total_shares,
+            "portfolio_derived_shares": portfolio_derived,
+            "delta": delta,
+            "status": status,
+        })
+
+    reconciliation.sort(key=lambda r: (r["status"] != "mismatch", r["ticker"] or ""))
+
+    return JSONResponse({
+        "reconciliation": reconciliation,
+        "summary": {
+            "total_symbols": len(reconciliation),
+            "matched": matched,
+            "mismatched": mismatched,
+            "no_portfolio_data": no_portfolio_data,
+        },
+    })
 
 # ===========================================================================
 # Phase 2 — FX Rates

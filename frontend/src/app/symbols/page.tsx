@@ -1,8 +1,9 @@
 import { apiFetch } from "@/lib/api";
 import { usd, timeAgo } from "@/lib/format";
 import SymbolsTable from "@/components/SymbolsTable";
+import SymbolsSectionedClient from "@/components/SymbolsSectionedClient";
 import AddSymbolForm from "@/components/AddSymbolForm";
-import type { SymbolsOverview } from "@/types/symbols";
+import type { SymbolsOverview, SymbolRow } from "@/types/symbols";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,21 @@ export default async function SymbolsPage() {
     );
   }
 
-  const rows = d.rows ?? [];
+  // Prefer sectioned arrays from backend; fall back to flat rows for backward compat
+  const portfolioRows: SymbolRow[] =
+    d.portfolio_rows ?? d.rows?.filter((r) => r.list_section === "portfolio") ?? [];
+  const watchlistRows: SymbolRow[] =
+    d.watchlist_rows ??
+    d.rows?.filter((r) => r.list_section !== "portfolio") ??
+    d.rows ??
+    [];
+
+  const totalCount = d.symbol_count ?? portfolioRows.length + watchlistRows.length;
+  const portfolioCount = d.portfolio_count ?? portfolioRows.length;
+  const watchlistCount = d.watchlist_count ?? watchlistRows.length;
+
+  // Use sectioned layout when backend provides the new arrays
+  const useSectioned = d.portfolio_rows != null || d.watchlist_rows != null;
 
   return (
     <div className="space-y-6">
@@ -37,14 +52,29 @@ export default async function SymbolsPage() {
           )}
         </div>
         <div className="flex flex-wrap gap-4 text-sm text-text-muted">
-          <span>{d.symbol_count ?? rows.length} tracked</span>
-          <span>Calls exposure <span className="text-text">${usd(d.total_call_exposure)}</span></span>
-          <span>Puts committed <span className="text-text">${usd(d.total_put_exposure)}</span></span>
+          <span>{totalCount} tracked</span>
+          <span>
+            Calls exposure <span className="text-text">${usd(d.total_call_exposure)}</span>
+          </span>
+          <span>
+            Puts committed <span className="text-text">${usd(d.total_put_exposure)}</span>
+          </span>
         </div>
       </div>
 
       <AddSymbolForm />
-      <SymbolsTable rows={rows} />
+
+      {useSectioned ? (
+        <SymbolsSectionedClient
+          portfolioRows={portfolioRows}
+          watchlistRows={watchlistRows}
+          portfolioCount={portfolioCount}
+          watchlistCount={watchlistCount}
+        />
+      ) : (
+        // Legacy flat layout — backward compat until backend ships sectioned response
+        <SymbolsTable rows={d.rows ?? []} />
+      )}
     </div>
   );
 }

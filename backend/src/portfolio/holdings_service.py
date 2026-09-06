@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 
 from .cosmos_portfolio import CosmosPortfolioService
 from .cosmos_securities import CosmosSecuritiesService
+from .symbol_config_sync import ensure_symbol_config
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,37 @@ class HoldingsService:
         security_names = _resolve_security_names(
             list(per_security.keys()), self.securities_svc
         )
+
+        # ── Read-repair: ensure symbol_config exists for every security in holdings ──
+        # This catches any enrollment failures from §2.1–2.3.  Only calls ensure
+        # when the config is genuinely missing (pre-check to avoid unnecessary
+        # Cosmos writes and to allow tests to verify the pre-check is honoured).
+        try:
+            symbols_container = self.securities_svc.container
+            for security_id in per_security:
+                parts = security_id.split(":", 1)
+                ticker = parts[1].upper() if len(parts) == 2 else security_id.upper()
+                config_id = f"config_{ticker}"
+                # Pre-check: skip if config already exists
+                config_exists = False
+                try:
+                    symbols_container.read_item(item=config_id, partition_key=ticker)
+                    config_exists = True
+                except Exception:
+                    pass
+                if not config_exists:
+                    try:
+                        ensure_symbol_config(
+                            symbols_container, security_id, source="read_repair"
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "holdings read-repair: ensure_symbol_config failed for %s: %s",
+                            security_id,
+                            exc,
+                        )
+        except Exception as exc:
+            logger.warning("holdings read-repair: skipped due to error: %s", exc)
 
         # Build holdings list and portfolio-wide summary accumulators
         holdings_list = []
