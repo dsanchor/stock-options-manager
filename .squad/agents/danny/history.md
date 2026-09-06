@@ -1031,6 +1031,51 @@ The first version stated `cost_basis = reference_price` as a system invariant an
 - **Phase placement:** Phase 1b (immediately after manual entry MVP). User directive confirmed.
 - **Reusable pattern:** When reconciling specialist designs, enumerate each conflict explicitly with source positions and resolution rationale. Don't merge silently — the conflict table IS the value of the consolidation.
 
+### 2026-09-05 — Unified Security Master (supersedes two-silo domain boundary)
+
+- **Trigger:** User directive — unified canonical security catalogue with AI-assisted import resolution; reconsider Watchlist vs Portfolio separation; multi-exchange identity.
+- **Decision:** `.squad/decisions/inbox/danny-unified-security-master.md`
+- **Key decisions:**
+  1. **`security_id = {MIC}:{TICKER}`** — human-readable, collision-free across exchanges, deterministic. ISIN optional.
+  2. **Security master in `portfolio._global`** — canonical source of truth shared by options tracking and portfolio ownership.
+  3. **Orthogonal states:** agent_tracking (was watchlist flags), ownership (derived from ledger), archived. All independent.
+  4. **`legacy_symbol` bridge** — each security carries the bare ticker that maps to existing `symbol_config`. Options system unchanged.
+  5. **Import gating strengthened:** dedicated Step 2 in wizard for security resolution. Deterministic alias/ticker auto-resolves; AI suggests but never auto-confirms; unresolved blocks preview entirely.
+  6. **Aliases on security document** (not separate alias map doc) — simplifies queries and co-locates identity data.
+  7. **Rename Symbols→Securities planned for Phase 3** — reverses prior "do not rename" decision, but defers execution.
+  8. **`total_shares` transition:** mutable Phase 1 → reconciliation tool Phase 2 → derived-only Phase 3.
+- **Superseded prior decisions:** ISIN-primary identity, two-silo domain boundary, "do not rename" statement, separate alias map document.
+- **Reusable pattern:** When a feature crosses domain boundaries (options + portfolio both need security identity), create a shared canonical entity rather than duplicating identity in each domain. The bridge pattern (`legacy_symbol`) allows incremental migration without breaking the existing system.
+- **Error pattern to avoid:** Making identity ticker-only from day one. Ticker collisions are rare but architecturally fatal when they occur. `MIC:TICKER` costs nothing extra and prevents an entire class of future bugs.
+
+### 2026-09-05 — Chat-Based Import Architecture (replaces wizard shell)
+
+- **Trigger:** User directive — import via conversational chat; group reusable questions; ask each once; system analyzes file and asks clarifying questions.
+- **Decision:** `.squad/decisions/inbox/danny-chat-import-architecture.md`
+- **Key decisions:**
+  1. **LLM as orchestration layer only** — deterministic parser/validator does all arithmetic, parsing, dedup, classification. LLM never parses amounts, never computes, never writes to ledger directly.
+  2. **Structured pending-questions queue** — three levels (batch, company, row), ordered by rows-unblocked. Company mappings asked once, answer propagated to all matching rows deterministically.
+  3. **No hidden writes** — zero ledger writes during Q&A. Only the import_session document updates. Commit requires explicit user confirmation after all blocking questions answered.
+  4. **Resumable sessions** — `import_session` persisted in Cosmos. Browser close + return resumes exactly.
+  5. **Structured cards inside chat** — company resolution tables, warning groups, preview summaries rendered as React components within chat messages.
+  6. **Guardrails:** LLM cannot invent tickers/MICs/currencies (validated against known lists). Fuzzy security suggestions require user click. Auto-resolve only for deterministic exact alias matches.
+  7. **Account never asked unprompted** — defaults to `_unassigned`, only set if user volunteers.
+- **Superseded:** All wizard-shell UX designs (rusty-dividend-import-ux, rusty-purchase-import-ux, rusty-sales-import-ux, rusty-unified-securities-mapping-ux §2). Prior parsing/validation/dedup/taxonomy all preserved unchanged.
+- **Reusable pattern:** When replacing a rigid UX with a conversational one, the key is separating the orchestration layer (LLM, flexible) from the computation layer (deterministic, inflexible). The LLM reads structured tool output and presents it naturally; it never becomes the source of truth for any data operation. This pattern applies to any domain where users interact with structured data through natural language.
+
+### 2026-09-05 — Inline Security Creation & One Canonical Catalog (amends unified-security-master + chat-import)
+
+- **Trigger:** User directive — inline security creation during import chat; one canonical catalog; no duplicate Portfolio-only records; compatibility adapters for `/symbols` routes.
+- **Amended documents:**
+  - `danny-unified-security-master.md` §14: Single canonical record model, inline creation spec, collision checks, compatibility adapters, updated slices.
+  - `danny-chat-import-architecture.md` §17: `create_security` tool expanded spec, post-creation propagation, failure/rollback, conversation card.
+- **Key decisions:**
+  1. **ONE canonical record** per security in `portfolio._global`. `symbol_config` is operational state (options), not a security identity. Creating a security during import does NOT create a `symbol_config`.
+  2. **Pre-creation collision checks:** exact `security_id`, same-ticker-other-MIC, ISIN, alias — all deterministic queries. Collision blocks creation; shows existing security with "Map instead".
+  3. **Post-creation propagation:** alias saved → all matching rows updated → batch revalidated → questions updated. All deterministic (not LLM).
+  4. **Failure safety:** creation and session update are independent operations. If creation succeeds but session update fails, resume auto-resolves via alias match. No data loss, no inconsistent state.
+  5. **Compatibility adapters (Phase 2):** `POST /api/symbols` upserts canonical security; `PATCH /api/symbols/*/watchlist` syncs agent_tracking. Existing reads unchanged.
+- **Reusable pattern:** When two independent write operations must converge, design for idempotent convergence rather than transactional atomicity. If op A (create security) succeeds and op B (update session) fails, the next read (resolve_companies) discovers op A's result via a deterministic query (alias match) and corrects op B's state. This eliminates the need for distributed transactions.
 
 ---
 
@@ -1054,4 +1099,42 @@ The first version stated `cost_basis = reference_price` as a system invariant an
 **Status:** ✅ COMPLETE — Handed off to Livingston (schema), Rusty (wizard UX), Linus (backend), Basher (tests)
 
 **Related:** Orchestration log at `.squad/orchestration-log/2026-09-05T163930+0200-portfolio-dividend-merge.md`; Session log at `.squad/session-log/2026-09-05T163930+0200-danny-consolidation.md`
+
+### 2026-09-05 — Security Master Final Container & Identity Resolution
+
+- **Trigger:** Conflict between Danny (security docs in `portfolio._global`, `MIC:TICKER`) and Livingston (security docs in `symbols` container, `TICKER:MIC`). User requested authoritative resolution.
+- **Deliverable:** `.squad/decisions/inbox/danny-security-master-final-resolution.md` — 13 resolution sections (R1–R13).
+- **Key decisions:**
+  1. **Container: `symbols` wins** (R1). Security identity (`security_master`) lives in existing `symbols` container, partitioned by ticker. Same partition as `symbol_config` enables single-partition reads. Putting security identity in `portfolio` would create a second identity locus. Decisive factors: collocation efficiency, single-catalog guarantee, zero existing code impact.
+  2. **Format: `MIC:TICKER` wins** (R2). Danny's convention retained; Livingston's `TICKER:MIC` overruled. Namespace convention (broader scope first), TradingView precedent, exchange-first sort, documentation stability.
+  3. **Import sessions: dedicated `import_sessions` container** (R3). Livingston's approach adopted over Danny's `portfolio._global`. TTL isolation, uniform partition distribution, different write/indexing patterns from ledger.
+  4. **Container name: `portfolio`** not `portfolio_ledger` (R4). User directive; all Livingston references normalized.
+  5. **Doc type: `security_master`** not `security` (R5). Avoids confusion with embedded `security` snapshots in ledger records.
+  6. **Ticker collision behavior** (R6): single `security_master` → unambiguous; multiple → 300 Multiple Choices from ticker-only routes; Phase M2 backfill adds `security_id` to `symbol_config` for disambiguation.
+  7. **Schema: Livingston's `security_master` adopted** (R7) with MIC:TICKER format fix, `ARCHIVED` status added, `legacy_symbol` field preserved.
+- **Supersedes:** Danny unified-security-master §2.3/§3.2/§14.1 (container location), Livingston §3.1 (ID format), all `portfolio_ledger` references.
+- **Reusable pattern:** When two designers propose different container strategies, evaluate on: (a) collocation of commonly co-read documents, (b) hot-partition risk, (c) lifecycle/TTL alignment, (d) index profile similarity, (e) existing infrastructure reuse. The winner is usually the option that collocates the most frequent read pattern while keeping different lifecycles separated.
+
+---
+
+## Portfolio Unified Implementation — Final Review & Approval (2026-09-06 00:30 UTC+02:00)
+
+**Role:** Lead Reviewer / Approver
+**Status:** ✅ APPROVED
+
+**Actions:**
+1. ✅ **Final review (Round 3)** — All 7 findings (F1–F7) verified fixed with required tests passing
+2. ✅ **Approval decision** — All findings resolved, contract amendments validated, no regressions, ready for production
+3. ✅ **Documentation consolidated** — All rejection/fix decision docs merged into `.squad/decisions.md`
+4. ✅ **Archive created** — Inbox files archived to `.squad/decisions/archive/inbox-2026-09-06/` (audit trail preserved)
+
+**Approval Rationale:**
+All findings resolved with high-confidence fixes and comprehensive test coverage. Backend cost basis, import preview, holdings, and delete endpoint all function correctly. Frontend types and API calls aligned. Contract v1.1 amendments properly specified. No regressions in existing options system. No scope creep. Lockout protocol followed precisely (two independent specialist escalations). Ready for staging/production.
+
+**Summary:**
+- Round 1: 5 findings (F1–F5) identified, Linus fixes applied
+- Round 2: 2 findings (F6–F7) identified, Reuben fixes applied
+- Final: All 7 fixes verified, contract sealed, feature approved
+
+**Final Outcome:** ✅ APPROVED — No conditions. Ready for production deployment.
 

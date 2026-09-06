@@ -98,6 +98,32 @@ class CosmosDBService:
             )
             self.agent_traces_container = None
 
+        # Portfolio container — best-effort; returns 503 when unavailable
+        try:
+            self.portfolio_container = self.database.get_container_client(
+                "portfolio"
+            )
+            self.portfolio_container.read()
+        except Exception:
+            logger.warning(
+                "Portfolio container not found — portfolio operations disabled. "
+                "Run scripts/provision_cosmosdb.sh to create it."
+            )
+            self.portfolio_container = None
+
+        # Import sessions container — best-effort; returns 503 when unavailable
+        try:
+            self.import_sessions_container = self.database.get_container_client(
+                "import_sessions"
+            )
+            self.import_sessions_container.read()
+        except Exception:
+            logger.warning(
+                "Import sessions container not found — import sessions disabled. "
+                "Run scripts/provision_cosmosdb.sh to create it."
+            )
+            self.import_sessions_container = None
+
     def _init_calendar_container(self):
         """Try to connect to the calendar container. Safe to call multiple times."""
         try:

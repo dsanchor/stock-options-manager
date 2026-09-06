@@ -1,0 +1,645 @@
+"""Tests for the import session state machine (ImportService).
+
+Hermetic: fake Cosmos containers, no network, no LLM.
+"""
+
+import pytest
+from decimal import Decimal
+from uuid import uuid4
+
+from src.portfolio.cosmos_portfolio import CosmosPortfolioService
+from src.portfolio.cosmos_securities import CosmosSecuritiesService
+from src.portfolio.import_service import (
+    ImportService,
+    StateError,
+    UnresolvedQuestionsError,
+    AlreadyCommittedError,
+)
+
+
+# ---------------------------------------------------------------------------
+# Fake containers
+# ---------------------------------------------------------------------------
+
+class FakeImportSessionsContainer:
+    def __init__(self):
+        self._store: dict = {}
+
+    def create_item(self, body: dict):
+        key = body["id"]
+        self._store[key] = dict(body)
+        return dict(body)
+
+    def read_item(self, item: str, partition_key: str):
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+        if item not in self._store:
+            raise CosmosResourceNotFoundError(message="not found", response=None)
+        return dict(self._store[item])
+
+    def replace_item(self, item: str, body: dict):
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+        if item not in self._store:
+            raise CosmosResourceNotFoundError(message="not found", response=None)
+        self._store[item] = dict(body)
+        return dict(body)
+
+
+class FakePortfolioContainer:
+    def __init__(self):
+        self._store: dict = {}
+
+    def upsert_item(self, body: dict):
+        self._store[body["id"]] = dict(body)
+        return dict(body)
+
+    def query_items(self, query="", parameters=None, enable_cross_partition_query=True, partition_key=None):
+        if "COUNT" in query:
+            return iter([0])
+        return iter([])
+
+    def read_item(self, item: str, partition_key: str):
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+        if item not in self._store:
+            raise CosmosResourceNotFoundError(message="not found", response=None)
+        return dict(self._store[item])
+
+    def replace_item(self, item: str, body: dict):
+        self._store[item] = dict(body)
+        return dict(body)
+
+
+class FakeSymbolsContainer:
+    def __init__(self):
+        self._store: dict = {}
+
+    def read_item(self, item: str, partition_key: str):
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+        key = (partition_key, item)
+        if key not in self._store:
+            raise CosmosResourceNotFoundError(message="not found", response=None)
+        return dict(self._store[key])
+
+    def create_item(self, body: dict):
+        ticker = body["symbol"]
+        key = (ticker, body["id"])
+        self._store[key] = dict(body)
+        return dict(body)
+
+    def query_items(self, query="", parameters=None, enable_cross_partition_query=False, partition_key=None):
+        param_map = {p["name"]: p["value"] for p in (parameters or [])}
+        results = []
+        for (pk, did), doc in self._store.items():
+            if partition_key and pk != partition_key:
+                continue
+            if doc.get("doc_type") != "security_master":
+                continue
+            if "@isin" in param_map and doc.get("isin") != param_map["@isin"]:
+                continue
+            results.append(dict(doc))
+        return iter(results)
+
+    def replace_item(self, item: str, body: dict):
+        for key in self._store:
+            if self._store[key].get("id") == item:
+                self._store[key] = dict(body)
+                return dict(body)
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+        raise CosmosResourceNotFoundError(message="not found", response=None)
+
+
+def _make_import_service(preload_securities=None):
+    sessions_container = FakeImportSessionsContainer()
+    portfolio_container = FakePortfolioContainer()
+    symbols_container = FakeSymbolsContainer()
+
+    # Pre-load securities if provided
+    if preload_securities:
+        sec_svc = CosmosSecuritiesService(symbols_container)
+        for sec_data in preload_securities:
+            sec_svc.create_security(sec_data)
+
+    portfolio_svc = CosmosPortfolioService(portfolio_container, sessions_container)
+    securities_svc = CosmosSecuritiesService(symbols_container)
+    return ImportService(portfolio_svc, securities_svc)
+
+
+# ---------------------------------------------------------------------------
+# CSV fixtures
+# ---------------------------------------------------------------------------
+
+def _dividends_csv(rows=None):
+    header = "Año\tEmpresa\tFecha de cobro\tImporte Bruto\tImporte Neto\tImporte en Derechos\tRetención Origen\tRetención Destino\n"
+    if rows is None:
+        rows = [
+            "2024\tApple Inc.\t15/06/2024\t100,00\t73,31\t0,00\t12,94\t13,75\n",
+            "2024\tTelefónica\t20/06/2024\t50,00\t38,00\t0,00\t7,50\t4,50\n",
+        ]
+    return (header + "".join(rows)).encode("utf-8")
+
+
+def _purchases_csv(rows=None):
+    header = "Año\tEmpresa\tFecha compra\tValor compra\tAcciones\tTotal (€)\tComisión\n"
+    if rows is None:
+        rows = [
+            "2024\tApple Inc.\t10/01/2024\t182,50\t10\t1.825,00\t7,50\n",
+        ]
+    return (header + "".join(rows)).encode("utf-8")
+
+
+def _sales_csv(rows=None):
+    header = "Año\tEmpresa\tFecha venta\tAcciones\tComisión\tTotal Venta\n"
+    if rows is None:
+        rows = [
+            "2024\tApple Inc.\t20/06/2024\t5\t7,50\t1.050,00\n",
+        ]
+    return (header + "".join(rows)).encode("utf-8")
+
+
+_AAPL_SEC = {
+    "ticker": "AAPL",
+    "company_name": "Apple Inc.",
+    "exchange_mic": "XNYS",
+    "listing_currency": "USD",
+    "isin": "US0378331005",
+    "aliases": [{"source": "user", "value": "Apple Inc."}],
+}
+
+_TEF_SEC = {
+    "ticker": "TEF",
+    "company_name": "Telefónica SA",
+    "exchange_mic": "XMAD",
+    "listing_currency": "EUR",
+    "isin": "ES0178430E18",
+    "aliases": [{"source": "user", "value": "Telefónica"}],
+}
+
+
+# ---------------------------------------------------------------------------
+# Session creation
+# ---------------------------------------------------------------------------
+
+class TestCreateSession:
+    def test_create_returns_session_id(self):
+        svc = _make_import_service()
+        session = svc.create_session(_dividends_csv(), format_hint="dividends")
+        assert session["session_id"].startswith("imp_")
+
+    def test_creates_entity_questions(self):
+        svc = _make_import_service()
+        session = svc.create_session(_dividends_csv(), format_hint="dividends")
+        questions = session.get("questions", [])
+        entity_q = [q for q in questions if q["scope"] == "ENTITY"]
+        # Two distinct companies → two ENTITY questions
+        assert len(entity_q) == 2
+
+    def test_each_company_asked_once(self):
+        """Duplicate company names produce only one question."""
+        rows = [
+            "2024\tApple Inc.\t15/06/2024\t100,00\t73,31\t0,00\t12,94\t13,75\n",
+            "2024\tApple Inc.\t16/06/2024\t50,00\t36,00\t0,00\t7,50\t6,50\n",  # same company
+        ]
+        svc = _make_import_service()
+        session = svc.create_session(_dividends_csv(rows), format_hint="dividends")
+        entity_q = [q for q in session["questions"] if q["scope"] == "ENTITY"]
+        assert len(entity_q) == 1  # asked once, not twice
+
+    def test_detected_format(self):
+        svc = _make_import_service()
+        session = svc.create_session(_dividends_csv(), format_hint="dividends")
+        assert session["detected_format"] == "dividends"
+
+    def test_currency_default_eur(self):
+        svc = _make_import_service()
+        session = svc.create_session(_dividends_csv())
+        assert session["currency"] == "EUR"
+
+    def test_account_id_default_unassigned(self):
+        svc = _make_import_service()
+        session = svc.create_session(_dividends_csv())
+        assert session["account_id"] == "_unassigned"
+
+    def test_rights_amount_warning_in_session(self):
+        rows = [
+            "2024\tSantander\t10/06/2024\t80,00\t60,00\t45,30\t12,00\t8,00\n",
+        ]
+        svc = _make_import_service()
+        session = svc.create_session(_dividends_csv(rows))
+        warnings = session.get("warnings", [])
+        assert any(w["type"] == "RIGHTS_AMOUNT" for w in warnings)
+
+    def test_empty_file_raises_value_error(self):
+        svc = _make_import_service()
+        with pytest.raises(ValueError):
+            svc.create_session(b"", format_hint="dividends")
+
+    def test_parse_error_propagates(self):
+        svc = _make_import_service()
+        with pytest.raises(ValueError):
+            svc.create_session(b"not,a,valid,csv", format_hint="dividends")
+
+
+# ---------------------------------------------------------------------------
+# Get session
+# ---------------------------------------------------------------------------
+
+class TestGetSession:
+    def test_get_nonexistent_returns_none(self):
+        svc = _make_import_service()
+        assert svc.get_session("imp_nonexistent") is None
+
+    def test_get_existing_returns_session(self):
+        svc = _make_import_service()
+        session = svc.create_session(_dividends_csv())
+        sid = session["session_id"]
+        retrieved = svc.get_session(sid)
+        assert retrieved is not None
+        assert retrieved["session_id"] == sid
+
+
+# ---------------------------------------------------------------------------
+# Answer questions
+# ---------------------------------------------------------------------------
+
+class TestAnswerQuestion:
+    def test_answer_selected_candidate(self):
+        svc = _make_import_service(preload_securities=[_AAPL_SEC])
+        session = svc.create_session(_purchases_csv(), format_hint="purchases")
+        sid = session["session_id"]
+        q = next(q for q in session["questions"] if q["scope"] == "ENTITY")
+
+        updated = svc.answer_question(sid, {
+            "question_id": q["question_id"],
+            "answer_type": "SELECTED_CANDIDATE",
+            "selected_security_id": "XNYS:AAPL",
+        })
+        q_updated = next(
+            uq for uq in updated["questions"] if uq["question_id"] == q["question_id"]
+        )
+        assert q_updated["answer"] == "SELECTED_CANDIDATE"
+        assert q_updated["selected_security_id"] == "XNYS:AAPL"
+
+    def test_entity_answer_advances_to_preview_ready(self):
+        """All ENTITY questions answered → state advances to PREVIEW_READY."""
+        svc = _make_import_service(preload_securities=[_AAPL_SEC])
+        session = svc.create_session(_purchases_csv(), format_hint="purchases")
+        sid = session["session_id"]
+        q = next(q for q in session["questions"] if q["scope"] == "ENTITY")
+
+        updated = svc.answer_question(sid, {
+            "question_id": q["question_id"],
+            "answer_type": "SELECTED_CANDIDATE",
+            "selected_security_id": "XNYS:AAPL",
+        })
+        assert updated["state"] == "PREVIEW_READY"
+
+    def test_fan_out_same_company(self):
+        """Answering once resolves all rows with same empresa_normalized."""
+        rows = [
+            "2024\tApple Inc.\t10/01/2024\t182,50\t10\t1.825,00\t7,50\n",
+            "2024\tApple Inc.\t11/01/2024\t183,00\t5\t915,00\t4,00\n",
+        ]
+        svc = _make_import_service(preload_securities=[_AAPL_SEC])
+        session = svc.create_session(_purchases_csv(rows), format_hint="purchases")
+        sid = session["session_id"]
+        q = next(q for q in session["questions"] if q["scope"] == "ENTITY")
+        svc.answer_question(sid, {
+            "question_id": q["question_id"],
+            "answer_type": "SELECTED_CANDIDATE",
+            "selected_security_id": "XNYS:AAPL",
+        })
+        # Both rows should be resolved (state advanced to PREVIEW_READY)
+        updated_session = svc.get_session(sid)
+        assert updated_session["state"] == "PREVIEW_READY"
+
+    def test_skip_company_marks_rows(self):
+        svc = _make_import_service()
+        session = svc.create_session(_dividends_csv(), format_hint="dividends")
+        sid = session["session_id"]
+        entity_qs = [q for q in session["questions"] if q["scope"] == "ENTITY"]
+
+        # Skip both companies
+        for q in entity_qs:
+            svc.answer_question(sid, {
+                "question_id": q["question_id"],
+                "answer_type": "SKIPPED_COMPANY",
+            })
+
+        updated = svc.get_session(sid)
+        assert updated["state"] == "PREVIEW_READY"
+
+    def test_answer_nonexistent_session_raises(self):
+        svc = _make_import_service()
+        with pytest.raises(LookupError):
+            svc.answer_question("imp_nonexistent", {
+                "question_id": "q_123",
+                "answer_type": "SKIPPED_COMPANY",
+            })
+
+    def test_answer_terminal_session_raises_state_error(self):
+        svc = _make_import_service(preload_securities=[_AAPL_SEC, _TEF_SEC])
+        session = svc.create_session(_dividends_csv(), format_hint="dividends")
+        sid = session["session_id"]
+
+        # Answer all questions
+        for q in session["questions"]:
+            security_id = "XNYS:AAPL" if "apple" in q["normalized_name"] else "XMAD:TEF"
+            svc.answer_question(sid, {
+                "question_id": q["question_id"],
+                "answer_type": "SELECTED_CANDIDATE",
+                "selected_security_id": security_id,
+            })
+
+        svc.generate_preview(sid)
+        svc.commit_session(sid)
+
+        with pytest.raises(StateError):
+            svc.answer_question(sid, {
+                "question_id": "q_any",
+                "answer_type": "SKIPPED_COMPANY",
+            })
+
+
+# ---------------------------------------------------------------------------
+# Preview
+# ---------------------------------------------------------------------------
+
+class TestGeneratePreview:
+    def test_preview_with_resolved_entities(self):
+        svc = _make_import_service(preload_securities=[_AAPL_SEC])
+        session = svc.create_session(_purchases_csv(), format_hint="purchases")
+        sid = session["session_id"]
+        q = next(q for q in session["questions"] if q["scope"] == "ENTITY")
+        svc.answer_question(sid, {
+            "question_id": q["question_id"],
+            "answer_type": "SELECTED_CANDIDATE",
+            "selected_security_id": "XNYS:AAPL",
+        })
+
+        preview = svc.generate_preview(sid)
+        assert preview["state"] == "PREVIEW_READY"
+        assert len(preview["preview"]["movements"]) == 1
+        m = preview["preview"]["movements"][0]
+        assert m["txn_type"] == "BUY"
+        assert m["security_id"] == "XNYS:AAPL"
+
+    def test_preview_with_unresolved_raises(self):
+        svc = _make_import_service()
+        session = svc.create_session(_dividends_csv(), format_hint="dividends")
+        sid = session["session_id"]
+        # Don't answer any questions
+        with pytest.raises(UnresolvedQuestionsError):
+            svc.generate_preview(sid)
+
+    def test_negative_inventory_non_blocking_warning(self):
+        """SELL before BUY produces NEGATIVE_INVENTORY warning, not error."""
+        svc = _make_import_service(preload_securities=[_AAPL_SEC])
+        session = svc.create_session(_sales_csv(), format_hint="sales")
+        sid = session["session_id"]
+        q = session["questions"][0]
+        svc.answer_question(sid, {
+            "question_id": q["question_id"],
+            "answer_type": "SELECTED_CANDIDATE",
+            "selected_security_id": "XNYS:AAPL",
+        })
+
+        # Preview should succeed (not raise)
+        preview = svc.generate_preview(sid)
+        assert preview["state"] == "PREVIEW_READY"
+        warning_types = [w["type"] for w in preview["preview"]["warnings"]]
+        assert "NEGATIVE_INVENTORY" in warning_types
+
+    def test_skipped_company_excluded_from_preview(self):
+        svc = _make_import_service(preload_securities=[_AAPL_SEC])
+        session = svc.create_session(_dividends_csv(), format_hint="dividends")
+        sid = session["session_id"]
+        entity_qs = [q for q in session["questions"] if q["scope"] == "ENTITY"]
+
+        for q in entity_qs:
+            if "apple" in q["normalized_name"]:
+                svc.answer_question(sid, {
+                    "question_id": q["question_id"],
+                    "answer_type": "SELECTED_CANDIDATE",
+                    "selected_security_id": "XNYS:AAPL",
+                })
+            else:
+                svc.answer_question(sid, {
+                    "question_id": q["question_id"],
+                    "answer_type": "SKIPPED_COMPANY",
+                })
+
+        preview = svc.generate_preview(sid)
+        # Only Apple rows should be in movements
+        movements = preview["preview"]["movements"]
+        sids = {m["security_id"] for m in movements}
+        assert "XNYS:AAPL" in sids
+        # Skipped rows in skip_reasons
+        assert preview["preview"]["skipped_rows"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# Commit
+# ---------------------------------------------------------------------------
+
+class TestCommitSession:
+    def _setup_and_answer(self, svc, content, format_hint, security_id, entity_qs_map=None):
+        session = svc.create_session(content, format_hint=format_hint)
+        sid = session["session_id"]
+        for q in session["questions"]:
+            if q["scope"] == "ENTITY":
+                mapped = security_id
+                if entity_qs_map:
+                    mapped = entity_qs_map.get(q["normalized_name"], security_id)
+                svc.answer_question(sid, {
+                    "question_id": q["question_id"],
+                    "answer_type": "SELECTED_CANDIDATE",
+                    "selected_security_id": mapped,
+                })
+        return sid
+
+    def test_commit_writes_movements(self):
+        svc = _make_import_service(preload_securities=[_AAPL_SEC])
+        sid = self._setup_and_answer(svc, _purchases_csv(), "purchases", "XNYS:AAPL")
+        svc.generate_preview(sid)
+        result = svc.commit_session(sid)
+        assert result["state"] == "COMMITTED"
+        assert result["committed_count"] >= 1
+
+    def test_already_committed_raises(self):
+        svc = _make_import_service(preload_securities=[_AAPL_SEC])
+        sid = self._setup_and_answer(svc, _purchases_csv(), "purchases", "XNYS:AAPL")
+        svc.generate_preview(sid)
+        svc.commit_session(sid)
+        with pytest.raises(AlreadyCommittedError):
+            svc.commit_session(sid)
+
+    def test_commit_without_preview_ok(self):
+        """commit_session implicitly builds movements if preview not done."""
+        svc = _make_import_service(preload_securities=[_AAPL_SEC])
+        sid = self._setup_and_answer(svc, _purchases_csv(), "purchases", "XNYS:AAPL")
+        # No explicit generate_preview call
+        result = svc.commit_session(sid)
+        assert result["state"] == "COMMITTED"
+
+    def test_commit_idempotency_hash_set(self):
+        svc = _make_import_service(preload_securities=[_AAPL_SEC])
+        portfolio_svc = svc.portfolio_svc
+        sid = self._setup_and_answer(svc, _purchases_csv(), "purchases", "XNYS:AAPL")
+        svc.generate_preview(sid)
+        svc.commit_session(sid)
+        # Check that committed movements have idempotency_hash
+        movements = list(portfolio_svc.portfolio_container._store.values())
+        ledger_txns = [m for m in movements if m.get("doc_type") == "ledger_txn"]
+        assert len(ledger_txns) >= 1
+        assert all("idempotency_hash" in m for m in ledger_txns)
+
+
+# ---------------------------------------------------------------------------
+# Inline security creation
+# ---------------------------------------------------------------------------
+
+class TestInlineCreateSecurity:
+    def test_inline_create_resolves_entity(self):
+        svc = _make_import_service()
+        session = svc.create_session(_purchases_csv(), format_hint="purchases")
+        sid = session["session_id"]
+        q = next(q for q in session["questions"] if q["scope"] == "ENTITY")
+
+        updated = svc.inline_create_security(sid, q["question_id"], {
+            "ticker": "AAPL",
+            "company_name": "Apple Inc.",
+            "exchange_mic": "XNYS",
+            "listing_currency": "USD",
+        })
+        q_updated = next(
+            uq for uq in updated["questions"] if uq["question_id"] == q["question_id"]
+        )
+        assert q_updated["answer"] == "CREATED_NEW_SECURITY"
+        assert q_updated["selected_security_id"] == "XNYS:AAPL"
+
+
+# ---------------------------------------------------------------------------
+# F1 — Commission preserved in fees
+# ---------------------------------------------------------------------------
+
+class TestCommissionInFees:
+    def _commit_and_get_txn(self, svc, content, fmt, security_id):
+        """Helper: answer, preview, commit, return first ledger_txn."""
+        session = svc.create_session(content, format_hint=fmt)
+        sid = session["session_id"]
+        q = next(q for q in session["questions"] if q["scope"] == "ENTITY")
+        svc.answer_question(sid, {
+            "question_id": q["question_id"],
+            "answer_type": "SELECTED_CANDIDATE",
+            "selected_security_id": security_id,
+        })
+        svc.generate_preview(sid)
+        svc.commit_session(sid)
+        txns = [
+            v for v in svc.portfolio_svc.portfolio_container._store.values()
+            if v.get("doc_type") == "ledger_txn"
+        ]
+        return txns[0]
+
+    def test_purchase_commission_in_fees(self):
+        """Purchase Comisión 7,50 → fees.total_eur reflects commission."""
+        # _purchases_csv() default row has Comisión = 7,50
+        svc = _make_import_service(preload_securities=[_AAPL_SEC])
+        txn = self._commit_and_get_txn(svc, _purchases_csv(), "purchases", "XNYS:AAPL")
+        assert Decimal(txn["fees"]["total_eur"]) == Decimal("7.50")
+        assert Decimal(txn["fees"]["total"]) == Decimal("7.50")
+
+    def test_sale_commission_in_fees(self):
+        """Sale with Comisión 5,00 → fees.total_eur == '5.00'."""
+        rows = ["2024\tApple Inc.\t20/06/2024\t5\t5,00\t1.050,00\n"]
+        svc = _make_import_service(preload_securities=[_AAPL_SEC])
+        txn = self._commit_and_get_txn(svc, _sales_csv(rows), "sales", "XNYS:AAPL")
+        assert Decimal(txn["fees"]["total_eur"]) == Decimal("5.00")
+        assert Decimal(txn["fees"]["total"]) == Decimal("5.00")
+
+    def test_dividend_fees_zero(self):
+        """Dividend movements always have fees.total_eur == '0.00'."""
+        # Single-company CSV to avoid unresolved-question blocker
+        single_row = ["2024\tApple Inc.\t15/06/2024\t100,00\t73,31\t0,00\t12,94\t13,75\n"]
+        svc = _make_import_service(preload_securities=[_AAPL_SEC])
+        txn = self._commit_and_get_txn(svc, _dividends_csv(single_row), "dividends", "XNYS:AAPL")
+        assert txn["fees"]["total_eur"] == "0.00"
+        assert txn["fees"]["total"] == "0.00"
+
+
+# ---------------------------------------------------------------------------
+# F3 — Preview includes company_name from security catalog
+# ---------------------------------------------------------------------------
+
+class TestPreviewCompanyName:
+    def test_preview_company_name_from_security_master(self):
+        """Preview movement company_name must equal the catalog's company_name."""
+        svc = _make_import_service(preload_securities=[_AAPL_SEC])
+        session = svc.create_session(_purchases_csv(), format_hint="purchases")
+        sid = session["session_id"]
+        q = next(q for q in session["questions"] if q["scope"] == "ENTITY")
+        svc.answer_question(sid, {
+            "question_id": q["question_id"],
+            "answer_type": "SELECTED_CANDIDATE",
+            "selected_security_id": "XNYS:AAPL",
+        })
+        preview = svc.generate_preview(sid)
+        m = preview["preview"]["movements"][0]
+        assert m["company_name"] == "Apple Inc."
+
+    def test_preview_company_name_nonempty(self):
+        """Every preview movement must contain a non-empty company_name key."""
+        svc = _make_import_service(preload_securities=[_AAPL_SEC])
+        session = svc.create_session(_purchases_csv(), format_hint="purchases")
+        sid = session["session_id"]
+        q = next(q for q in session["questions"] if q["scope"] == "ENTITY")
+        svc.answer_question(sid, {
+            "question_id": q["question_id"],
+            "answer_type": "SELECTED_CANDIDATE",
+            "selected_security_id": "XNYS:AAPL",
+        })
+        preview = svc.generate_preview(sid)
+        for movement in preview["preview"]["movements"]:
+            assert "company_name" in movement
+            assert movement["company_name"] != ""
+
+
+# ---------------------------------------------------------------------------
+# F5 — Dividend quantity is null; BUY/SELL quantities are non-null
+# ---------------------------------------------------------------------------
+
+class TestQuantityNullability:
+    def _resolve_and_preview(self, csv, fmt, security_id):
+        svc = _make_import_service(preload_securities=[_AAPL_SEC])
+        session = svc.create_session(csv, format_hint=fmt)
+        sid = session["session_id"]
+        q = next(q for q in session["questions"] if q["scope"] == "ENTITY")
+        svc.answer_question(sid, {
+            "question_id": q["question_id"],
+            "answer_type": "SELECTED_CANDIDATE",
+            "selected_security_id": security_id,
+        })
+        return svc.generate_preview(sid)
+
+    def test_dividend_quantity_null(self):
+        """Dividend movements must have quantity is None (not '0' or '1')."""
+        single_row = ["2024\tApple Inc.\t15/06/2024\t100,00\t73,31\t0,00\t12,94\t13,75\n"]
+        preview = self._resolve_and_preview(_dividends_csv(single_row), "dividends", "XNYS:AAPL")
+        m = preview["preview"]["movements"][0]
+        assert m["txn_type"] == "DIVIDEND"
+        assert m["quantity"] is None, f"Expected None, got {m['quantity']!r}"
+
+    def test_buy_quantity_present(self):
+        """BUY movements must have a non-null quantity string."""
+        preview = self._resolve_and_preview(_purchases_csv(), "purchases", "XNYS:AAPL")
+        m = preview["preview"]["movements"][0]
+        assert m["txn_type"] == "BUY"
+        assert m["quantity"] is not None
+        assert Decimal(m["quantity"]) > 0
+
+    def test_sell_quantity_present(self):
+        """SELL movements must have a non-null quantity string."""
+        preview = self._resolve_and_preview(_sales_csv(), "sales", "XNYS:AAPL")
+        m = preview["preview"]["movements"][0]
+        assert m["txn_type"] == "SELL"
+        assert m["quantity"] is not None
+        assert Decimal(m["quantity"]) > 0

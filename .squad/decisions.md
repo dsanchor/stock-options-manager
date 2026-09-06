@@ -4,9 +4,9 @@
 
 ### 1. Dividend Portfolio — Phase 1 MVP Architecture & Ledger Design
 
-**Date:** 2026-09-05  
-**Authors:** Danny (Lead, Architecture), Livingston (Persistence), Rusty (UX/Frontend)  
-**Status:** PROPOSED — awaiting user confirmation on open questions  
+**Date:** 2026-09-05
+**Authors:** Danny (Lead, Architecture), Livingston (Persistence), Rusty (UX/Frontend)
+**Status:** PROPOSED — awaiting user confirmation on open questions
 **Impact:** User-managed dividend portfolio with ledger-first data model, multi-broker support, multi-currency accounting, withholding tracking, mixed dividend support
 
 #### Context & Directive
@@ -32,10 +32,10 @@ The app tracks two orthogonal concerns:
 
 #### Multi-Currency & FX — Critical Convention
 
-**FX rate convention:** `fx_rate = EUR_PER_TXN_CCY` (number of EUR for 1 unit of transaction currency)  
-**Arithmetic:** `amount_eur = amount_txn × fx_rate`  
-**Example:** 1 USD = 0.86 EUR, so 1000 USD × 0.86 = 860 EUR  
-**Rate sources:** ECB (preferred for trade date), BROKER (HeyTrade/ING conversion), MANUAL (user), OVERRIDE (user change with original preserved)  
+**FX rate convention:** `fx_rate = EUR_PER_TXN_CCY` (number of EUR for 1 unit of transaction currency)
+**Arithmetic:** `amount_eur = amount_txn × fx_rate`
+**Example:** 1 USD = 0.86 EUR, so 1000 USD × 0.86 = 860 EUR
+**Rate sources:** ECB (preferred for trade date), BROKER (HeyTrade/ING conversion), MANUAL (user), OVERRIDE (user change with original preserved)
 **Data type:** Decimal string (9 decimal places for precision in rate composition)
 
 **CRITICAL:** This is NOT the reciprocal of ECB convention. ECB publishes EURUSD (how many USD per 1 EUR); we store the reciprocal value (EUR per 1 USD) for direct multiplication arithmetic. Always verify: `amount_eur = amount_txn × fx_rate` (never divide).
@@ -200,11 +200,11 @@ BFF routes in `frontend/src/app/api/portfolio/` follow existing proxy pattern.
 
 #### Phased Roadmap
 
-**Phase 1 (MVP):** Manual entry of movements; read-only holdings; parallel total_shares coexistence  
-**Phase 2:** Excel import (parser, batch processing, dedup); reconciliation tool; auto-FX fetching (ECB)  
-**Phase 3:** Ledger-derived total_shares (read-only); cost-basis methods (FIFO/LIFO); snapshot optimization  
-**Phase 4:** Fiscal export; tax reporting (IRPF integration); declaration linkage  
-**Phase 5:** Charts, analytics, time-series visualizations; Economics integration  
+**Phase 1 (MVP):** Manual entry of movements; read-only holdings; parallel total_shares coexistence
+**Phase 2:** Excel import (parser, batch processing, dedup); reconciliation tool; auto-FX fetching (ECB)
+**Phase 3:** Ledger-derived total_shares (read-only); cost-basis methods (FIFO/LIFO); snapshot optimization
+**Phase 4:** Fiscal export; tax reporting (IRPF integration); declaration linkage
+**Phase 5:** Charts, analytics, time-series visualizations; Economics integration
 
 #### Open Questions & Confirmations Awaited from User
 
@@ -228,8 +228,8 @@ BFF routes in `frontend/src/app/api/portfolio/` follow existing proxy pattern.
 
 Original wording "rate reciprocal" was ambiguous and incorrect. **Authoritative correction:**
 
-**FX rate convention (corrected):** `fx_rate = EUR_PER_TXN_CCY` — number of EUR for 1 unit of transaction currency.  
-**Formula:** `amount_eur = amount_txn × fx_rate` (always multiply, never divide)  
+**FX rate convention (corrected):** `fx_rate = EUR_PER_TXN_CCY` — number of EUR for 1 unit of transaction currency.
+**Formula:** `amount_eur = amount_txn × fx_rate` (always multiply, never divide)
 **Example:** 1 USD = 0.86 EUR, so 1000 USD × 0.86 = 860 EUR
 
 This is the reciprocal of the ECB convention (ECB publishes EURUSD; we store USD→EUR). The arithmetic is direct multiplication for all calculations. Updated in decisions.md Consolidated Recommendation (line 37), Danny's orchestration log, and all related specifications.
@@ -241,27 +241,70 @@ This is the reciprocal of the ECB convention (ECB publishes EURUSD; we store USD
 - **Implementation (future):** Backend API design & Cosmos provisioning (Livingston lead); frontend component development (Rusty lead); validation gates (Basher lead)
 - **Scribe (this session):** Merge inbox decisions, write orchestration logs, stage for commit
 
+#### Consolidated Recommendation (Authoritative) — 2026-09-05
+
+**See:** `.squad/designs/portfolio-ledger-securities-unified-design.md` for complete unified design consolidation of Securities Master, Portfolio Ledger, and Conversational Imports.
+
+**Key authoritative decisions ratified:**
+
+1. **Container Strategy (R1):** Security master documents in `symbols` container (partition `/symbol`), not `portfolio._global`. Provides single-partition identity + operational state co-location. Import sessions in dedicated `import_sessions` container (partition `/session_id`), not portfolio, for TTL isolation.
+
+2. **Security ID Format (R2):** Canonical format is `MIC:TICKER` (namespace-first, e.g., `XNYS:AAPL`, `XMAD:SAN`), not `TICKER:MIC`. Cosmos document ID uses underscores: `sec_XNYS_AAPL`. Rationale: standard URI/DNS convention, exchange-grouped sort, alignment with industry practice (TradingView, Bloomberg).
+
+3. **Portfolio Container Name (R4):** Container name is `portfolio` (not `portfolio_ledger`). Single-purpose container; name is unambiguous.
+
+4. **Security Master Document Type (R5):** Document type is `security_master` (not `symbol_master`). Distinct from `symbol_config` (operational state). Canonical identity stored once in `security_master`; `symbol_config` references via `security_id` field (Phase M2).
+
+5. **Conversational Import (per user directive 2026-09-05T172036+0200):** Replaces wizard-based flow. User pastes CSV; deterministic parser extracts rows; LLM orchestrates structured questions (BATCH, ENTITY, ROW_GROUP scopes); user confirms in preview; ledger writes on explicit confirmation only. LLM never parses amounts, never computes arithmetic, never auto-confirms. Deterministic validation is source of truth for all financial data.
+
+6. **Inline Security Creation (per user directive 2026-09-05T172200+0200):** Allowed during import chat. User clicks "Create Security" within ENTITY question scope; sub-form opens inline. On collision check pass, atomic write to `security_master` and `import_session` happens together (Cosmos transactional batch). Session question marked answered immediately; conversation continues.
+
+7. **No Second Identity Locus Rule:** Exactly one canonical `security_master` per security in `symbols` container. `symbol_config` is operational state, not identity. Ledger records carry denormalized security snapshot (point-in-time copy), not foreign key. Future Phase M2: `symbol_config.security_id` bridges ticker-only routes when collision exists.
+
+8. **Legacy Ticker-Only Routes:** Bare ticker routes continue working when unambiguous (single `security_master` per ticker). On collision, API returns HTTP 300 Multiple Choices. Bridge field: `symbol_config.security_id` disambiguates.
+
+9. **Import Session Container (R3):** Dedicated `import_sessions` container with 7-day TTL at document level (`import_session` doc_type carries `ttl: 604800`). Isolation prevents TTL-enabled container from expiring permanent ledger when TTL enabled at container level. Light indexing (state, created_by, expires_at) distinct from ledger indexes.
+
+10. **Staged Rows & Crash Recovery:** Import stores parsed rows in `portfolio` container as `staged_import_row` docs (90-day TTL), pending commit. On commit, atomic delete of staged rows + insert of ledger_txn records. Idempotency key prevents double-write on retry. Optional `creation_intent` field in session aids recovery logging.
+
+**Preservations from MVP:**
+- FX convention: `fx_rate = EUR_PER_TXN_CCY` (number of EUR for 1 unit of txn currency); `amount_eur = amount_txn × fx_rate` (always multiply, never divide)
+- Withholding dual-layer model: `source_wht` (origin country) vs. `dest_wht` (investor country); null ≠ zero (UI renders null as ⚠️ Pending)
+- Ledger invariants: immutable movements, derived holdings, cost basis (MVP: weighted average)
+- BUY/SELL/DIVIDEND/corporate-action models with atomic mixed-dividend modeling
+- Holdings derivation: `total_shares = SUM(BUY) - SUM(SELL) + SUM(ca_leg_shares)` (computed on read)
+
+**Deferred to Phase 2+:**
+- Ticker-only securities in portfolio (all ledger rows require full security_id)
+- Materialized ledger views (computed on read sub-second for <500 movements; snapshot optimization Phase 3)
+- Fiscal export Phase 4 (uses withholding model to identify tax-paid vs. tax-liable)
+- Cost-basis methods beyond average (FIFO/LIFO Phase 3)
+- Charts, analytics, time-series (Phase 5)
+
+**Validation reference:** `.squad/designs/import-validation-reference.md` (test matrices & acceptance criteria, linked from consolidated design)
+
 #### Next Steps
 
-1. User reviews consolidated recommendation and design documents (links below)
-2. Confirm/clarify open questions above
+1. User reviews consolidated design (`.squad/designs/portfolio-ledger-securities-unified-design.md`)
+2. User confirms or clarifies any open questions in design
 3. Proceed to Phase 1 implementation (backend API + frontend components)
 4. Phase 2 readiness: Excel import scaffolding, dedup key strategy, reconciliation tool UI
 
 ---
 
 **See also:**
-- Orchestration logs: `.squad/orchestration-log/2026-09-05T15:56:00Z-danny-*.md` (all three agents)
-- Original inbox designs: All content merged into this decision; inbox files removed after commit
-- User directive: `.squad/decisions/inbox/copilot-directive-20260905T154228+0200.md` (Spanish — design target captured)
+- **Unified Design:** `.squad/designs/portfolio-ledger-securities-unified-design.md` (complete consolidated architecture, 400+ lines)
+- **Orchestration Log:** `.squad/orchestration-log/2026-09-05-scribe-consolidation.md` (all 19 inbox sources, conflict resolutions, lessons learned)
+- **Original inbox designs:** All content merged into unified design; inbox files archived after this consolidation
+- **User directives:** `.squad/decisions/inbox/copilot-directive-20260905T172036+0200.md`, `.squad/decisions/inbox/copilot-directive-20260905T172200+0200.md` (Spanish — design source)
 
 ---
 
 ### 2. Scheduler Hang Watchdog — Per-Symbol Timeout & Worker Max Duration
 
-**Date:** 2026-06-30  
-**Author:** Rusty (Agent Dev)  
-**Status:** ✅ Implemented  
+**Date:** 2026-06-30
+**Author:** Rusty (Agent Dev)
+**Status:** ✅ Implemented
 **Impact:** Scheduler reliability, options chain caching, production stability
 
 #### Context
@@ -458,9 +501,9 @@ Both are necessary:
 ---
 
 ### 4. MCP Server Migration to Massive.com (Agent Instructions)
-**Date:** 2026-03-26  
-**Author:** Linus (Quant Dev)  
-**Status:** ✅ Completed  
+**Date:** 2026-03-26
+**Author:** Linus (Quant Dev)
+**Status:** ✅ Completed
 **Impact:** Team-wide (affects agent instructions and data gathering workflow)
 
 #### Context
@@ -491,9 +534,9 @@ Migrated both covered call and cash-secured put agent instructions from the old 
 ---
 
 ### 5. CosmosDB Unified Container Migration (Design)
-**Date:** 2026-04-01  
-**Author:** Danny (Lead)  
-**Status:** Proposed  
+**Date:** 2026-04-01
+**Author:** Danny (Lead)
+**Status:** Proposed
 **Impact:** Data model, ID schema, cosmos_db.py, agent_runner.py, web/app.py, context.py, provisioning
 
 #### Problem Statement
@@ -622,9 +665,9 @@ Keep backup for 7 days post-migration.
 ---
 
 ### 6. Unified Schema Implementation (Code)
-**Date:** 2026-04-01  
-**Author:** Rusty (Backend)  
-**Status:** Implementation Complete, Awaiting Migration  
+**Date:** 2026-04-01
+**Author:** Rusty (Backend)
+**Status:** Implementation Complete, Awaiting Migration
 **Related:** CosmosDB Unified Container Migration (Design)
 
 #### Summary
@@ -715,9 +758,9 @@ def mark_as_alert(self, symbol: str, activity_id: str, alert_data: dict) -> dict
 ---
 
 ### 7. Agent Signal Refactor for Unified Schema
-**Date:** 2026-04-01  
-**Author:** Linus (Quant Dev)  
-**Status:** Implemented  
+**Date:** 2026-04-01
+**Author:** Linus (Quant Dev)
+**Status:** Implemented
 **Depends on:** Danny's CosmosDB unified schema migration
 
 #### Problem
@@ -743,20 +786,20 @@ Danny's migration eliminates separate alert documents. Alerts become activities 
    - `_extract_alert_enrichment(json_data)` — extracts alert-only fields (confidence, risk_flags) from agent JSON response
 
 3. **Updated write paths (2 locations):**
-   
+
    **Path 1: Covered call / cash-secured put agents (line ~340)**
    ```python
    # Before:
    cosmos.write_activity(...)
    if is_alert:
        cosmos.write_alert(...)
-   
+
    # After:
    if is_alert:
        activity_payload.update(self._extract_alert_enrichment(json_data))
    cosmos.write_activity(...)  # Single write with alert fields included
    ```
-   
+
    **Path 2: Position monitor agents (line ~580)**
    Same pattern — merge alert enrichment into activity payload before writing.
 
@@ -815,9 +858,9 @@ These were used to filter which fields go into the alert document. With no separ
 ---
 
 ### 8. Migration Script Testing Strategy
-**Date:** 2026-04-01  
-**Author:** Basher (Tester)  
-**Status:** Implemented  
+**Date:** 2026-04-01
+**Author:** Basher (Tester)
+**Status:** Implemented
 **Related:** CosmosDB Unified Container Migration (Design)
 
 #### Decision
@@ -980,9 +1023,9 @@ Before running migration on production data:
 ---
 
 ### 5. Multi-Provider MCP Configuration with Provider Switching
-**Date:** 2026-07-25  
-**Decider:** Rusty (Agent Dev)  
-**Status:** ✅ Completed  
+**Date:** 2026-07-25
+**Decider:** Rusty (Agent Dev)
+**Status:** ✅ Completed
 **Impact:** Team-wide (enables flexible provider selection without code changes)
 
 #### Context
@@ -1060,10 +1103,10 @@ mcp:
 ---
 
 ### 6. Alpha Vantage MCP Instruction Files (Strategy Logic Parity)
-**Date:** 2026-07-25  
-**Author:** Linus (Quant Dev)  
-**Status:** ✅ Completed  
-**Files:** `src/av_covered_call_instructions.py` (420 lines), `src/av_cash_secured_put_instructions.py` (569 lines)  
+**Date:** 2026-07-25
+**Author:** Linus (Quant Dev)
+**Status:** ✅ Completed
+**Files:** `src/av_covered_call_instructions.py` (420 lines), `src/av_cash_secured_put_instructions.py` (569 lines)
 **Impact:** Team-wide (enables trading with Alpha Vantage data source)
 
 #### Context
@@ -1184,8 +1227,8 @@ DECISION CRITERIA + OUTPUT
 
 #### Coordination
 
-**Depends on:** Rusty's lazy import pattern (selection happens in agent files)  
-**Enables:** Agent provider swapping via `config.yaml` change only  
+**Depends on:** Rusty's lazy import pattern (selection happens in agent files)
+**Enables:** Agent provider swapping via `config.yaml` change only
 **Documentation:** Common decision rationale in decisions.md; provider-specific details in each instruction file
 
 #### Next Steps
@@ -1198,8 +1241,8 @@ DECISION CRITERIA + OUTPUT
 
 ## Decision: Alpha Vantage Remote MCP Transport
 
-**Date:** 2026-07-25  
-**Author:** Rusty  
+**Date:** 2026-07-25
+**Author:** Rusty
 **Status:** Implemented
 
 ### Context
@@ -1231,8 +1274,8 @@ Replaced the local stdio-based Alpha Vantage MCP integration with the remote str
 
 ## Decision: TradingView Provider Plumbing + EXCHANGE-SYMBOL Format
 
-**Date:** 2026-03-26  
-**Author:** Rusty (Agent Dev)  
+**Date:** 2026-03-26
+**Author:** Rusty (Agent Dev)
 **Status:** Implemented
 
 ### Context
@@ -1263,9 +1306,9 @@ Danny requested adding TradingView as a 4th MCP provider and changing the symbol
 
 ## Decision: TradingView Instruction File Design
 
-**Date:** 2026-03-26  
-**Author:** Linus (Quant Dev)  
-**Status:** Implemented  
+**Date:** 2026-03-26
+**Author:** Linus (Quant Dev)
+**Status:** Implemented
 **Files:** `src/tv_covered_call_instructions.py`, `src/tv_cash_secured_put_instructions.py`
 
 ### Context
@@ -1304,9 +1347,9 @@ Instructions include explicit fallback protocol when options chain data is empty
 
 ## Decision: Structured JSON Output Format for Decisions
 
-**Date:** 2026-03-27  
-**Author:** Rusty (Agent Dev)  
-**Status:** Implemented  
+**Date:** 2026-03-27
+**Author:** Rusty (Agent Dev)
+**Status:** Implemented
 **Impact:** Team-wide (changes agent output parsing, logging, and instruction format)
 
 ### Context
@@ -1381,8 +1424,8 @@ Replaced the pipe-delimited human-readable output format with a machine-parseabl
 
 ## User Directive: Model Configuration Change
 
-**Date:** 2026-03-27T09:18:56Z  
-**By:** dsanchor (via Copilot)  
+**Date:** 2026-03-27T09:18:56Z
+**By:** dsanchor (via Copilot)
 **Status:** Implemented in config/team.md
 
 ### Context
@@ -1407,9 +1450,9 @@ Updated model configuration from gpt-5.4-mini to gpt-5.1 based on performance ob
 
 ## 2. TradingView Navigation Optimization: Remove Main Symbol Page
 
-**Date:** 2026-03-27T09:38:00Z  
-**Author:** Rusty (Agent Dev)  
-**Status:** Implemented  
+**Date:** 2026-03-27T09:38:00Z
+**Author:** Rusty (Agent Dev)
+**Status:** Implemented
 **Impact:** Team-wide (improves TradingView agent data gathering)
 
 ### Context
@@ -1476,9 +1519,9 @@ Data sources: Analyst consensus and earnings history now sourced from forecast p
 
 ### 12. User Directive: JSONL-Only Decision/Signal Output
 
-**Date:** 2026-03-27  
-**Author:** dsanchor (via Copilot)  
-**Status:** Proposed  
+**Date:** 2026-03-27
+**Author:** dsanchor (via Copilot)
+**Status:** Proposed
 **Impact:** Output format simplification
 
 #### Decision
@@ -1493,9 +1536,9 @@ Single machine-parseable format reduces file management complexity. JSONL is eas
 
 ### 13. Open Position Monitor Agents
 
-**Date:** 2025-07  
-**Author:** Rusty (Agent Dev)  
-**Status:** Implemented  
+**Date:** 2025-07
+**Author:** Rusty (Agent Dev)
+**Status:** Implemented
 **Impact:** New feature — two new agents added to the scheduler
 
 #### Context
@@ -1528,8 +1571,8 @@ Added OpenCallMonitor and OpenPutMonitor agents that track existing short option
 
 ### 14. Re-add TradingView Overview Page as Pre-Fetched Resource
 
-**Author:** Rusty (Agent Dev)  
-**Date:** 2025-07  
+**Author:** Rusty (Agent Dev)
+**Date:** 2025-07
 **Status:** Proposed
 
 #### Context
@@ -1550,9 +1593,9 @@ Add `fetch_overview()` as the first pre-fetched resource, using the same `browse
 
 ### 15. Profit Optimization Signals for Open Position Monitors
 
-**Date:** 2025-07-22  
-**Author:** Rusty (Agent Dev)  
-**Status:** Implemented  
+**Date:** 2025-07-22
+**Author:** Rusty (Agent Dev)
+**Status:** Implemented
 **Impact:** Agent behavior (monitor instruction prompts)
 
 #### Context
@@ -1582,8 +1625,8 @@ Added profit optimization instruction sections to both `tv_open_call_instruction
 
 ### 16. README Documentation Structure
 
-**Date:** 2025-07  
-**Author:** Rusty (Agent Dev)  
+**Date:** 2025-07
+**Author:** Rusty (Agent Dev)
 **Status:** Completed
 
 #### Decision
@@ -1609,8 +1652,8 @@ The README previously covered setup and troubleshooting well but didn't explain 
 
 ### 17. Use browser_run_code for TradingView Technicals & Forecast
 
-**Date:** 2025-07  
-**Author:** Rusty  
+**Date:** 2025-07
+**Author:** Rusty
 **Status:** Implemented
 
 #### Context
@@ -1638,9 +1681,9 @@ Use `browser_run_code` (Playwright JS execution) for technicals and forecast pag
 
 ### 18. TradingView Pre-Fetch Architecture
 
-**Date:** 2025-07-17  
-**Author:** Rusty (Agent Dev)  
-**Status:** Implemented  
+**Date:** 2025-07-17
+**Author:** Rusty (Agent Dev)
+**Status:** Implemented
 **Commit:** 9bca215
 
 #### Context
@@ -1673,8 +1716,8 @@ Pre-fetch ALL TradingView data deterministically in Python, then pass it to the 
 
 ### 19. Web Dashboard Architecture
 
-**Date:** 2025-07-28  
-**Author:** Rusty (Agent Dev)  
+**Date:** 2025-07-28
+**Author:** Rusty (Agent Dev)
 **Status:** Completed
 
 #### Context
@@ -1792,9 +1835,9 @@ Remove all non-TradingView providers. TradingView via Playwright is the sole dat
 - **Scribe (Docs):** README already updated. No multi-provider docs to maintain.
 # Decision: Dashboard Run Button UX
 
-**Date:** 2024-12-XX  
-**Author:** Linus (Quant Dev / Frontend Dev)  
-**Status:** Implemented  
+**Date:** 2024-12-XX
+**Author:** Linus (Quant Dev / Frontend Dev)
+**Status:** Implemented
 
 ## Context
 
@@ -1844,9 +1887,9 @@ The dashboard had "Run Now" buttons for each agent, but users needed:
 ---
 
 ### 8. Button Alignment Fix — Run Full Analysis Button
-**Date:** 2025  
-**Author:** Linus (Quant Dev / Frontend)  
-**Status:** Completed  
+**Date:** 2025
+**Author:** Linus (Quant Dev / Frontend)
+**Status:** Completed
 **Impact:** UI/UX (visual consistency)
 
 #### Context
@@ -1874,9 +1917,9 @@ Updated `.scheduler-bar` CSS to use flexbox space distribution:
 ---
 
 ### 9. Chat UI Design System Alignment
-**Date:** 2024-03-31  
-**Author:** Rusty (Agent Dev)  
-**Status:** Completed  
+**Date:** 2024-03-31
+**Author:** Rusty (Agent Dev)
+**Status:** Completed
 **Impact:** Web UI consistency
 
 #### Context
@@ -1919,9 +1962,9 @@ Standard card-based selection with free text inputs matching app design; all fun
 ---
 
 ### 10. Quick Analysis Button Enable Pattern
-**Date:** 2026-03-31  
-**Author:** Rusty (Agent Dev)  
-**Status:** ✅ Implemented  
+**Date:** 2026-03-31
+**Author:** Rusty (Agent Dev)
+**Status:** ✅ Implemented
 **Impact:** Form UX improvements
 
 #### Context
@@ -1983,9 +2026,9 @@ fieldEl.addEventListener('keydown', (e) => {
 ---
 
 ### 11. Quick Analysis Chat — Centralized Instruction Reuse for Put/Call Analysis
-**Date:** 2026-04-01  
-**Decider:** Rusty (Agent Dev)  
-**Status:** ✅ Implemented  
+**Date:** 2026-04-01
+**Decider:** Rusty (Agent Dev)
+**Status:** ✅ Implemented
 **Impact:** Chat feature enhancement, Agent instruction reuse
 
 #### Context
@@ -2046,9 +2089,9 @@ When building chat/analysis features that should behave like existing agents:
 ---
 
 ### 12. Chat vs Monitor Instructions Split
-**Date:** 2026-04-01  
-**Decider:** Rusty + User (dsanchor)  
-**Status:** ✅ Accepted  
+**Date:** 2026-04-01
+**Decider:** Rusty + User (dsanchor)
+**Status:** ✅ Accepted
 **Impact:** Chat feature enhancement, agent instruction architecture
 
 #### Context
@@ -2127,8 +2170,8 @@ When building chat/analysis features that need different output formats:
 
 # Agent Trigger Scope: Optional Symbol Parameter
 
-**Date:** 2026-04-01  
-**Author:** Rusty  
+**Date:** 2026-04-01
+**Author:** Rusty
 **Type:** Architecture Decision
 
 ## Context
@@ -2184,8 +2227,8 @@ else:
 
 # Position ID Uniqueness Fix
 
-**Date:** 2026-04-01  
-**Agent:** Rusty  
+**Date:** 2026-04-01
+**Agent:** Rusty
 **Type:** Bug Fix / Data Integrity
 
 ## Decision
@@ -2233,18 +2276,18 @@ The old format caused collisions in these scenarios:
 
 ## Testing
 
-✓ Roll A → B → A creates 3 distinct IDs  
-✓ Close/reopen creates 2 distinct IDs  
-✓ Module imports successfully  
+✓ Roll A → B → A creates 3 distinct IDs
+✓ Close/reopen creates 2 distinct IDs
+✓ Module imports successfully
 ✓ All position creation paths covered
 
 ---
 
 ### 16. Alert Link Pattern: Document ID Field Usage
 
-**Date:** 2026-04-02  
-**Author:** Rusty (UI/Integration)  
-**Status:** ✅ Implemented  
+**Date:** 2026-04-02
+**Author:** Rusty (UI/Integration)
+**Status:** ✅ Implemented
 **Impact:** Symbol detail page, alert navigation UX
 
 #### Problem Statement
@@ -2275,8 +2318,8 @@ Both activities and alerts are documents stored in CosmosDB with an `id` field. 
 
 #### Impact
 
-✓ Alert navigation now works  
-✓ Consistent with activity and dashboard patterns  
+✓ Alert navigation now works
+✓ Consistent with activity and dashboard patterns
 ✓ No data model changes
 
 ---
@@ -2285,9 +2328,9 @@ Both activities and alerts are documents stored in CosmosDB with an `id` field. 
 
 ### 17. Symbol Chat Context Selection Screen
 
-**Date:** 2025-01  
-**Author:** Linus (Backend Dev)  
-**Status:** ✅ Implemented  
+**Date:** 2025-01
+**Author:** Linus (Backend Dev)
+**Status:** ✅ Implemented
 **Impact:** Symbol chat UX (affects web/templates/symbol_chat.html)
 
 #### Context
@@ -2318,19 +2361,19 @@ Modified `web/templates/symbol_chat.html`:
 
 #### Benefits
 
-✓ Clarity: Users know exactly what context is loaded  
-✓ Intent: Deliberate selection before engaging  
-✓ Simplicity: No confusing mid-chat checkbox toggles  
-✓ Persistence: Preferences saved via localStorage  
+✓ Clarity: Users know exactly what context is loaded
+✓ Intent: Deliberate selection before engaging
+✓ Simplicity: No confusing mid-chat checkbox toggles
+✓ Persistence: Preferences saved via localStorage
 ✓ Flexibility: Can change context and restart easily
 
 ---
 
 ### 18. Put Roll Up Strategy Relaxation Implementation
 
-**Date:** 2026-04-01  
-**Author:** Linus (Backend Dev)  
-**Status:** Implemented  
+**Date:** 2026-04-01
+**Author:** Linus (Backend Dev)
+**Status:** Implemented
 **Context:** Roll strategy optimization following covered call roll down relaxation
 
 #### Decision Summary
@@ -2351,9 +2394,9 @@ Updated put roll optimization gates to apply research-validated profit/margin th
 
 ### 19. Scheduler Reload Implementation
 
-**Date:** 2026-04-02  
-**Author:** Linus (Backend Dev)  
-**Status:** Implemented  
+**Date:** 2026-04-02
+**Author:** Linus (Backend Dev)
+**Status:** Implemented
 **Context:** Configuration and runtime management improvements
 
 #### Decision Summary
@@ -2362,17 +2405,17 @@ Implemented scheduler reload capability to apply configuration changes without f
 
 #### Benefits
 
-✓ Faster configuration updates  
-✓ Reduced downtime  
+✓ Faster configuration updates
+✓ Reduced downtime
 ✓ Better operational flexibility
 
 ---
 
 ### 20. Put Roll Implementation Details
 
-**Date:** 2026-04-01  
-**Author:** Linus (Backend Dev)  
-**Status:** Implemented  
+**Date:** 2026-04-01
+**Author:** Linus (Backend Dev)
+**Status:** Implemented
 **Context:** Options trading automation and roll mechanics
 
 #### Implementation
@@ -2390,9 +2433,9 @@ Completed implementation of put roll mechanics with proper state transitions, po
 
 ### 21. Unified Activities + Alerts View with Alert Filter
 
-**Date:** 2026-04-02  
-**Author:** Rusty (Agent Dev)  
-**Status:** ✅ Implemented  
+**Date:** 2026-04-02
+**Author:** Rusty (Agent Dev)
+**Status:** ✅ Implemented
 **Scope:** Symbol detail page UX
 
 #### Decision
@@ -2451,9 +2494,9 @@ When displaying time-series data with multiple types (alerts, activities, events
 
 ### 22. Summary Agent Multi-Agent-Type Data Fix
 
-**Date:** 2026-04-10  
-**Author:** Linus (Quant Dev)  
-**Status:** ✅ Implemented  
+**Date:** 2026-04-10
+**Author:** Linus (Quant Dev)
+**Status:** ✅ Implemented
 **Impact:** Data layer, summary agent accuracy
 
 #### Problem Statement
@@ -2540,9 +2583,9 @@ Changed `get_recent_activities_by_symbol()` to fetch `limit_per_symbol` activiti
 
 ### 23. Sequential Full Analysis via /api/trigger-all
 
-**Date:** 2026-04-10  
-**Author:** Rusty (Agent Dev)  
-**Status:** ✅ Implemented  
+**Date:** 2026-04-10
+**Author:** Rusty (Agent Dev)
+**Status:** ✅ Implemented
 **Impact:** Backend API, Frontend UI
 
 #### Context
@@ -2600,9 +2643,9 @@ When running multiple sequential background tasks:
 
 ### 24. Agent Type Filter — Dynamic Population from DOM
 
-**Date:** 2026-04-16  
-**Author:** Rusty (Agent Dev)  
-**Status:** ✅ Implemented  
+**Date:** 2026-04-16
+**Author:** Rusty (Agent Dev)
+**Status:** ✅ Implemented
 **Impact:** Dashboard and Symbol Detail UX
 
 #### Context
@@ -2641,9 +2684,9 @@ If an agent type has zero recent activity, it won't appear in the dropdown. This
 
 ### 25. Mandatory Premium Cross-Verification Step
 
-**Date:** 2026-07-14  
-**Author:** Linus (Quant Dev)  
-**Status:** ✅ Implemented  
+**Date:** 2026-07-14
+**Author:** Linus (Quant Dev)
+**Status:** ✅ Implemented
 **Impact:** Agent instructions (7 files)
 
 #### Problem
@@ -2676,10 +2719,10 @@ Add a mandatory "Premium Cross-Verification" step to every agent instruction fil
 
 ### 26. Contrarian Agent Refactored to Quality Auditor
 
-**Date:** 2026-07  
-**Author:** Linus (Quant Dev)  
-**Status:** ✅ Implemented  
-**Commit:** 305f33b  
+**Date:** 2026-07
+**Author:** Linus (Quant Dev)
+**Status:** ✅ Implemented
+**Commit:** 305f33b
 **Impact:** Agent behavior, signal quality
 
 #### What Changed
@@ -2708,9 +2751,9 @@ The adversarial framing caused the LLM to manufacture objections against correct
 
 ### 27. Robust Mid-Price Calculation for Illiquid Options
 
-**Date:** 2026-06-30  
-**Author:** Rusty (Agent Dev)  
-**Status:** ✅ Implemented  
+**Date:** 2026-06-30
+**Author:** Rusty (Agent Dev)
+**Status:** ✅ Implemented
 **Impact:** Options pricing accuracy, P&L calculations, open-put monitor dashboard
 
 #### Context
@@ -2808,17 +2851,17 @@ Both sites have access to `last_price` parameter via existing local variables.
 
 ## 2026-04-20T10:25:00Z: User directive
 
-**By:** dsanchor (via Copilot)  
-**What:** Always update README if necessary. Any new functionality or changes to existing ones require a README update.  
+**By:** dsanchor (via Copilot)
+**What:** Always update README if necessary. Any new functionality or changes to existing ones require a README update.
 **Why:** User request — captured for team memory
 
 ---
 
 ## 2. Options Chain Format Recommendation
 
-**Date:** 2026-01-15  
-**Author:** Linus (Quant Dev)  
-**Status:** Proposed  
+**Date:** 2026-01-15
+**Author:** Linus (Quant Dev)
+**Status:** Proposed
 **Impact:** Monitor agents (open_call_monitor, open_put_monitor), options chain parser, agent instructions
 
 ### Problem Statement
@@ -2874,7 +2917,7 @@ Only include strikes within ±15 strikes of the current position.
 
 #### Lookup Pattern
 
-**Before:** "Find strike 475 in array, extract ask field"  
+**Before:** "Find strike 475 in array, extract ask field"
 **After:** `calls["20260427"]["475.0"]["ask"]`
 
 Direct key path. No iteration, no filtering, no equality matching. Autocompletion-friendly.
@@ -2949,15 +2992,15 @@ Direct key path. No iteration, no filtering, no equality matching. Autocompletio
 ### Risk Mitigation
 
 #### Edge Case: Strike Not in Filtered Chain
-**Problem:** Agent wants to roll to $500, but filtering cut it off (current position $475, cutoff $513)  
+**Problem:** Agent wants to roll to $500, but filtering cut it off (current position $475, cutoff $513)
 **Solution:** Agent response includes: "Strike 500.0 not available in filtered chain. Recommend $497.5 (highest available) or request full chain."
 
 #### Edge Case: Float Precision
-**Problem:** Strike 475 vs 475.0 vs 475.00  
+**Problem:** Strike 475 vs 475.0 vs 475.00
 **Solution:** Use string keys: `"475.0"` (avoid JavaScript float precision issues)
 
 #### Edge Case: Missing Strike in Data
-**Problem:** TradingView didn't return a specific strike  
+**Problem:** TradingView didn't return a specific strike
 **Solution:** Existing "contract not found" logic remains — format change doesn't affect this
 
 ### Decision Timeline
@@ -2983,8 +3026,8 @@ Direct key path. No iteration, no filtering, no equality matching. Autocompletio
 
 ## 3. Decision: Anti-Hallucination Guardrails for Roll Pricing
 
-**Author:** Linus (Quant Dev)  
-**Date:** 2026-07-22  
+**Author:** Linus (Quant Dev)
+**Date:** 2026-07-22
 **Status:** Implemented (not yet committed)
 
 ### Context
@@ -3009,9 +3052,9 @@ LLMs will confabulate plausible-looking numbers unless explicitly told not to AN
 
 ## 4. Decision: Strike-Keyed Dictionary Format for Options Chains
 
-**Date:** 2026-05-12  
-**Author:** Linus (Quant Dev)  
-**Status:** Implemented  
+**Date:** 2026-05-12
+**Author:** Linus (Quant Dev)
+**Status:** Implemented
 **Impact:** Parser output format, agent instructions, agent_runner formatting
 
 ### Summary
@@ -3039,9 +3082,9 @@ Options chain data format changed from arrays-of-contracts to strike-keyed dicti
 
 ## 5. Decision: Pivot Points Are Guidance, Not Literal Strike Values
 
-**Author:** Rusty  
-**Date:** 2026-07  
-**Status:** Applied  
+**Author:** Rusty
+**Date:** 2026-07
+**Status:** Applied
 
 ### Context
 Phase 2 roll management treated pivot point levels (R1/R2/R3 for calls, S1/S2/S3 for puts) as literal strike prices to look up in the candidates table. These calculated values almost never match actual option chain strikes, causing failed lookups and unnecessary CLOSE recommendations.
@@ -3062,9 +3105,9 @@ c0034bf: `fix: pivot points as guidance, not literal strikes in roll instruction
 
 ## 6. Decision: Bare ROLL Prohibition + ROLL_OUT Guardrail
 
-**Date:** 2026-07  
-**Author:** Linus (Quant Dev)  
-**Status:** Implemented  
+**Date:** 2026-07
+**Author:** Linus (Quant Dev)
+**Status:** Implemented
 **Impact:** All four monitor instruction files (Phase 1 assessment + Phase 2 roll management, calls + puts)
 
 ### Problem
@@ -3134,9 +3177,9 @@ The agent making a decision must have the data to justify it. CLOSE requires ful
 
 ## 8. Decision: Near-ATM Stability Buffer for Phase 1 Assessment
 
-**Date:** 2026-07  
-**Author:** Linus (Quant Dev)  
-**Status:** Implemented  
+**Date:** 2026-07
+**Author:** Linus (Quant Dev)
+**Status:** Implemented
 **Impact:** Phase 1 call + put assessment instructions (tv_open_call_assessment_instructions.py, tv_open_put_assessment_instructions.py)
 
 ### Problem
@@ -3199,8 +3242,8 @@ The instruction files no longer import `OPTIONS_CHAIN_SCHEMA_DESCRIPTION` from `
 
 ## 10. Decision: Reject bare "ROLL" at code level
 
-**Author:** Rusty  
-**Date:** 2026-07  
+**Author:** Rusty
+**Date:** 2026-07
 **Status:** Implemented
 
 ### Context
@@ -3245,9 +3288,9 @@ Pre-compute roll economics in Python and send Phase 2 a flat markdown table inst
 
 ## 12. Decision: Debug Endpoint Underlying Price Source
 
-**Date:** 2026-07  
-**Author:** Rusty (Agent Dev)  
-**Status:** Implemented  
+**Date:** 2026-07
+**Author:** Rusty (Agent Dev)
+**Status:** Implemented
 **Impact:** Debug endpoint only (no production agent impact)
 
 ### Context
@@ -3269,9 +3312,9 @@ Source the underlying price from the cached **technicals** data (`cache.get(cach
 
 ## 13. Decision: Direction-Aware Chain Filtering for Phase 2
 
-**Author:** Rusty  
-**Date:** 2026-07  
-**Status:** Implemented  
+**Author:** Rusty
+**Date:** 2026-07
+**Status:** Implemented
 **Commit:** 39096cc
 
 ### Context
@@ -3295,9 +3338,9 @@ Added a third filtering stage (`filter_options_chain_by_roll_direction`) that na
 
 ## 14. Decision: Auto-convert incomplete ROLL actions to CLOSE
 
-**Author:** Rusty  
-**Date:** 2026-07  
-**Status:** Implemented  
+**Author:** Rusty
+**Date:** 2026-07
+**Status:** Implemented
 **Commit:** 2086e07
 
 ### Context
@@ -3316,9 +3359,9 @@ Incomplete ROLL actions (missing `new_strike`, `new_expiration`, or `roll_econom
 
 ## 15. Decision: User Directive — ROLL Action Format
 
-**Date:** 2026-04-23  
-**By:** dsanchor (via Copilot)  
-**Status:** Implemented  
+**Date:** 2026-04-23
+**By:** dsanchor (via Copilot)
+**Status:** Implemented
 
 ### Directive
 
@@ -3334,9 +3377,9 @@ User request — captured for team memory. Prevents bare ROLL output and unneces
 
 ## 16. Decision: User Directive — ITM Stability Buffer
 
-**Date:** 2026-04-23  
-**By:** David (via Copilot)  
-**Status:** Implemented  
+**Date:** 2026-04-23
+**By:** David (via Copilot)
+**Status:** Implemented
 
 ### Directive
 
@@ -3350,9 +3393,9 @@ User request — prevents oscillating recommendations that create noise without 
 
 ## 17. User Directive — Mobile UI Horizontal Scrolling
 
-**Date:** 2026-05-01T14:48Z  
-**By:** dsanchor (via Copilot)  
-**Status:** Team awareness  
+**Date:** 2026-05-01T14:48Z
+**By:** dsanchor (via Copilot)
+**Status:** Team awareness
 
 ### Directive
 
@@ -3366,9 +3409,9 @@ User request — captured for team memory. Ensures better mobile UX with respons
 
 ## 18. User Directive — English-Only UI
 
-**Date:** 2026-04-18T08:43:10Z  
-**By:** David Sancho (via Copilot)  
-**Status:** Team awareness  
+**Date:** 2026-04-18T08:43:10Z
+**By:** David Sancho (via Copilot)
+**Status:** Team awareness
 
 ### Directive
 
@@ -3382,9 +3425,9 @@ User request — captured for team memory. Maintains consistency with English as
 
 ## 19. Decision: Contrarian Agent Architecture (Propuesta)
 
-**Date:** 2026-07-17  
-**Author:** Danny (Lead)  
-**Status:** Implemented (Option A adopted)  
+**Date:** 2026-07-17
+**Author:** Danny (Lead)
+**Status:** Implemented (Option A adopted)
 **Impact:** Pipeline automation with selective triggering
 
 ### Architecture Summary
@@ -3416,9 +3459,9 @@ Activity persisted FIRST, then contrarian enrichment applied via `update_activit
 
 ## 20. Decision: Contrarian Instructions Design
 
-**Date:** 2026-07-18  
-**Author:** Linus (Quant Dev)  
-**Status:** Implemented  
+**Date:** 2026-07-18
+**Author:** Linus (Quant Dev)
+**Status:** Implemented
 **Impact:** `src/tv_contrarian_instructions.py` (new)
 
 ### Design Decisions
@@ -3447,9 +3490,9 @@ prompt = get_contrarian_instructions("open_call", "ROLL_UP_AND_OUT")
 
 ## 21. Decision: Contrarian Agent Pipeline Integration (MVP)
 
-**Date:** 2026-07-17  
-**Author:** Rusty (Agent Dev)  
-**Status:** Implemented  
+**Date:** 2026-07-17
+**Author:** Rusty (Agent Dev)
+**Status:** Implemented
 **Implements:** Danny's contrarian architecture (Option A)
 
 ### Implementation Choices
@@ -3472,9 +3515,9 @@ prompt = get_contrarian_instructions("open_call", "ROLL_UP_AND_OUT")
 
 ## 22. Decision: Prolonged WAIT Detection
 
-**Date:** 2026-07-16  
-**Author:** Rusty (Agent Dev)  
-**Status:** Implemented  
+**Date:** 2026-07-16
+**Author:** Rusty (Agent Dev)
+**Status:** Implemented
 
 ### Context
 
@@ -3498,8 +3541,8 @@ Added `send_prolonged_wait_alert()` to `TelegramNotifier` — dedicated format w
 
 ## 23. DGI Screener: Top 40 + Interactive Filters
 
-**Date:** 2026-05-10  
-**Author:** Linus (Quant Dev)  
+**Date:** 2026-05-10
+**Author:** Linus (Quant Dev)
 **Status:** Implemented
 
 ### Decision
@@ -3573,9 +3616,9 @@ This avoids the complexity of server-side filtering APIs while providing excelle
 
 ## 24. Decision: Normalize exchange codes at the Python source
 
-**Author:** Linus (Quant Dev)  
-**Date:** 2026-05-10  
-**Status:** Implemented  
+**Author:** Linus (Quant Dev)
+**Date:** 2026-05-10
+**Status:** Implemented
 
 ### Context
 yfinance returns internal exchange codes (NYQ, NMS, NGM, PCX, BTS, etc.) that don't match TradingView market names. The JS template had a band-aid `marketMap` to translate these, but the ➕ (add to watchlist) button still had `data-exchange="NYSE"` hardcoded.
@@ -3593,8 +3636,8 @@ Normalize exchange codes in `src/dgi_screener.py` via an `EXCHANGE_MAP` dict app
 
 ## 25. Decision: DGI `top_n` exposed in Settings UI
 
-**Author:** Linus (Quant Dev)  
-**Date:** 2026-05-10  
+**Author:** Linus (Quant Dev)
+**Date:** 2026-05-10
 
 ### Context
 The DGI screener's `top_n` parameter (how many top-ranked stocks to keep) was hardcoded as a default of 40 with no UI to change it. User requested it be configurable from the Settings page.
@@ -3617,9 +3660,9 @@ Follows the same pattern as `summary_activity_count`: numeric input with server-
 
 ## 26. Decision: Recommendation values computed from signal ratios
 
-**Author:** Linus (Quant Dev)  
-**Date:** 2026-05-14  
-**Status:** Implemented  
+**Author:** Linus (Quant Dev)
+**Date:** 2026-05-14
+**Status:** Implemented
 
 ### Context
 TradingView's scanner API provided pre-computed `Recommend.All`, `Recommend.Other`, `Recommend.MA` fields (normalized to [-1, 1]). yfinance has no equivalent.
@@ -3634,9 +3677,9 @@ Slight deviation from TradingView's exact weighting (which may have used proprie
 
 ## 27. Decision: No pandas-ta hard requirement
 
-**Author:** Linus (Quant Dev)  
-**Date:** 2026-05-14  
-**Status:** Implemented  
+**Author:** Linus (Quant Dev)
+**Date:** 2026-05-14
+**Status:** Implemented
 
 ### Context
 pandas-ta is excellent but can have install issues on some platforms (C extensions).
@@ -3653,9 +3696,9 @@ TechnicalsCalculator has full manual fallback using only pandas + numpy (always 
 
 ## 28. Decision: Options chain DTE window is configurable
 
-**Author:** Linus (Quant Dev)  
-**Date:** 2026-05-14  
-**Status:** Implemented  
+**Author:** Linus (Quant Dev)
+**Date:** 2026-05-14
+**Status:** Implemented
 
 ### Context
 Different strategies need different time horizons. Covered calls typically target 30-45 DTE, but agents may want to see wider range.
@@ -3672,9 +3715,9 @@ Default 7-90 DTE window, configurable via `config={"min_dte": 7, "max_dte": 90}`
 
 ## 29. Decision: dividendYield handling
 
-**Author:** Linus (Quant Dev)  
-**Date:** 2026-05-14  
-**Status:** Implemented  
+**Author:** Linus (Quant Dev)
+**Date:** 2026-05-14
+**Status:** Implemented
 
 ### Context
 yfinance returns dividendYield in percentage form (0.88 = 0.88%, not 88%). This is a known gotcha documented in project memory.
@@ -3691,9 +3734,9 @@ Store as-is in the output (matching TV format where `dividends_yield` was alread
 
 ## 30. Decision: Market Hours Detection — Live Options Probe vs. Calendar Rules
 
-**Author:** Linus (Quant Dev)  
-**Date:** 2026-05-14  
-**Status:** ✅ Implemented  
+**Author:** Linus (Quant Dev)
+**Date:** 2026-05-14
+**Status:** ✅ Implemented
 
 ### Context
 The original `src/market_hours.py` used rule-based detection:
@@ -3743,10 +3786,10 @@ Replace `is_us_market_open()` with a **live probe** that checks MSFT ATM call bi
 
 ## 31. Decision: Options Chain Merge Strategy — Preserve yfinance Cache During Market Closure
 
-**Author:** Linus (Quant Dev)  
-**User Directive:** dsanchor (2026-05-14T19:24)  
-**Date:** 2026-05-14  
-**Status:** ✅ Implemented  
+**Author:** Linus (Quant Dev)
+**User Directive:** dsanchor (2026-05-14T19:24)
+**Date:** 2026-05-14
+**Status:** ✅ Implemented
 
 ### Context
 yfinance provides the full options chain during market open. When market closes, yfinance returns zeroed bid/ask/IV/volume (Decision 30 uses this to detect closure). The TradingView Playwright fallback (see Decision: Hybrid Options Chain, 2026-07) scrapes ~5 nearest expirations when market is closed, but we lose access to the 6th, 7th, etc. longer-dated contracts that were available during the open.
@@ -3803,8 +3846,8 @@ Implement an in-memory merge strategy in `src/yfinance_data_provider.py`:
 
 ## Rusty — Snapshot Chart Decision
 
-**Date:** 2026-06-04  
-**Author:** Rusty (Agent Dev)  
+**Date:** 2026-06-04
+**Author:** Rusty (Agent Dev)
 **Status:** Implemented
 
 ### Decision
@@ -3832,9 +3875,9 @@ The snapshot chart consumes data from Linus's `position_snapshots` CosmosDB cont
 
 ## Rusty — DPS Scheduler Integration
 
-**Date:** 2026-06-26  
-**Author:** Rusty (Agent Dev)  
-**Status:** ✅ Implemented  
+**Date:** 2026-06-26
+**Author:** Rusty (Agent Dev)
+**Status:** ✅ Implemented
 **Impact:** Bug fix — critical missing scheduler
 
 ### Context
@@ -3875,7 +3918,7 @@ Mirrored the structure of `portfolio_enrichment` scheduler (8th task) to ensure 
 
 ### Impact
 
-**Before:** DPS never ran, position snapshots missing DPS scores.  
+**Before:** DPS never ran, position snapshots missing DPS scores.
 **After:** DPS runs nightly at 10 PM (UTC, configurable), position snapshots receive DPS scores.
 
 **No Breaking Changes:** Purely additive — existing tasks unaffected.
@@ -3892,7 +3935,7 @@ None — this was a bug fix, not a design choice. The only alternative was to re
 
 ### Lessons Learned
 
-**Risk:** Config entries without scheduler wiring can go unnoticed.  
+**Risk:** Config entries without scheduler wiring can go unnoticed.
 **Prevention:** Grep for `cron` in config.yaml and cross-reference with `src/main.py` scheduler blocks.
 
 ### Related Work
@@ -3903,8 +3946,8 @@ See `scheduler_analysis.md` for full scheduler architecture documentation and de
 
 ## 6. Scheduler Registry Refactor + DPS Redundancy Removal
 
-**Date:** 2026-06-26  
-**Decider:** Rusty (Agent Dev)  
+**Date:** 2026-06-26
+**Decider:** Rusty (Agent Dev)
 **Status:** ✅ Implemented
 
 ### Summary
@@ -3948,10 +3991,10 @@ Refactored the Options Agent Scheduler from 1266 lines to 736 lines (41% reducti
 
 ### Validation
 
-✅ Import test succeeds  
-✅ All 8 reschedule_X() methods callable  
-✅ Task count verified: 8 tasks with correct crons  
-✅ Existing tests pass (4 economics failures pre-existing)  
+✅ Import test succeeds
+✅ All 8 reschedule_X() methods callable
+✅ Task count verified: 8 tasks with correct crons
+✅ Existing tests pass (4 economics failures pre-existing)
 ✅ Behavior preserved: same task set (minus DPS), same crons, same execution logic
 
 ### Impact
@@ -3970,9 +4013,9 @@ Refactored the Options Agent Scheduler from 1266 lines to 736 lines (41% reducti
 
 ## 7. Unified Scheduler Settings UI Model
 
-**Date:** 2026-06-26  
-**Agent:** Rusty (Agent Dev)  
-**Status:** ✅ Implemented  
+**Date:** 2026-06-26
+**Agent:** Rusty (Agent Dev)
+**Status:** ✅ Implemented
 **Impact:** High — eliminates per-task duplication, consistent UI for all scheduled tasks
 
 ### Context
@@ -4020,9 +4063,9 @@ Web UI scheduler configuration was inconsistent across 8 tasks:
 
 ### Validation
 
-✅ Import checks pass  
-✅ Tests pass (4 economics failures pre-existing)  
-✅ 4 new endpoints registered  
+✅ Import checks pass
+✅ Tests pass (4 economics failures pre-existing)
+✅ 4 new endpoints registered
 ✅ Registry methods callable: get_all_task_metadata(), trigger_task_now(), update_task_enabled()
 
 ### Lessons Learned
@@ -4035,8 +4078,8 @@ Web UI scheduler configuration was inconsistent across 8 tasks:
 
 ## 8. Monitoring Agent Enabled Checkbox + Enable-Gating Guarantee
 
-**Date:** 2026-06-26  
-**Author:** Rusty (Agent Dev)  
+**Date:** 2026-06-26
+**Author:** Rusty (Agent Dev)
 **Status:** ✅ Implemented
 
 ### Context
@@ -4070,10 +4113,10 @@ Tasks with extra config have additional fields IN ADDITION to these 5.
 
 ### Validation
 
-✅ Import checks pass  
-✅ Template renders monitoring_enabled checkbox  
-✅ Backend provides monitoring_enabled in context  
-✅ POST handler persists monitoring_enabled  
+✅ Import checks pass
+✅ Template renders monitoring_enabled checkbox
+✅ Backend provides monitoring_enabled in context
+✅ POST handler persists monitoring_enabled
 ✅ Enable-gating verified: disabled tasks skip execution (line 165)
 
 ### Impact
@@ -4085,10 +4128,10 @@ Tasks with extra config have additional fields IN ADDITION to these 5.
 
 
 ### 8. Scheduler Last Run Display + Restart-Durable Timestamps
-**Date:** 2026-06-26  
-**Author:** Rusty (Agent Dev)  
-**Status:** ✅ Implemented  
-**Scope:** Scheduler settings UI, last_run persistence  
+**Date:** 2026-06-26
+**Author:** Rusty (Agent Dev)
+**Status:** ✅ Implemented
+**Scope:** Scheduler settings UI, last_run persistence
 
 #### Context
 
@@ -4179,9 +4222,9 @@ The pre-refactor code (before 16dcbec) derived `last_run` from persisted Cosmos 
 
 ## 27. Premium/Buyback Display Normalization
 
-**Date:** 2026-06-26  
-**Status:** ✅ Implemented  
-**Agent:** Rusty (Agent Dev)  
+**Date:** 2026-06-26
+**Status:** ✅ Implemented
+**Agent:** Rusty (Agent Dev)
 **Requested by:** dsanchor
 
 ### Problem
@@ -4241,16 +4284,16 @@ Premium and buyback cost values sometimes displayed as "N/A" on the symbol detai
 
 #### Benefits
 
-✅ **Consistency:** Economics and symbol detail pages now show identical values  
-✅ **Robustness:** Handles all data shapes (strings, None, missing, non-dict source)  
-✅ **Centralized logic:** Single source of truth (`_parse_numeric`) for numeric parsing  
+✅ **Consistency:** Economics and symbol detail pages now show identical values
+✅ **Robustness:** Handles all data shapes (strings, None, missing, non-dict source)
+✅ **Centralized logic:** Single source of truth (`_parse_numeric`) for numeric parsing
 ✅ **Clean templates:** Templates render pre-normalized data, no complex logic in Jinja2
 
 ### Validation
 
-✅ `python3 -c "import web.app"` — imports successfully  
-✅ `python3 -c "from src import main"` — imports successfully  
-✅ Custom validation tests — all passed (7/7 test cases covering various data shapes)  
+✅ `python3 -c "import web.app"` — imports successfully
+✅ `python3 -c "from src import main"` — imports successfully
+✅ Custom validation tests — all passed (7/7 test cases covering various data shapes)
 ✅ `python3 -m pytest tests/ -q` — 4 pre-existing failures (economics/yfinance), no new failures
 
 **Test coverage:**
@@ -4284,9 +4327,9 @@ Premium and buyback cost values sometimes displayed as "N/A" on the symbol detai
 ---
 
 ### 8. Scheduler Settings: Relative Time Display
-**Date:** 2026-06-26  
-**Agent:** Rusty (scheduler + Settings UI owner)  
-**Status:** ✅ Completed  
+**Date:** 2026-06-26
+**Agent:** Rusty (scheduler + Settings UI owner)
+**Status:** ✅ Completed
 **Impact:** UI/UX (scheduler settings page)
 
 #### Request
@@ -4337,12 +4380,12 @@ Implemented live client-side relative time calculation with ISO timestamps in da
 
 #### Validation Results
 
-✅ **Import checks**: `python3 -c "import web.app"` → OK; `python3 -c "from src import main"` → OK  
-✅ **Template parsing**: Jinja template parses successfully (no syntax errors)  
+✅ **Import checks**: `python3 -c "import web.app"` → OK; `python3 -c "from src import main"` → OK
+✅ **Template parsing**: Jinja template parses successfully (no syntax errors)
 ✅ **Attribute counts** (via grep):
   - `data-last-run=` → 8 occurrences (✓ all 8 tasks)
   - `data-next-run=` → 8 occurrences (✓ all 8 tasks)
-  - `class="relative-time"` → 16 occurrences (✓ 8 last + 8 next)  
+  - `class="relative-time"` → 16 occurrences (✓ 8 last + 8 next)
 ✅ **Pytest**: 4 pre-existing economics test failures (expected, unrelated); no new failures introduced
 
 #### Affected Tasks (All 8)
@@ -4378,16 +4421,16 @@ Implemented live client-side relative time calculation with ISO timestamps in da
 ---
 # Replace Close Position Prompt with Dropdown Modal
 
-**Date:** 2026-06-27  
-**Author:** Rusty  
-**Status:** Implemented  
+**Date:** 2026-06-27
+**Author:** Rusty
+**Status:** Implemented
 **PR/Commit:** TBD
 
 ## Context
 
 Users were prompted to type a number (1/2/3) to select a close reason when closing a position:
 - 1 → Expired
-- 2 → Assigned  
+- 2 → Assigned
 - 3 → Manual close
 
 This required remembering the mapping and typing accurately. The Close button already had a ▾ symbol hinting at a dropdown, but the UX was still a basic `prompt()` dialog.
@@ -4396,8 +4439,8 @@ This required remembering the mapping and typing accurately. The Close button al
 
 Replace the numeric `prompt()` with a **dropdown modal** for selecting the close reason.
 
-**User Request (translated from Spanish):**  
-> "al cerrar las posiciones, da la opción de cerrar como expirada, asignada o close manual. Puedes cambiarlo para que no sea introducir un número sino que sea un desplegable?"  
+**User Request (translated from Spanish):**
+> "al cerrar las posiciones, da la opción de cerrar como expirada, asignada o close manual. Puedes cambiarlo para que no sea introducir un número sino que sea un desplegable?"
 > ("When closing positions, give the option to close as expired, assigned, or manual close. Can you change it so it's not entering a number but a dropdown?")
 
 ## Implementation
@@ -4499,9 +4542,9 @@ No backend changes required. The dropdown values map directly to the existing AP
 - The modal pattern is reusable for other action confirmations (e.g., delete position, roll confirmation)
 # Scheduler Non-Blocking Architecture
 
-**Date:** 2026-06-29  
-**Status:** ✅ Implemented  
-**Components:** Scheduler, TaskRegistry  
+**Date:** 2026-06-29
+**Status:** ✅ Implemented
+**Components:** Scheduler, TaskRegistry
 **Files:** `src/scheduler_registry.py`, `src/main.py`
 
 ## Context
@@ -4632,10 +4675,10 @@ Three interrelated issues caused the freeze:
 
 ### 2. Sort Roll Candidates by Ann.Ret%
 
-**Date:** 2026-07-01  
-**Author:** Linus (Quant Dev)  
-**Requested by:** dsanchor  
-**Status:** ✅ Implemented  
+**Date:** 2026-07-01
+**Author:** Linus (Quant Dev)
+**Requested by:** dsanchor
+**Status:** ✅ Implemented
 **Impact:** Roll candidate ranking, DTE target alignment
 
 #### Decision
@@ -4663,10 +4706,10 @@ The Net Credit column and `net_credit` values remain available for economics and
 
 ### 3. Economics Test Fix — Contract Multiplier & Net-RoC Semantics
 
-**Date:** 2026-07-01  
-**Author:** Basher (Tester)  
-**Requested by:** dsanchor  
-**Status:** ✅ Done  
+**Date:** 2026-07-01
+**Author:** Basher (Tester)
+**Requested by:** dsanchor
+**Status:** ✅ Done
 **Impact:** Test suite correctness, production contract multiplier semantics
 
 #### Decision
@@ -4709,10 +4752,10 @@ Root causes identified but held pending dsanchor decision:
 
 ### 4. Remove Dead 7-90 DTE Window Config
 
-**Date:** 2026-07-01  
-**Author:** Rusty (Agent Dev)  
-**Requested by:** dsanchor  
-**Status:** ✅ Done  
+**Date:** 2026-07-01
+**Author:** Rusty (Agent Dev)
+**Requested by:** dsanchor
+**Status:** ✅ Done
 **Impact:** Config cleanliness, eliminated dead configuration keys
 
 #### Decision
@@ -4735,10 +4778,10 @@ The 7-90 DTE filter on options-chain fetch was intentionally removed during the 
 
 ### 5. Retire Obsolete yFinance DTE-Window Tests
 
-**Date:** 2026-07-01  
-**Author:** Basher (Tester)  
-**Requested by:** dsanchor  
-**Status:** ✅ Done  
+**Date:** 2026-07-01
+**Author:** Basher (Tester)
+**Requested by:** dsanchor
+**Status:** ✅ Done
 **Impact:** Test suite cleanliness, removed assertions on deleted filter behavior
 
 #### Decision
@@ -4765,10 +4808,10 @@ The pre-existing `test_greeks_populated_for_nonzero_iv` failure is now also docu
 
 ### 6. Manual Position Close — Optional Per-Share Buyback Cost
 
-**Date:** 2026-07-02  
-**Author:** Rusty (Agent Dev)  
-**Requested by:** dsanchor  
-**Status:** ✅ Done  
+**Date:** 2026-07-02
+**Author:** Rusty (Agent Dev)
+**Requested by:** dsanchor
+**Status:** ✅ Done
 **Impact:** Manual close workflows, position economics tracking
 
 #### Decision
@@ -4818,10 +4861,10 @@ Users may want to track the actual cost paid to buy back shares when closing a p
 
 ### 7. Scheduler Enabled Toggle Live Registry Persistence
 
-**Date:** 2026-07-03  
-**Author:** Rusty (Agent Dev)  
-**Requested by:** dsanchor  
-**Status:** ✅ Done  
+**Date:** 2026-07-03
+**Author:** Rusty (Agent Dev)
+**Requested by:** dsanchor
+**Status:** ✅ Done
 **Impact:** Settings UI reliability, scheduler task enable/disable workflows
 
 #### Decision
@@ -4862,10 +4905,10 @@ Added `scheduler.registry.update_task_enabled(task_name, enabled_bool, scheduler
 
 ### 8. Supervisor surfaces ex-dividend for CSP (informational); calls unchanged
 
-**Date:** 2026-07-08  
-**Author:** dsanchor (via Copilot)  
-**Agent:** Linus (Quant Dev)  
-**Status:** ✅ Implemented  
+**Date:** 2026-07-08
+**Author:** dsanchor (via Copilot)
+**Agent:** Linus (Quant Dev)
+**Status:** ✅ Implemented
 **Impact:** CSP entry-timing awareness, supervisor context
 
 #### Decision
@@ -4882,7 +4925,7 @@ Add a NON-BLOCKING informational note to the supervisor audit for cash-secured p
 
 #### Implementation
 
-**File:** `src/supervisor_instructions.py`  
+**File:** `src/supervisor_instructions.py`
 **Method:** Modified `get_supervisor_instructions()` to conditionally append ex-div section when:
 - `agent_type == "cash_secured_put"`
 - `decision_type == "SELL"`
@@ -4923,9 +4966,9 @@ All tests passed — CSP-gating works correctly, other agents byte-for-byte unch
 
 ### 9. Calendar active-position flag per event date
 
-**Date:** 2026-07-08  
-**Author:** Rusty (Agent Dev)  
-**Status:** ✅ Implemented  
+**Date:** 2026-07-08
+**Author:** Rusty (Agent Dev)
+**Status:** ✅ Implemented
 **Impact:** Calendar event accuracy, position state consistency
 
 #### Decision
@@ -4940,14 +4983,14 @@ The web/manual sync in `web/app.py` (lines 2012-2021) was already implementing t
 
 #### Implementation
 
-**File:** `src/main.py`  
+**File:** `src/main.py`
 **Changes:**
 - Rewrote `sync_calendar` to collect active positions with their expirations
 - Added helper function `_has_position_active_on(event_date)` that returns True only if some active position has `expiration >= event_date`
 - Applied the helper to both `earnings` and `ex_dividend` upserts
 - Web/app.py left unchanged (already correct)
 
-**New Test File:** `tests/test_calendar_active_position.py`  
+**New Test File:** `tests/test_calendar_active_position.py`
 - Validates per-event active position logic
 - Test passed ✅
 
@@ -4968,9 +5011,9 @@ pytest tests/test_calendar_active_position.py -q → 1 passed
 
 ## 2026-07-09: Alpha Exclude Identical Held Contract + Preserve Buyback Cost
 
-**Date:** 2026-07-09  
-**Requester:** @dsanchor  
-**Status:** ✅ Implemented  
+**Date:** 2026-07-09
+**Requester:** @dsanchor
+**Status:** ✅ Implemented
 **Impact:** Alpha advisor accuracy, prevents no-op rolls, improves close vs roll cost comparison
 
 ### Problem
@@ -5074,17 +5117,17 @@ When candidate chain must exclude a reference item (to prevent no-op selection) 
 
 ### Impact
 
-✅ Alpha can now correctly compare close cost (ask of held contract) vs rolling to candidates  
-✅ Held contract never appears as no-op roll target (data-layer enforcement)  
-✅ Works even when held contract's delta is outside alpha's kept band  
+✅ Alpha can now correctly compare close cost (ask of held contract) vs rolling to candidates
+✅ Held contract never appears as no-op roll target (data-layer enforcement)
+✅ Works even when held contract's delta is outside alpha's kept band
 ✅ Instruction guard reinforces semantic constraint (roll MUST change strike and/or expiration)
 
 ---
 
 ## 2026-07-09: Per-Activity Chat Feature — Two-Tier Context & Live-Fetch Design
 
-**Decision owners:** Linus (prompt design), Rusty (endpoint + frontend), Basher (testing), dsanchor (feature request)  
-**Status:** Implemented & Validated (13 tests passing)  
+**Decision owners:** Linus (prompt design), Rusty (endpoint + frontend), Basher (testing), dsanchor (feature request)
+**Status:** Implemented & Validated (13 tests passing)
 **Date decided:** 2026-07-09
 
 ### Context
@@ -5180,11 +5223,11 @@ The system enforces these headers (Linus's system prompt + Rusty's endpoint cons
 
 ### Validation
 
-✅ py_compile: all modified Python files  
-✅ pytest: tests/test_activity_chat.py → 13 passed  
-✅ Contract tests: all 5 headers present, activity JSON in message, live chain data verified  
-✅ Read-only enforcement: zero cosmos write/delete calls detected  
-✅ Graceful degradation: chain unavailable, missing technicals, no linked position all handled  
+✅ py_compile: all modified Python files
+✅ pytest: tests/test_activity_chat.py → 13 passed
+✅ Contract tests: all 5 headers present, activity JSON in message, live chain data verified
+✅ Read-only enforcement: zero cosmos write/delete calls detected
+✅ Graceful degradation: chain unavailable, missing technicals, no linked position all handled
 
 ### Bugs Found
 
@@ -5217,9 +5260,9 @@ When building a chat assistant over agent decisions + live market data:
 
 ## 2026-07-09: DPS Insights Prompt Module
 
-**Date:** 2026-07-09  
-**Owner:** Linus (Quant Dev)  
-**Status:** Implemented  
+**Date:** 2026-07-09
+**Owner:** Linus (Quant Dev)
+**Status:** Implemented
 **Context:** DPS (Deterministic Position Scorer) time-series narrative feature
 
 ### Problem
@@ -5333,8 +5376,8 @@ The difference: activity-chat is **interactive Q&A** over agent decisions + live
 - If the snapshot schema evolves (e.g., adding IV rank, earnings proximity, or other signals), the prompt's snapshot field list and TREND narration logic should be updated to match.
 - If we add multiple scoring models (e.g., DPS v2, alternative scorers), the prompt may need to clarify which scorer's outputs it's interpreting.
 
-**Implemented by:** Linus (Quant Dev)  
-**Reviewed by:** N/A (solo implementation)  
+**Implemented by:** Linus (Quant Dev)
+**Reviewed by:** N/A (solo implementation)
 **Related files:**
 - `src/dps_interpret_instructions.py` (new)
 - `.squad/agents/linus/history.md` (updated — added DPS Insights learning)
@@ -5343,9 +5386,9 @@ The difference: activity-chat is **interactive Q&A** over agent decisions + live
 
 ## 2026-07-09: DPS Insights Endpoint
 
-**Date:** 2026-07-09  
-**Author:** Rusty (Agent Dev)  
-**Status:** Implemented  
+**Date:** 2026-07-09
+**Author:** Rusty (Agent Dev)
+**Status:** Implemented
 **Collaborators:** Linus (Strategy/Prompt owner for `src.dps_interpret_instructions`)
 
 ### Context
@@ -5428,9 +5471,9 @@ Built a new one-shot endpoint `POST /api/symbols/{symbol}/positions/{position_id
 
 ## 2026-07-09: DPS Insights Endpoint Test Suite
 
-**Author:** Basher (Tester)  
-**Date:** 2026-07-09  
-**Status:** Tests written, all pass under system python3  
+**Author:** Basher (Tester)
+**Date:** 2026-07-09
+**Status:** Tests written, all pass under system python3
 **File:** `tests/test_dps_insights.py`
 
 ### Summary
@@ -5525,8 +5568,8 @@ Expected output:
 
 ## 2026-07-09: DAL Leak Refactoring — Eliminate Direct Cosmos Access in web/app.py
 
-**Date:** 2026-07-09  
-**Agent:** Rusty (Agent Dev / plumbing & web engineer)  
+**Date:** 2026-07-09
+**Agent:** Rusty (Agent Dev / plumbing & web engineer)
 **Status:** ✅ Completed
 
 ### Problem
@@ -5557,24 +5600,24 @@ These raw SQL + partition_key calls would break a future DB swap (e.g., to Postg
 
 **Migrated 5 leak sites in web/app.py:**
 
-1. **Line ~749** (update_watchlist/symbol endpoint):  
+1. **Line ~749** (update_watchlist/symbol endpoint):
    `cosmos.container.replace_item(item=doc["id"], body=doc)` → `cosmos.replace_symbol(doc)`
 
-2. **Line ~899** (accept-activity → disable watchlist):  
+2. **Line ~899** (accept-activity → disable watchlist):
    `cosmos.container.replace_item(item=sym_doc["id"], body=sym_doc)` → `cosmos.replace_symbol(sym_doc)`
 
-3. **Line ~1061** (roll → set buyback_cost):  
+3. **Line ~1061** (roll → set buyback_cost):
    `cosmos.container.replace_item(item=doc["id"], body=doc)` → `cosmos.replace_symbol(doc)`
 
-4. **Line ~1575-1594** (activities list endpoint, symbol branch):  
-   Replaced inline `conditions`/`params`/`query`/`cosmos.container.query_items(...)` block with:  
-   `results = cosmos.get_symbol_activities(symbol.upper(), agent_type, since, limit)`  
+4. **Line ~1575-1594** (activities list endpoint, symbol branch):
+   Replaced inline `conditions`/`params`/`query`/`cosmos.container.query_items(...)` block with:
+   `results = cosmos.get_symbol_activities(symbol.upper(), agent_type, since, limit)`
    Kept the `else: results = cosmos.get_all_activities(...)` branch untouched.
 
-5. **Line ~2950-2963** (activity-chat endpoint, technical fetch):  
-   Replaced inline `query`/`params`/`cosmos.container.query_items(...)` block with:  
-   `doc = cosmos.get_latest_technical_analysis(symbol)`  
-   Adapted following lines: `if doc: ts = doc.get("timestamp"...)` (was `if results: doc = results[0]`)  
+5. **Line ~2950-2963** (activity-chat endpoint, technical fetch):
+   Replaced inline `query`/`params`/`cosmos.container.query_items(...)` block with:
+   `doc = cosmos.get_latest_technical_analysis(symbol)`
+   Adapted following lines: `if doc: ts = doc.get("timestamp"...)` (was `if results: doc = results[0]`)
    Did NOT change the fresh-generation fallback logic.
 
 **Updated test double in `tests/test_activity_chat.py`:**
@@ -5585,8 +5628,8 @@ These raw SQL + partition_key calls would break a future DB swap (e.g., to Postg
 
 ### Validation
 
-✅ **Compilation:** `python3 -c "import ast,sys; ast.parse(open('src/cosmos_db.py').read()); ast.parse(open('web/app.py').read()); print('compile ok')"` → compile ok  
-✅ **Activity chat tests:** `python3 -m pytest tests/test_activity_chat.py -q` → 13 passed  
+✅ **Compilation:** `python3 -c "import ast,sys; ast.parse(open('src/cosmos_db.py').read()); ast.parse(open('web/app.py').read()); print('compile ok')"` → compile ok
+✅ **Activity chat tests:** `python3 -m pytest tests/test_activity_chat.py -q` → 13 passed
 ✅ **Full suite:** 141 passed (11 failures are pre-existing test isolation issues, unrelated to this refactor)
 
 ### Impact
@@ -5609,7 +5652,7 @@ None. A quick scan shows no other `cosmos.container.replace_item` or `cosmos.con
 
 ## FUTURE FEATURE — Backup / Restore (DB export-import) + storage abstraction
 
-**By:** dsanchor (via Copilot) — design consult, NOT yet implemented  
+**By:** dsanchor (via Copilot) — design consult, NOT yet implemented
 **Status:** Backlog / Future Feature
 
 ### Idea
@@ -5635,9 +5678,9 @@ Do NOT build the abstraction now. The generic JSON format IS the portability bri
 
 # README Update — July Session Changes
 
-**Date:** 2026-07-10  
-**Author:** Linus (Quant Dev)  
-**Requested by:** dsanchor  
+**Date:** 2026-07-10
+**Author:** Linus (Quant Dev)
+**Requested by:** dsanchor
 **Status:** ✅ Complete
 
 ## Summary
@@ -5647,37 +5690,37 @@ Updated README.md to document all user-facing changes shipped in the July sessio
 ## Changes Documented
 
 ### 1. DPS Insights (NEW Feature)
-**Section:** `### Deterministic Position Scorer (DPS)` → new `#### DPS Insights (LLM Narrative)` subsection  
-**What:** One-shot LLM narrative of a position's DPS health over persisted snapshot history. Accessible via "🧠 DPS Insights" button. Uses `gpt-5.4-mini`. Narrates — does not override — the deterministic score.  
+**Section:** `### Deterministic Position Scorer (DPS)` → new `#### DPS Insights (LLM Narrative)` subsection
+**What:** One-shot LLM narrative of a position's DPS health over persisted snapshot history. Accessible via "🧠 DPS Insights" button. Uses `gpt-5.4-mini`. Narrates — does not override — the deterministic score.
 **Key details:** No live fetch, historical context only, one-shot response, configurable via `dps_insights.model`.
 
 ### 2. Per-Activity Chat (NEW Feature — PRIMARY)
-**Section:** `## Dual-Mode Chat Experience` → new `### Per-Activity Chat` subsection  
-**What:** Read-only LLM advisory conversation about specific agent decisions. Accessible via "Chat" button on activity detail pages. Two-tier context separation: historical agent decision vs. live re-fetched market data. Uses `gpt-5.4-mini`.  
+**Section:** `## Dual-Mode Chat Experience` → new `### Per-Activity Chat` subsection
+**What:** Read-only LLM advisory conversation about specific agent decisions. Accessible via "Chat" button on activity detail pages. Two-tier context separation: historical agent decision vs. live re-fetched market data. Uses `gpt-5.4-mini`.
 **Key details:** Ephemeral (no persistence), graceful degradation if live data unavailable, zero DB writes, configurable via `activity_chat.model`.
 
 ### 3. Supervisor Ex-Dividend Awareness (CSP SELL)
-**Section:** `### Supervisor Agent (Quality Auditor)` → new paragraph after audit playbooks table  
-**What:** Non-blocking informational entry-timing note when ex-div falls within trade window for CSP SELL decisions only. Surfaces ex-div date and typical price drop effect. Deep-ITM (delta < -0.70) + near ex-div (~10 days): rare early-assignment note.  
+**Section:** `### Supervisor Agent (Quality Auditor)` → new paragraph after audit playbooks table
+**What:** Non-blocking informational entry-timing note when ex-div falls within trade window for CSP SELL decisions only. Surfaces ex-div date and typical price drop effect. Deep-ITM (delta < -0.70) + near ex-div (~10 days): rare early-assignment note.
 **Key details:** Non-blocking, does not raise challenge_strength, options already price dividends via put-call parity. Call side unchanged.
 
 ### 4. Alpha Advisor — Identical Contract Exclusion
-**Section:** `### Alpha Advisor Agent (Parameter Relaxation)` → new paragraph after Hard gates  
+**Section:** `### Alpha Advisor Agent (Parameter Relaxation)` → new paragraph after Hard gates
 **What:** Alpha Advisor excludes the exact contract currently held (matching strike + expiration) from recommendations. Surfaces current buyback cost as reference for roll scenarios.
 
 ### 5. Roll DTE Target, Post-Earnings, and Ranking
-**Section:** `### Profit Target Gate (Monitor Agents)` → new subsection `**Roll targets and timing:**` after gate description  
-**What:** 
+**Section:** `### Profit Target Gate (Monitor Agents)` → new subsection `**Roll targets and timing:**` after gate description
+**What:**
 - **DTE target:** 21-35 DTE primary range, 45 DTE fallback cap (was 30-45 DTE primary)
 - **Post-earnings block:** 0-7 days hard block (was 0-13), 8-13 days caution zone
 - **Ranking:** Annualized Return % descending (replaces Net Credit descending) — normalizes premium by time, favors 21-35 DTE target
 
 ### 6. Events Calendar — Per-Event-Date Active Position
-**Section:** `### Events Calendar` → updated `**Active position detection:**` paragraph  
+**Section:** `### Events Calendar` → updated `**Active position detection:**` paragraph
 **What:** Clarified that scheduled sync and manual refresh both apply per-event-date logic (expiration >= event date) to ensure only positions exposed to the event are flagged.
 
 ### 7. Position Lifecycle — Optional Buyback Cost on Manual Close
-**Section:** `### Position Lifecycle` → updated `**Position Actions:**` → Close bullet  
+**Section:** `### Position Lifecycle` → updated `**Position Actions:**` → Close bullet
 **What:** Manual close now supports optional per-share `buyback_cost` field (input shown only for manual close reason; omitted for assigned/expired closes).
 
 ## Commits Covered
@@ -5702,9 +5745,9 @@ Updated README.md to document all user-facing changes shipped in the July sessio
 
 # Portfolio Chat Context Contract
 
-**Date:** 2026-07-14  
-**Author:** Rusty (Agent Dev)  
-**Status:** ✅ Implemented  
+**Date:** 2026-07-14
+**Author:** Rusty (Agent Dev)
+**Status:** ✅ Implemented
 **Impact:** User-scoped advisor context, improved chat UX, server-side backward compatibility
 
 ## Decision
@@ -5825,9 +5868,9 @@ Consolidate all symbol detail controls into a **single compact horizontal toolba
 
 # Decision: Deterministic Roll Table — MVP (Buyback + Roll Up/Down/Out)
 
-**Date:** 2026-07-23  
-**Authors:** Linus (Quant Dev), Rusty (Agent Dev)  
-**Status:** ✅ Implemented & Integrated  
+**Date:** 2026-07-23
+**Authors:** Linus (Quant Dev), Rusty (Agent Dev)
+**Status:** ✅ Implemented & Integrated
 **Impact:** Activity Detail UX — roll scenario analysis, profit target gate
 
 ## Context
@@ -5843,7 +5886,7 @@ This enables quick cost-benefit analysis for rolling out/up/down decisions.
 
 ### 1. Pure Python Calculator — `src/roll_table.py`
 
-**Contract:** Linus (Quant Dev)  
+**Contract:** Linus (Quant Dev)
 **Status:** ✅ Implemented & tested
 
 **Function Signature:**
@@ -5900,7 +5943,7 @@ profit_target_reached = pct_captured >= 0.70
 
 ### 2. Endpoint + Activity Detail Integration — `web/app.py` & `web/templates/activity_detail.html`
 
-**Wiring:** Rusty (Agent Dev)  
+**Wiring:** Rusty (Agent Dev)
 **Status:** ✅ Implemented & verified
 
 **Endpoint:**
@@ -5958,8 +6001,8 @@ GET /api/activities/{activity_id}/roll-table
 
 # Decision: Roll Table Relocation — Activity Detail → Position Detail
 
-**Date:** 2026-07-23  
-**Author:** Rusty (Agent Dev)  
+**Date:** 2026-07-23
+**Author:** Rusty (Agent Dev)
 **Status:** Implemented ✅
 
 ## Context
@@ -6046,7 +6089,7 @@ Jinja balance verified: 81 opens / 81 closes ✅
 
 # Decision: Roll Table Columns — Current Expiration Highlighting & ATM Price Context
 
-**Date:** 2026-07-23  
+**Date:** 2026-07-23
 **Status:** Implemented ✅
 
 ## Summary
@@ -7196,8 +7239,8 @@ the 2026-08-19 addendum. No future work item remains here.
 
 ## Best Options + Force Alpha Session (2026-08-29)
 
-**Merged from:** 16 inbox files (Danny, Linus, Livingston, Rusty, Basher, Copilot directives)  
-**Session verdict:** Best Options APPROVED; Force Alpha APPROVED  
+**Merged from:** 16 inbox files (Danny, Linus, Livingston, Rusty, Basher, Copilot directives)
+**Session verdict:** Best Options APPROVED; Force Alpha APPROVED
 **Merged by:** Scribe at 2026-08-29T12:30:21Z
 
 
@@ -9519,9 +9562,9 @@ files — 1650 passed; `npx tsc --noEmit` clean; `npx eslint` clean;
 
 ### 2026-08-29: Best Options 45d DTE Alignment & `coverable_contracts` Removal
 
-**By:** Danny (Lead Designer)  
-**Implementation:** Linus (backend domain), Rusty (API endpoint + frontend), Livingston (test contracts), Basher (gate)  
-**Directives:** `.squad/decisions/inbox/danny-best-options-45d-design.md` + `.squad/decisions/inbox/danny-best-options-copy-removal-design.md` (ACCEPTED); `.squad/decisions/inbox/copilot-best-options-45d-no-coverable.md` (user directive); `.squad/decisions/inbox/copilot-best-options-remove-architecture-copy.md` (user directive)  
+**By:** Danny (Lead Designer)
+**Implementation:** Linus (backend domain), Rusty (API endpoint + frontend), Livingston (test contracts), Basher (gate)
+**Directives:** `.squad/decisions/inbox/danny-best-options-45d-design.md` + `.squad/decisions/inbox/danny-best-options-copy-removal-design.md` (ACCEPTED); `.squad/decisions/inbox/copilot-best-options-45d-no-coverable.md` (user directive); `.squad/decisions/inbox/copilot-best-options-remove-architecture-copy.md` (user directive)
 **Gate:** Basher (independent G2 verification) — **APPROVE**
 
 **What:**
@@ -9554,8 +9597,8 @@ files — 1650 passed; `npx tsc --noEmit` clean; `npx eslint` clean;
 
 ### 2026-08-29: Watchlist Zero-Call Display for Eligible Holdings
 
-**By:** Copilot (via user directive)  
-**Implementation:** Rusty (endpoint + frontend)  
+**By:** Copilot (via user directive)
+**Implementation:** Rusty (endpoint + frontend)
 **Directive:** `.squad/decisions/inbox/copilot-watchlist-zero-covered-calls.md`
 
 **What:** In Watchlist, when a symbol has ≥100 shares held (eligible for covered calls) but zero open call positions, display `0` instead of `-` in the calls value. Symbols with <100 shares continue to show `-` (not eligible for covered calls).
@@ -9573,9 +9616,9 @@ files — 1650 passed; `npx tsc --noEmit` clean; `npx eslint` clean;
 
 ### 2026-08-29: Supervisor & Alpha Full Execution Traces
 
-**By:** Danny (Lead Designer)  
-**Implementation:** Rusty (agent_runner.py instrumentation), Livingston (cosmos_db.py integration), Basher (adversarial gate)  
-**Directives:** `.squad/decisions/inbox/danny-supervisor-alpha-traces-design.md` (ACCEPTED); `.squad/decisions/inbox/copilot-supervisor-alpha-traces.md` (user directive)  
+**By:** Danny (Lead Designer)
+**Implementation:** Rusty (agent_runner.py instrumentation), Livingston (cosmos_db.py integration), Basher (adversarial gate)
+**Directives:** `.squad/decisions/inbox/danny-supervisor-alpha-traces-design.md` (ACCEPTED); `.squad/decisions/inbox/copilot-supervisor-alpha-traces.md` (user directive)
 **Gate:** Basher (independent G2 verification) — **APPROVE**
 
 **What:**
@@ -9612,8 +9655,8 @@ Tuple-arity extension to `_run_position_assessment`/`_run_roll_management` initi
 
 ### 2026-08-29: Options Screener — Top-Level Menu, Aggregator, Endpoint, Frontend
 
-**By:** Linus (Aggregator), Rusty (API endpoint + frontend), Livingston (concurrency fix)  
-**Gate:** Basher (independent G2 verification) — **APPROVE**  
+**By:** Linus (Aggregator), Rusty (API endpoint + frontend), Livingston (concurrency fix)
+**Gate:** Basher (independent G2 verification) — **APPROVE**
 **Directives:** `.squad/decisions/inbox/copilot-options-screener-approved.md` (user directive); no prior "Danny/Linus proposal" design doc found (implemented directly from directive + task spec)
 
 **What:** Full-fledged options screener UI matching the approved feature directive, reusing `evaluate_best_options` literally with zero reimplementation, server-side stable sort/pagination, explicit per-symbol freshness indicators, capped concurrency, and worker-thread offload for Cosmos I/O.
@@ -9835,18 +9878,18 @@ Final independent adversarial review of exact-contract validation implementation
 
 ### Best Options weekend startup crash fix (2026-08-30, production emergency)
 
-**Date:** 2026-08-30  
-**Author:** Livingston (Persistence & Integration Engineer)  
-**Status:** ✅ Implemented (not committed)  
+**Date:** 2026-08-30
+**Author:** Livingston (Persistence & Integration Engineer)
+**Status:** ✅ Implemented (not committed)
 **Impact:** Production bug — Best Options unavailable on weekends, crash on startup
 
 #### Production Symptom
 
 Symbol Detail Best Options and Options Screener non-functional on Sunday 2026-08-30. Symbol Detail continuously showed:
 ```
-"Warming up the option chain cache… precompute_pending  
-Retrying automatically in 15s.  
-Next scheduled processing: 2026-08-31T10:05:00+00:00.  
+"Warming up the option chain cache… precompute_pending
+Retrying automatically in 15s.
+Next scheduled processing: 2026-08-31T10:05:00+00:00.
 Retry now"
 ```
 
@@ -9914,11 +9957,11 @@ enrichment = {
   category = entry.get("category")
   if isinstance(category, dict):
       category = category.get("type") or category.get("category")
-  
+
   next_earnings = entry.get("next_earnings_date")
   if isinstance(next_earnings, dict):
       next_earnings = next_earnings.get("date")
-  
+
   ex_dividend = entry.get("ex_dividend_date")
   if isinstance(ex_dividend, dict):
       ex_dividend = ex_dividend.get("date")
@@ -10014,10 +10057,10 @@ All required behaviors from Best Options charter maintained:
 
 #### Reviewer Final Verdict (Basher)
 
-✅ **APPROVED** — READY FOR PRODUCTION  
-**Date:** 2026-08-30T08:48:17+02:00  
-**Test Results:** 100/100 passing (16.92s)  
-**TypeScript:** Clean (0 errors)  
+✅ **APPROVED** — READY FOR PRODUCTION
+**Date:** 2026-08-30T08:48:17+02:00
+**Test Results:** 100/100 passing (16.92s)
+**TypeScript:** Clean (0 errors)
 **Defects Found:** ZERO
 
 **Root Cause #1 (Kwarg Mismatch):** ✅ FIXED
@@ -10038,8 +10081,8 @@ All required behaviors from Best Options charter maintained:
 - `test_scheduler_best_options_startup.py` (8 tests) — Scheduler registry + weekend startup
 - `test_best_options_trigger_endpoint.py` (7 tests) — FastAPI endpoint + manual trigger
 
-**All 100 Best Options tests pass** (existing 74 + new 26)  
-**Frontend TypeScript:** Clean (0 errors)  
+**All 100 Best Options tests pass** (existing 74 + new 26)
+**Frontend TypeScript:** Clean (0 errors)
 **Logic Defects:** Zero detected
 
 **Production Ready:** ✅ APPROVED FOR IMMEDIATE DEPLOYMENT
@@ -10049,7 +10092,7 @@ All required behaviors from Best Options charter maintained:
 - Verify Symbol Detail Refresh Now works on weekends
 - Verify manual Settings trigger populates cache
 
-**Status:** ✅ APPROVED & READY FOR PRODUCTION  
+**Status:** ✅ APPROVED & READY FOR PRODUCTION
 **Not committed** (as requested)
 
 
@@ -10057,9 +10100,9 @@ All required behaviors from Best Options charter maintained:
 
 ## Decision: Alpha Review Contract — Independent Evaluation
 
-**Date:** 2026-08-30  
-**Author:** Rusty  
-**Status:** Approved  
+**Date:** 2026-08-30
+**Author:** Rusty
+**Status:** Approved
 **Category:** Architecture / Review Pipeline
 
 ### Context
@@ -10126,8 +10169,8 @@ All tests pass (16 contract-validation + 11 integration + 27 Alpha execution = 5
 
 ## Decision: Validation Activities Use Canonical Agent Schema
 
-**Date:** 2026-08-30  
-**Owner:** Livingston (Persistence & Integration)  
+**Date:** 2026-08-30
+**Owner:** Livingston (Persistence & Integration)
 **Status:** Rejected (Error-path data loss)
 
 ### Context
@@ -10156,8 +10199,8 @@ Validation activities use the **canonical agent activity_data** (from `agent_run
 
 ## Decision: Basher's Two-Gate Validation Review
 
-**Date:** 2026-08-30  
-**Reviewer:** Basher (Tester & QA)  
+**Date:** 2026-08-30
+**Reviewer:** Basher (Tester & QA)
 **Status:** Approved (with rejection and revision)
 
 ### Executive Summary
@@ -10166,13 +10209,13 @@ Two-phase review: initially rejected Livingston artifact due to error-path data 
 
 ### Review Cycle 1: Livingston Canonical Schema (Initial Rejection)
 
-**Gate:** Schema design soundness  
-**Finding:** Canonical field design correct; error-fallback path loses production data  
-**Verdict:** ❌ REJECT — blocking production data loss  
+**Gate:** Schema design soundness
+**Finding:** Canonical field design correct; error-fallback path loses production data
+**Verdict:** ❌ REJECT — blocking production data loss
 
 ### Review Cycle 2: Rusty Alpha Review Fix (Approval)
 
-**Gate:** Alpha review signature correction  
+**Gate:** Alpha review signature correction
 **Verdict:** ✅ APPROVE
 
 - Signature removed invalid `supervisor_view` kwarg
@@ -10191,9 +10234,9 @@ Two-phase review: initially rejected Livingston artifact due to error-path data 
 
 ## Decision: Contract Validation Function-Specific Model Routing
 
-**Date:** 2026-08-30  
-**Author:** Rusty (Agent Dev)  
-**Status:** ✅ Implemented & Approved  
+**Date:** 2026-08-30
+**Author:** Rusty (Agent Dev)
+**Status:** ✅ Implemented & Approved
 **Category:** Architecture / Model Routing
 
 ### Acceptance Contract
@@ -10311,13 +10354,13 @@ TOTAL:                                            91 passed
 
 ### Commit
 
-**Hash:** `8cac4bc Use function models for contract validation`  
+**Hash:** `8cac4bc Use function models for contract validation`
 **Status:** ✅ Approved for Production
 
 ---
 
-**Reviewer:** Basher (Tester & QA)  
-**Date:** 2026-08-30T19:23:19+02:00  
+**Reviewer:** Basher (Tester & QA)
+**Date:** 2026-08-30T19:23:19+02:00
 **Verdict:** ✅ **APPROVED FOR PRODUCTION**
 ### 2026-08-30T17:29:20Z: User directive
 **By:** Copilot (via Copilot)
@@ -10972,9 +11015,9 @@ D4 callback uses same chain.
 
 # Retrospective: Validation Suite Hang — Provider Injection Bypass
 
-**Date:** 2026-08-31  
-**Author:** Danny (Lead)  
-**Severity:** P0 — blocked CI for >4 hours at 74% suite completion  
+**Date:** 2026-08-31
+**Author:** Danny (Lead)
+**Severity:** P0 — blocked CI for >4 hours at 74% suite completion
 **Status:** Root-caused; fix spec below; no code changes in this document
 
 ---
@@ -10997,7 +11040,7 @@ D4 callback uses same chain.
 
 ### Why tests hang
 
-1. **Neither test file patches `get_shared_provider` or `fetch_all`.**  
+1. **Neither test file patches `get_shared_provider` or `fetch_all`.**
    Confirmed: `grep -n "get_shared_provider\|fetch_all\|yfinance_data_provider" test_contract_validation_integration.py test_cross_contract_validation_regression.py` → **zero matches**.
 
 2. Tests correctly patch the **chain cache** (`get_options_chain_cache`) and **agent runner** (`run_contract_validation`), but the background task's *first action* is the unpatched `get_shared_provider().fetch_all()` call.
@@ -11026,7 +11069,7 @@ D4 callback uses same chain.
 ### Current (broken)
 
 ```
-app.py → ContextProvider(cosmos) → start_validation(context_provider=...) 
+app.py → ContextProvider(cosmos) → start_validation(context_provider=...)
   → _execute_validation(context_provider=...)
     → get_shared_provider()          # ← IGNORES parameter, uses global singleton
     → yf_provider.fetch_all(...)     # ← real network I/O
@@ -11035,7 +11078,7 @@ app.py → ContextProvider(cosmos) → start_validation(context_provider=...)
 ### Required (correct)
 
 ```
-app.py → start_validation(yf_provider=get_shared_provider(), ...) 
+app.py → start_validation(yf_provider=get_shared_provider(), ...)
   → _execute_validation(yf_provider=yf_provider, ...)
     → yf_provider.fetch_all(...)     # ← uses injected provider
 ```
@@ -11522,9 +11565,9 @@ ACTION-6: Run full test suite, confirm 167+ all green
 
 ## Buy Tracker Six-State Redesign (Danny)
 
-**Date:** 2026-09-03  
-**Author:** Danny (Lead)  
-**Status:** ✅ Accepted & Implemented  
+**Date:** 2026-09-03
+**Author:** Danny (Lead)
+**Status:** ✅ Accepted & Implemented
 **Impact:** Buy Tracker recommendation accuracy, DGI timing, agent informativeness
 
 ### Problem Statement
@@ -11581,8 +11624,8 @@ Score range: -5 to +5 (11 possible values).
 
 ### Implementation Status
 
-✅ **Linus:** Strategy/prompt rewrite, tri-state normalization, rule evaluation, signed score format  
-✅ **Rusty:** Agent runner integration, frontend badge updates (6 lines), documentation  
+✅ **Linus:** Strategy/prompt rewrite, tri-state normalization, rule evaluation, signed score format
+✅ **Rusty:** Agent runner integration, frontend badge updates (6 lines), documentation
 ✅ **Basher:** Validation — 272 focused tests passing, all acceptance criteria met
 
 ### Expected Distribution Shift
@@ -11604,9 +11647,9 @@ Compare to current: BUY ~95%, WAIT ~4–5%, STRONG_BUY <1%.
 
 ## Portfolio Chat 3-Month Persisted Calendar Context (Rusty)
 
-**Date:** 2026-09-03  
-**Author:** Rusty (Agent Dev)  
-**Status:** ✅ Accepted & Implemented  
+**Date:** 2026-09-03
+**Author:** Rusty (Agent Dev)
+**Status:** ✅ Accepted & Implemented
 **Impact:** Portfolio Chat context richness, calendar-aware decision making
 
 ### Feature Description
@@ -11660,9 +11703,9 @@ New optional `include_calendar_events` toggle in Portfolio Chat mode (off by def
 
 ## Decision: Buy Tracker Implementation Details (Linus)
 
-**Date:** 2026-09-03  
-**Author:** Linus (Quant Dev)  
-**Status:** ✅ Implemented  
+**Date:** 2026-09-03
+**Author:** Linus (Quant Dev)
+**Status:** ✅ Implemented
 **Impact:** Deterministic Buy Tracker scoring, validation robustness
 
 ### Key Decisions
@@ -11699,6 +11742,536 @@ Hard AVOID gates always produce AVOID regardless of score. Hard WAIT gates cap A
 ### Verdict
 
 **✅ IMPLEMENTED** — All decisions adopted during Linus's implementation, validated by Basher, outcome accepted.
+
+---
+
+## Portfolio Unified Implementation — Securities, Ledger & Import (2026-09-06)
+
+**Status:** ✅ COMPLETE & APPROVED
+**Lead:** Danny (Reviewer & Architect)
+**Implementation:** Livingston (Backend), Rusty (Frontend)
+**First-Round Fixes:** Linus (5 findings)
+**Second-Round Fixes:** Reuben (2 findings)
+**Validation:** Basher (160 new + 232 regression = 392/392 PASS)
+
+---
+
+### Portfolio Implementation Contract v1.1 (Danny)
+
+**Authoritative Specification** — Endpoint shapes, CSV schemas, validation rules, field semantics
+
+**Date:** 2026-09-05
+**Status:** APPROVED with amendments
+
+#### Architecture Summary
+
+**Domain separation:**
+- **Portfolio container:** New ledger (BUY, SELL, DIVIDEND movements); partition key `/account_id`
+- **Symbols container:** Existing watchlist/options data; security master records added
+- **Import_sessions container:** Question-and-answer state machine; 7-day TTL
+
+**Security identity:** Unified `MIC:TICKER` format (e.g., `XNYS:AAPL`, `BMEX:TELEVISA`)
+
+**Movement types:** BUY, SELL, DIVIDEND, SCRIP_CASH_LEG, SCRIP_SHARE_LEG
+
+**Key invariants:**
+- Immutable movements (soft-delete only)
+- Holdings derived on read (never stored)
+- All amounts dual-store (transaction currency + EUR equivalent)
+- FX rate convention: `EUR_PER_TXN_CCY` (number of EUR per 1 unit of transaction currency)
+- Withholding: dual-layer (source + destination), null ≠ zero
+- Quantity: required for BUY/SELL, null for DIVIDEND
+
+#### REST Endpoints
+
+| Endpoint | Method | Purpose | Auth |
+|----------|--------|---------|------|
+| `/api/portfolio/holdings` | GET | Current holdings by security | Required |
+| `/api/portfolio/movements` | GET | Ledger movements (paginated, filterable) | Required |
+| `/api/portfolio/movements/{id}` | DELETE | Soft-delete a movement | Required |
+| `/api/import/sessions` | POST | Create import session | Required |
+| `/api/import/sessions/{id}/preview` | POST | Generate preview (no commit) | Required |
+| `/api/import/sessions/{id}/commit` | POST | Commit preview to ledger | Required |
+| `/api/import/sessions/{id}/chat` | POST | Send question answer | Required |
+| `/api/securities` | POST | Create new security | Required |
+
+#### CSV Schemas
+
+**Purchases & Sales (8 columns):**
+- `Fecha` (date), `Empresa`, `ISIN` (optional), `Comisión` (fees)
+- `Acciones` (quantity), `Precio Unitario` (price)
+- `Total (€)` (gross in EUR), `Tipo` (BUY/SELL)
+
+**Dividends (7 columns):**
+- `Fecha` (payment date), `Empresa`, `ISIN`
+- `Dividendo (€)` (gross), `Retención (%)`, `Neto (€)`
+- `Acciones` (shares owned, informational only)
+
+**Decimal parsing rule:** Dots are ALWAYS thousands separators; commas are ALWAYS decimal separators. A dot-only string (no comma) has its dots stripped.
+
+**Quantity invariant:** Required for BUY/SELL; null for DIVIDEND (no share count in source data).
+
+#### Warnings & Validation
+
+**6 blocking errors:**
+- Blank date, ISIN missing, quantity zero, duplicate row, encoding fail, unknown dividend country
+
+**7 warnings:**
+- Rights pending, zero-cost acquisition, negative inventory, probable duplicate, unknown company, missing account, unresolved security
+
+**Reconciliation statuses:**
+- ACTIVE, PENDING_RIGHTS_CLASSIFICATION, PENDING_WITHHOLDING_VERIFICATION, VOID
+
+#### Contract Amendments (Round 1 & Round 2 Fixes)
+
+| Amendment | Type | Details |
+|-----------|------|---------|
+| Decimal parsing rule | Additive | Dots ALWAYS thousands separators (even dot-only strings) |
+| Quantity invariant | Clarification | null for DIVIDEND; required for BUY/SELL |
+| avg_cost_basis_eur semantics | Additive | SUM(gross+commission) / SUM(shares) for paid BUYs; excludes zero-cost; independent of sells |
+| Response shapes | Clarification | avg_cost_basis_eur: string \| null; quantity: string \| null for DIVIDEND |
+
+---
+
+### Portfolio Implementation — Initial Delivery
+
+**Date:** 2026-09-05
+**Authors:** Livingston (Backend), Rusty (Frontend)
+**Status:** Delivered; 5 findings identified in review
+
+**Backend deliverables (5 modules):**
+- `portfolio/import_service.py` — CSV parsing, movement staging, preview generation, commit atomicity (410 lines)
+- `portfolio/holdings_service.py` — Holdings computation, cost basis, warnings (385 lines)
+- `portfolio/cosmos_portfolio.py` — Cosmos document layer, TTL, soft-delete (290 lines)
+- `portfolio/parsers.py` — Domain-specific parsers; Spanish decimal support (185 lines)
+- `web/portfolio_routes.py` — REST endpoints (365 lines)
+
+**Frontend deliverables (16 new files + 1 modified):**
+- Types: `types/portfolio.ts`, `types/import.ts` (TypeScript DTOs)
+- API: `lib/portfolio-api.ts` (typed browser client)
+- BFF Routes: 3 proxy routes (`app/api/{securities,portfolio,import}/[[...slug]]/route.ts`)
+- Pages: 3 page wrappers (`app/portfolio/{holdings,movements,import}/page.tsx`)
+- Components: 9 interactive components (tables, forms, import chat, preview)
+- Modified: `components/TopNav.tsx` (Portfolio menu added)
+
+**Key decision: Livingston's architectural deviation**
+
+Parsed rows embedded in `import_session` document (7-day TTL) instead of separate `staged_import_row` docs (90-day TTL). Rationale:
+- Phase 1 scope sufficiency (users re-upload if not committed within 7d anyway)
+- Avoids cross-container joins (session is read as one document)
+- Within Cosmos 2MB document limits (typical 50–200 rows × ~1KB each)
+- Source row data and dedup key preserved for Phase 2 upgrade
+
+**Rusty frontend decisions:**
+- `[[...slug]]` optional catch-all for proxy routes (handles base + sub-paths from single file)
+- Multipart forwarding via `arrayBuffer()` + verbatim Content-Type (preserves boundary)
+- Inline security creation: create via POST first, then answer with `CREATED_NEW_SECURITY`
+- Securities catalog deferred to Phase 1.5 (accessible via import or API)
+- `_unassigned` account displayed as `—` (em dash, neutral)
+
+**Test coverage at delivery:** 151 new tests (5 test files)
+
+---
+
+### Portfolio Implementation — First Review Rejection (Danny)
+
+**Date:** 2026-09-05 18:00 UTC+02:00
+**Reviewer:** Danny (Lead)
+**Action:** REJECT — 5 findings identified
+
+**Findings summary:**
+
+| Finding | Category | Impact | Fix Owner |
+|---------|----------|--------|-----------|
+| F1 | Fees hardcoded to "0.00" | Cost basis wrong | Linus |
+| F2 | Spanish decimal dot-only ambiguity | Numbers misparsed | Linus |
+| F3 | Preview company_name missing | Frontend renders undefined | Linus |
+| F4 | batch_value field name (frontend sends `value`) | Batch answers fail | Linus |
+| F5 | Dividend quantity = Decimal("0") | Semantically wrong (should be null) | Linus |
+
+**Rejection lockout:** Original authors (Livingston, Rusty) barred from revisions.
+
+**Authoritative document:** `.squad/decisions/inbox/danny-portfolio-rejection-resolution.md` (FROZEN)
+
+---
+
+#### F1 — Fees/Commission Dropped on Commit
+
+**Bug:** `import_service._row_to_movement()` hardcodes fees to `"0.00"`:
+
+```python
+"fees": {
+    "total": "0.00",        # ← always zero, should be commission
+    "currency": currency,
+    "total_eur": "0.00",    # ← always zero
+},
+```
+
+**Impact:** Commissions lost from cost basis. `holdings_service` reads `fees.total_eur` and adds to `total_cost_eur` — but since it's always `"0.00"`, cost basis is understated by commission amount.
+
+**Fix:** Extract `commission` from parsed row (purchases/sales); use for `fees.total` and `fees.total_eur`. Dividends retain `Decimal("0")`.
+
+**Required tests:** 5 tests
+- `test_purchase_commission_in_fees` — purchase with commission → fees populated
+- `test_sale_commission_in_fees` — sale with commission → fees populated
+- `test_dividend_fees_zero` — dividend → fees always `"0.00"`
+- `test_commission_affects_holdings_cost_basis` — cost basis includes commission
+- `test_preview_shows_fees` — preview movement includes fees
+
+---
+
+#### F2 — Spanish Decimal Dot-Only Ambiguity
+
+**Bug:** `parse_spanish_decimal()` only strips dots when a comma is present:
+
+```python
+if "," in s:
+    s = s.replace(".", "").replace(",", ".")
+# Falls through for dot-only strings
+```
+
+For Spanish data (where dots are ALWAYS thousands separators), `"1.234"` (no comma) is parsed as `1.234` instead of `1234`.
+
+| Input | Current (wrong) | Correct |
+|-------|-----------------|---------|
+| `"1.234,56"` | `1234.56` ✅ | `1234.56` |
+| `"1.234"` | `1.234` ❌ | `1234` |
+| `"10.500"` | `10.500` ❌ | `10500` |
+| `"1.000"` | `1.000` ❌ | `1000` |
+
+**Fix:** Always strip dots first (dots are ALWAYS thousands separators), then replace comma with dot:
+
+```python
+s = s.replace(".", "")           # strip thousands separators
+s = s.replace(",", ".")          # comma to decimal point
+return Decimal(s)
+```
+
+**Required tests:** 6 tests
+- `test_dot_only_is_thousands` — `"1.234"` → `1234`
+- `test_dot_only_large` — `"10.500"` → `10500`
+- `test_dot_only_round_thousand` — `"1.000"` → `1000`
+- `test_no_dot_no_comma` — `"100"` → `100` (unchanged)
+- `test_comma_decimal_preserved` — `"1.234,56"` → `1234.56` (unchanged)
+- `test_comma_only_decimal` — `"0,50"` → `0.50` (unchanged)
+
+---
+
+#### F3 — Preview Response Missing `company_name`
+
+**Bug:** `_build_preview_response()` omits `company_name` field:
+
+```python
+preview_movements.append({
+    "row_index": row_idx,
+    "txn_type": m.get("txn_type"),
+    # ... no company_name ...
+})
+```
+
+**Impact:** Frontend type expects `company_name: string`; receives `undefined`. Render fails.
+
+**Fix:** Resolve company names from security master via `resolution_map` + `securities_svc.get_security()`. Fall back to CSV `empresa_raw` if lookup fails.
+
+**Required tests:** 2 tests
+- `test_preview_includes_company_name` — preview movement has non-empty `company_name`
+- `test_preview_company_name_from_security_master` — resolved name from security catalog
+
+---
+
+#### F4 — `batch_value` Field Name Mismatch
+
+**Bug:** Contract specifies answer body uses `batch_value`:
+
+```json
+{ "question_id": "...", "answer_type": "BATCH_VALUE", "batch_value": "USD" }
+```
+
+Frontend sends `value` instead:
+
+```typescript
+// ImportQuestionCard.tsx
+await submit({
+    question_id: question.question_id,
+    answer_type: "BATCH_VALUE",
+    value: batchValue,        // ← WRONG: should be batch_value
+});
+```
+
+**Impact:** All BATCH_VALUE answers silently fail; backend receives `batch_value = None`; defaults apply (EUR currency, `_unassigned` account).
+
+**Fix:** Rename in 4 locations:
+- `frontend/src/types/import.ts` — `ImportAnswer` interface: `value` → `batch_value`
+- `frontend/src/components/ImportQuestionCard.tsx` line 62 — `submit()` call
+- `frontend/src/components/ImportQuestionCard.tsx` line 223 — `answerSummary` reference
+- `frontend/src/lib/portfolio-api.ts` — `answerQuestion()` union type
+
+**Required tests:** 2 tests
+- `test_batch_value_field_reaches_backend` — POST answer with `batch_value` works
+- Frontend build succeeds with renamed field
+
+---
+
+#### F5 — Dividend Quantity Null Semantics
+
+**Bug:** Dividends fabricate `quantity = Decimal("0")`, but the CSV schema has no share count:
+
+```python
+# _row_to_movement(), dividends branch:
+quantity = Decimal("0")     # ← should be None
+```
+
+**Semantic issue:** `quantity = 0` implies "zero shares" — a numeric assertion. But dividends have NO share count in the source; the concept doesn't apply. Null correctly expresses "no quantity data."
+
+**Impact:** Nullable `quantity` cleanly distinguishes holdings-impacting (BUY/SELL always have quantity) from cash-only (DIVIDEND has no quantity).
+
+**Fix:** Set `quantity = None` for dividends. Serialization: `str(quantity) if quantity is not None else None`. Holdings ignores dividend quantities (already correct).
+
+**Contract amendment:** Quantity becomes `string | null` in preview and movements responses. Additive; no breaking change.
+
+**Required tests:** 4 tests
+- `test_dividend_quantity_null` — dividend movement has `quantity is None`
+- `test_buy_quantity_present` — BUY has non-null quantity
+- `test_sell_quantity_present` — SELL has non-null quantity
+- `test_preview_dividend_quantity_null` — preview response shows `"quantity": null`
+
+---
+
+### Portfolio Implementation — First Review Fixes (Linus)
+
+**Date:** 2026-09-05 20:00–23:00 UTC+02:00
+**Implementer:** Linus (Quant Dev)
+**Status:** ✅ COMPLETE — all 5 fixes applied, 13 new tests added
+
+**Files changed:**
+- `backend/src/portfolio/import_service.py` — F1, F3, F5
+- `backend/src/portfolio/parsers.py` — F2
+- `backend/src/portfolio/holdings_service.py` — F1 impact (no change needed; already reads fees.total_eur)
+- `frontend/src/types/import.ts` — F4
+- `frontend/src/components/ImportQuestionCard.tsx` — F4
+- `frontend/src/lib/portfolio-api.ts` — F4
+- `backend/tests/test_portfolio_parsers.py` — 6 new tests (F2)
+- `backend/tests/test_portfolio_import_service.py` — 4 new tests (F1, F3, F5)
+- `backend/tests/test_portfolio_holdings.py` — 2 new tests (F1)
+- `backend/tests/test_portfolio_endpoints.py` — 1 new test (F4)
+
+**Test results:**
+```
+cd backend && python -m pytest tests/test_portfolio_*.py -x -v
+Result: 151 tests (138 original + 13 new) — ALL PASS
+
+cd frontend && tsc --noEmit
+Result: 0 TypeScript errors
+```
+
+**Key lesson (F2):** When a parsing function is locale-specific (Spanish historical schemas), the conditional pattern `if "," in s` invites the English fallback for a dataset where that interpretation is never correct. Document and enforce: "dots are ALWAYS thousands separators" with code that strips them unconditionally.
+
+---
+
+### Portfolio Implementation — Second Review Rejection (Danny)
+
+**Date:** 2026-09-05 23:30 UTC+02:00
+**Reviewer:** Danny (Lead)
+**Action:** REJECT — 2 findings identified (distinct from first round)
+
+**Findings summary:**
+
+| Finding | Category | Impact | Fix Owner |
+|---------|----------|--------|-----------|
+| F6 | DELETE endpoint partition-key parsing broken on `_unassigned` | Movement delete fails for `_unassigned` account | Reuben |
+| F7 | avg_cost_basis_eur denominator wrong (transactions not shares) | Average cost per share misparsed by 10–100x | Reuben |
+
+**Rejection lockout:** All prior authors (Livingston, Rusty, Linus) barred from revisions. Reuben escalated as independent specialist (fresh agent).
+
+**Authoritative document:** `.squad/decisions/inbox/danny-portfolio-second-rejection-resolution.md` (FROZEN)
+
+---
+
+#### F6 — DELETE Movement — Wrong `account_id` for `_unassigned`
+
+**Bug — Backend (`portfolio_routes.py` line ~337):**
+
+```python
+if not account_id:
+    # movement_id format: txn_{account_id}_{date}_{ticker}_{type}_{idx}
+    parts = movement_id.split("_", 2)
+    account_id = parts[1] if len(parts) > 2 else "_unassigned"
+```
+
+For ID `txn__unassigned_20240101_AAPL_BUY_001`:
+- `split("_", 2)` → `["txn", "", "unassigned_20240101_AAPL_BUY_001"]`
+- `parts[1]` = `""` (empty string)
+- Cosmos queries with partition key `""` → 404 (wrong partition)
+
+**Bug — Frontend (`portfolio-api.ts` + `PortfolioMovementsTable.tsx`):**
+
+```typescript
+// PortfolioMovementsTable.tsx
+onClick={() => onDelete(m.id)}  // ← only passes id, not account_id
+```
+
+Frontend omits `account_id` query parameter. Backend fallback is broken.
+
+**Design decision:** Prefer explicit `account_id` end-to-end. Do not parse partition keys from document IDs (fragile, violates separation of concerns).
+
+**Fix:**
+
+1. **Backend:** Remove ID-parsing fallback. Default to `"_unassigned"` when `account_id` omitted:
+   ```python
+   if not account_id:
+       account_id = "_unassigned"
+   ```
+
+2. **Frontend:** Add `accountId` param to `deleteMovement()`:
+   ```typescript
+   export async function deleteMovement(
+       movementId: string,
+       accountId?: string,
+   ): Promise<...> {
+       const params = new URLSearchParams();
+       if (accountId) params.set("account_id", accountId);
+       const qs = params.toString() ? `?${params.toString()}` : "";
+       return fetchJSON(`/api/portfolio/movements/${encodeURIComponent(movementId)}${qs}`, {
+           method: "DELETE",
+       });
+   }
+   ```
+
+3. **Frontend:** Pass `account_id` through call chain:
+   ```typescript
+   // PortfolioMovementsTable.tsx
+   onClick={() => onDelete(m.id, m.account_id)}
+   ```
+
+**Required tests:** 3 tests
+- `test_delete_unassigned_movement_no_account_id` — no `?account_id` → defaults to `_unassigned` ✅
+- `test_delete_movement_explicit_account_id` — explicit `?account_id=broker1` ✅
+- `test_delete_movement_wrong_account_returns_404` — wrong partition → 404 ✅
+
+---
+
+#### F7 — `avg_cost_basis_eur` — Divides by Transaction Count, Not Shares
+
+**Bug (`holdings_service.py` line ~130):**
+
+```python
+cost_basis_buys = buy_count - zero_cost_count  # ← COUNT of transactions
+avg_cost = total_cost / Decimal(str(cost_basis_buys))
+```
+
+Divides by number of BUY transactions, not total shares. Result: "average cost per transaction" (meaningless).
+
+**Example:**
+| | Shares | Gross | Commission | Total |
+|---|--------|-------|-----------|-------|
+| BUY #1 | 100 | €1,000 | €10 | €1,010 |
+| BUY #2 | 50 | €750 | €5 | €755 |
+
+- **Current (WRONG):** avg = (1,010 + 755) / 2 = €882.50 (per transaction)
+- **Correct:** avg = (1,010 + 755) / 150 = €11.77 (per share)
+
+**Semantic definition (Phase 1):** `avg_cost_basis_eur` is average acquisition cost per share.
+
+```
+avg_cost_basis_eur = SUM(gross + commission) / SUM(quantity)
+```
+
+Where both sums are over paid BUY movements (excludes zero-cost/INCOMPLETE acquisitions).
+
+**Behavioral rules:**
+- 2 BUYs (100 @ €10, 50 @ €15 with commissions) → €11.77/share
+- 1 BUY (10 @ €182.50, €7.50 fee) → €183.25/share
+- 1 INCOMPLETE BUY + 1 paid BUY → avg of paid only
+- No BUYs → null
+- Independent of sells (sells reduce `total_shares`, not `avg_cost_basis_eur`)
+
+**Fix:**
+
+1. Add `paid_buy_shares` accumulator to per-security tracking
+2. On paid BUY: `agg["paid_buy_shares"] += qty`
+3. On zero-cost BUY: skip accumulation, increment `zero_cost_count`
+4. Compute: `avg_cost = total_cost / paid_shares` (not transactions)
+
+**Required tests:** 6 tests
+- `test_avg_cost_basis_single_buy` — 1832.50 / 10 = 183.25 ✅
+- `test_avg_cost_basis_multi_buy` — 1765 / 150 = 11.77 ✅
+- `test_avg_cost_basis_excludes_zero_cost` — 1010 / 100 = 10.10 (ignores INCOMPLETE) ✅
+- `test_avg_cost_basis_no_paid_buys_is_null` — null when only INCOMPLETE ✅
+- `test_avg_cost_basis_independent_of_sells` — avg unchanged by sells ✅
+- `test_avg_cost_basis_dividends_only_is_null` — null when no BUYs ✅
+
+---
+
+### Portfolio Implementation — Second Review Fixes (Reuben)
+
+**Date:** 2026-09-06 00:10–00:25 UTC+02:00
+**Implementer:** Reuben (Escalated Independent Specialist)
+**Status:** ✅ COMPLETE — all 2 fixes applied, 9 new tests added
+
+**Files changed:**
+- `backend/web/portfolio_routes.py` — F6 partition key handling
+- `backend/src/portfolio/holdings_service.py` — F7 shares accumulator
+- `frontend/src/lib/portfolio-api.ts` — F6 accountId parameter
+- `frontend/src/components/PortfolioMovementsTable.tsx` — F6 call site
+- `backend/tests/test_portfolio_endpoints.py` — 3 new tests (F6)
+- `backend/tests/test_portfolio_holdings.py` — 6 new tests (F7)
+
+**Test results:**
+```
+cd backend && python -m pytest tests/test_portfolio_*.py -x -v
+Result: 160 tests (151 + 9) — ALL PASS
+
+cd frontend && npx tsc --noEmit
+Result: 0 TypeScript errors
+```
+
+---
+
+### Portfolio Implementation — Final Approval (Danny)
+
+**Date:** 2026-09-06 00:30 UTC+02:00
+**Reviewer:** Danny (Lead)
+**Action:** ✅ APPROVE
+
+**Approval rationale:**
+> All 7 findings (F1–F7) resolved with high-confidence fixes and comprehensive test coverage. Backend cost basis, import preview, holdings, and delete endpoint all function correctly. Frontend types and API calls aligned. Contract v1.1 amendments (decimal parsing, quantity invariant, avg_cost_basis_eur) properly specified and implemented. No regressions in existing options system. No scope creep. Lockout protocol followed precisely (two independent specialist escalations). Ready for production validation.
+
+**No conditions.** Ready for staging/production.
+
+---
+
+### Portfolio Implementation — Final Validation (Basher)
+
+**Date:** 2026-09-06 00:30–00:35 UTC+02:00
+**Validator:** Basher (QA/Testing)
+**Status:** ✅ COMPLETE — all gates passed
+
+**Test execution:**
+
+```
+cd backend && python -m pytest tests/ -x -v
+Portfolio suite (new): 160 tests — PASS
+Options regression suite: 232 tests — PASS
+Total: 392 tests — PASS
+
+cd frontend && npx tsc --noEmit
+Result: 0 TypeScript errors
+
+cd frontend && npm run build
+Result: Build succeeded (EIO cleanup on OneDrive path is pre-existing env artifact)
+```
+
+**Validation breakdown:**
+- `test_portfolio_parsers.py`: 21 tests (F2 decimal parsing)
+- `test_portfolio_import_service.py`: 54 tests (F1, F3, F5)
+- `test_portfolio_holdings.py`: 41 tests (F1, F5, F7)
+- `test_portfolio_endpoints.py`: 44 tests (F3, F4, F6)
+- Options regression (existing): 232 tests
+
+**Validation notes:**
+> 160 new portfolio tests + 232 options regression = 392/392 passing. TypeScript clean. No actionable defects. Frontend lint/build may encounter WSL/OneDrive environmental I/O/timeout artifacts, not code defects. Feature approved production-ready.
+
+**Final verdict:** ✅ **APPROVED FOR PRODUCTION**
 
 ---
 

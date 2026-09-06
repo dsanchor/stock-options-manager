@@ -916,3 +916,47 @@ Initial feature rejected by Basher (D0) due to two contract gaps. After D1 fix, 
 
 **Final Outcome:** All 73 gate tests pass (53 core + 20 extended); feature approved and production-ready.
 
+
+### 2026-09-06 — Portfolio Ledger: Five Reviewer Findings Fixed (F1–F5)
+
+**Role:** Revision owner after Livingston (backend) and Rusty (frontend) locked out post-rejection.
+
+Five independent surgical fixes against Danny's frozen `danny-portfolio-rejection-resolution.md`:
+
+**F1 — Commission preserved in fees:** `import_service._row_to_movement()` hardcoded `fees.total/total_eur = "0.00"`. Extracted `commission` variable in purchases/sales branches; dividends retain `Decimal("0")`. Used `f"{commission:.2f}"` formatting for consistent 2-decimal output. `holdings_service` already read `fees.total_eur` into cost basis — fix required no holdings-service changes. Cost basis now correctly includes commission.
+
+**F2 — Spanish decimal dot-only strings:** `parse_spanish_decimal()` only stripped dots when a comma was present, so `"1.234"` was parsed as `1.234` instead of `1234`. Fix: always strip dots first (dots are ALWAYS thousands separators in this locale), then replace comma with dot. Existing comma-decimal tests (`"1.234,56"`, `"0,50"`) continue to pass.
+
+**F3 — Preview company_name:** `_build_preview_response()` omitted `company_name`. Added `_resolve_preview_company_names()` helper (resolution_map + securities catalog lookup with empresa_raw fallback); call it in `generate_preview()` before serializing preview_movements; added `"company_name": m.get("company_name", "")` to the preview movement dict. No changes to the commit or holdings path.
+
+**F4 — batch_value field rename (frontend):** Four touch-points: `ImportAnswer` type in `import.ts` (`value` → `batch_value`), `submit()` function signature in `ImportQuestionCard.tsx`, the actual `handleBatchSubmit` call, `answerSummary` reference, and `answerQuestion()` union type in `portfolio-api.ts`. Backend already read `batch_value` correctly.
+
+**F5 — Dividend quantity null:** Changed `quantity = Decimal("0")` to `quantity = None` in the dividends branch of `_row_to_movement()`. Serialization: `str(quantity.normalize()) if quantity is not None else None`. Inventory tracking and `find_probable_duplicate` use `movement.get("quantity") or "0"/""`  (None-safe). `holdings_service._d(None)` already returned `Decimal("0")` and qty is never used for DIVIDEND type — no change needed. Frontend: `PreviewMovement.quantity: string | null`, `LedgerMovement.quantity: string | null`, `{m.quantity ?? "—"}` in ImportPreview.tsx, null-guard in PortfolioMovementsTable.tsx.
+
+**Tests added:** 6 new tests in `test_portfolio_parsers.py` (F2), 9 in `test_portfolio_import_service.py` (F1/F3/F5), 4 in `test_portfolio_holdings.py` (F1/F5), 4 in `test_portfolio_endpoints.py` (F1/F3/F4/F5). All 151 targeted portfolio tests pass; 521-test options regression suite untouched. TypeScript `tsc --noEmit` clean.
+
+**Key lesson:** When a module-level parsing function is for a single locale (Spanish historical schemas), document and enforce the assumption explicitly — a comment like "dots are ALWAYS thousands separators" is not enough without a code path that strips them unconditionally. The conditional `if "," in s:` pattern is an anti-pattern for locale-specific parsers: it invites the English fallback for a dataset where that interpretation is never correct.
+
+---
+
+## Portfolio Unified Implementation — First Review Fixes Complete (2026-09-06 00:13)
+
+**Role:** First-round fix owner (F1–F5)
+**Status:** ✅ COMPLETE
+
+**Fixes Applied:**
+- F1: Commission preserved in `fees.total_eur`
+- F2: Spanish decimal parser — dots ALWAYS thousands separators
+- F3: Preview company_name resolved from security master
+- F4: batch_value field name (frontend) corrected
+- F5: Dividend quantity = null (not Decimal("0"))
+
+**Test Results:**
+```
+Backend: 151 tests (138 original + 13 new) — ALL PASS
+Frontend: tsc --noEmit — 0 errors
+```
+
+**Archived to:** `.squad/decisions/archive/inbox-2026-09-06/` (audit trail preserved)
+
+**Final Status:** ✅ All Round 1 findings resolved. Awaiting Round 2 validation.

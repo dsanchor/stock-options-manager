@@ -1336,3 +1336,46 @@ Per strict lockout policy: author of rejected code cannot participate in revisio
 
 **Related:** Input to `danny-scrip-rights-topup-architecture.md` and `danny-dividend-csv-import-consolidated.md`
 
+
+
+---
+
+## 2026-09-06: Portfolio Vertical Slice — Contract v1.1 Implementation
+
+**Task:** Implement full backend vertical slice per `danny-portfolio-implementation-contract.md` v1.1.
+
+**Deliverables (all new — no conflicts with existing code):**
+
+| File | Purpose |
+|------|---------|
+| `backend/src/portfolio/__init__.py` | Package init |
+| `backend/src/portfolio/models.py` | Pydantic models + frozen enums |
+| `backend/src/portfolio/cosmos_securities.py` | security_master CRUD in symbols container |
+| `backend/src/portfolio/cosmos_portfolio.py` | portfolio + import_sessions container ops |
+| `backend/src/portfolio/parsers/__init__.py` | Parser package init |
+| `backend/src/portfolio/parsers/common.py` | Spanish locale utils, delimiter detection, idempotency hash |
+| `backend/src/portfolio/parsers/dividends.py` | Dividends schema parser (8 cols) |
+| `backend/src/portfolio/parsers/purchases.py` | Purchases schema parser (7 cols) |
+| `backend/src/portfolio/parsers/sales.py` | Sales schema parser (6 cols) |
+| `backend/src/portfolio/import_service.py` | State machine, question gen, commit |
+| `backend/src/portfolio/holdings_service.py` | Derived holdings computation |
+| `backend/web/portfolio_routes.py` | FastAPI router (all /api/portfolio, /api/securities, /api/import) |
+| `backend/tests/test_portfolio_parsers.py` | 42 parser tests |
+| `backend/tests/test_securities_catalog.py` | 21 security CRUD/collision tests |
+| `backend/tests/test_portfolio_holdings.py` | 18 holdings derivation tests |
+| `backend/tests/test_portfolio_import_service.py` | 28 state machine tests |
+| `backend/tests/test_portfolio_endpoints.py` | 21 API endpoint tests |
+
+**Minimal additive changes:**
+- `backend/src/cosmos_db.py`: Added `portfolio_container` + `import_sessions_container` init (best-effort, existing pattern)
+- `backend/web/app.py`: Added `app.include_router(portfolio_router)` (one line)
+
+**Key implementation decisions:**
+1. **Session storage:** Parsed rows embedded in import_session document (not separate staged_import_row docs). Session document is 7-day TTL. Acceptable for Phase 1 (< 2MB Cosmos doc limit for typical batch sizes). Avoids cross-partition complexity. On commit, writes ledger_txn docs to portfolio container.
+2. **Accent normalization in parser headers:** `_normalize_header` strips accents (NFKD → drop combining chars), so comparison must normalize both actual AND expected column names. "Año" normalizes to "ano", not "año".
+3. **TestClient fixture ordering:** FastAPI startup event overwrites `app.state.cosmos`. Fixture must set `app.state.cosmos = fake_cosmos` INSIDE the `with TestClient(app)` block, after startup completes. Setting it before entry is overwritten.
+4. **Negative inventory:** Non-blocking warning computed both at preview time (within-batch) and at holdings time (cross-ledger). Does not block commit.
+5. **RIGHTS_AMOUNT warning:** Persistent on committed movement via `source_derechos_amount` field. No shares inferred.
+6. **Idempotency:** sha256(security_id|txn_type|trade_date|quantity|gross_amount)[:32]. Upsert on commit ensures retry-safety.
+
+**Test outcome:** 130/130 new portfolio tests pass. All pre-existing failures (test_yfinance_data_provider, test_yfinance_technicals_dividend_availability, test_options_screener_endpoint sort tests, test_options_screener_cache_concurrency flaky) confirmed pre-existing — none introduced by these changes.

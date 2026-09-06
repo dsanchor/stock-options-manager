@@ -20,6 +20,9 @@ import {
   Menu,
   X,
   ChevronDown,
+  LayoutList,
+  ArrowLeftRight,
+  FileUp,
   type LucideIcon,
 } from "lucide-react";
 import type { SymbolsOverview } from "@/types/symbols";
@@ -31,6 +34,11 @@ const DROPDOWNS: Record<string, Item[]> = {
     { href: "/symbols", label: "Watchlist", icon: LineChart },
     { href: "/symbols/calendar", label: "Calendar", icon: CalendarDays },
     { href: "/plans", label: "Action Plans", icon: ClipboardList },
+  ],
+  Portfolio: [
+    { href: "/portfolio/holdings", label: "Holdings", icon: LayoutList },
+    { href: "/portfolio/movements", label: "Movements", icon: ArrowLeftRight },
+    { href: "/portfolio/import", label: "Import", icon: FileUp },
   ],
   Screener: [
     { href: "/screener/dgi", label: "DGI", icon: Search },
@@ -66,6 +74,7 @@ export function TopNav() {
   const dashboardActive = pathname === "/" || isActive(pathname, "/dashboard");
   const symbolsActive =
     isActive(pathname, "/symbols") || isActive(pathname, "/plans");
+  const portfolioActive = isActive(pathname, "/portfolio");
   const screenerActive = isActive(pathname, "/screener");
   const settingsActive = isActive(pathname, "/settings");
 
@@ -100,6 +109,9 @@ export function TopNav() {
           <Link href="/economics" className={navClass(isActive(pathname, "/economics"))}>
             <Banknote size={16} className="shrink-0" /> Economics
           </Link>
+
+          <Dropdown label="Portfolio" items={DROPDOWNS.Portfolio} active={portfolioActive} pathname={pathname} />
+
           <Link href="/chat" className={navClass(isActive(pathname, "/chat", true))}>
             <MessageSquare size={16} className="shrink-0" /> Chat
           </Link>
@@ -136,6 +148,7 @@ export function TopNav() {
             <MobileLink href="/dashboard" label="Dashboard" icon={LayoutDashboard} active={dashboardActive} />
             <MobileSection label="Symbols" items={DROPDOWNS.Symbols} pathname={pathname} />
             <MobileLink href="/economics" label="Economics" icon={Banknote} active={isActive(pathname, "/economics")} />
+            <MobileSection label="Portfolio" items={DROPDOWNS.Portfolio} pathname={pathname} />
             <MobileLink href="/chat" label="Chat" icon={MessageSquare} active={isActive(pathname, "/chat", true)} />
             <MobileSection label="Screener" items={DROPDOWNS.Screener} pathname={pathname} />
             <MobileSection label="Settings" items={DROPDOWNS.Settings} pathname={pathname} />

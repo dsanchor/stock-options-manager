@@ -60,3 +60,63 @@ Agent Scribe maintains squad administrative work: orchestration logs, session lo
 - Session Log: `.squad/log/2026-07-01T20-11-roll-dte-earnings.md`
 - Decision: `.squad/decisions/decisions.md` → "Roll DTE Target and Post-Earnings Window Update"
 - Commit: `76c5dae`
+
+---
+
+## Portfolio Unified Implementation — Documentation Finalization (2026-09-06 00:37 UTC+02:00)
+
+**Task:** Finalize documentation and state for completed unified Securities, Portfolio ledger, and conversational import implementation
+
+**Status:** ✅ COMPLETE
+
+**Actions Performed:**
+1. ✅ Orchestration log created: `.squad/orchestration-log/2026-09-06T0037+0200-portfolio-unified-finalization.md`
+   - Implementation lifecycle (initial delivery, two review cycles, independent specialist fixes)
+   - Rejection lockout protocol enforcement
+   - Final approval and validation
+
+2. ✅ Session log created: `.squad/session-log/2026-09-06T0037+0200-portfolio-finalization.md`
+   - Task breakdown and sources reviewed
+   - Consolidation strategy and archive location
+   - Execution steps documented
+
+3. ✅ Decision merge: Appended Portfolio sections to `.squad/decisions.md`
+   - Contract v1.1 (endpoint specs, CSV schemas, validation rules)
+   - Initial implementation (Livingston backend, Rusty frontend)
+   - First review rejection (Danny — F1–F5 findings)
+   - First review fixes (Linus — 5 corrections, 13 new tests)
+   - Second review rejection (Danny — F6–F7 findings)
+   - Second review fixes (Reuben — 2 corrections, 9 new tests)
+   - Final approval (Danny)
+   - Final validation (Basher — 392/392 PASS)
+
+4. ✅ Archive inbox files to `.squad/decisions/archive/inbox-2026-09-06/`:
+   - `danny-portfolio-implementation-contract.md` (30 KB)
+   - `danny-portfolio-rejection-resolution.md` (17 KB)
+   - `danny-portfolio-second-rejection-resolution.md` (15 KB)
+   - `livingston-portfolio-implementation.md` (3.0 KB)
+   - `reuben-second-rejection-implementation.md` (2.3 KB)
+   - `rusty-portfolio-implementation.md` (3.7 KB)
+   - Total: 80 KB archived (audit trail preserved)
+
+5. ✅ Agent history updates (append-only entries):
+   - Danny: Confirmed final APPROVE decision
+   - Linus: Confirmed F1–F5 fixes complete, 151 → 160 tests passing
+   - Reuben: Confirmed F6–F7 fixes complete
+   - Basher: Confirmed final validation, 392/392 tests passing
+   - Scribe: This finalization session entry
+
+**Key Outcomes:**
+- ✅ Two rejection cycles with independent specialist escalation (Linus, then Reuben)
+- ✅ Lockout protocol enforced: 3 separate agents involved across 3 phases
+- ✅ 160 new portfolio tests + 232 options regression = 392/392 PASS
+- ✅ TypeScript clean
+- ✅ No production code modifications by Scribe (documentation-only)
+- ✅ No commits/pushes performed (as instructed)
+- ✅ Audit trail fully preserved
+
+**Related Records:**
+- Orchestration Log: `.squad/orchestration-log/2026-09-06T0037+0200-portfolio-unified-finalization.md`
+- Session Log: `.squad/session-log/2026-09-06T0037+0200-portfolio-finalization.md`
+- Decision: `.squad/decisions.md` → "Portfolio Unified Implementation — Securities, Ledger & Import (2026-09-06)"
+- Archive: `.squad/decisions/archive/inbox-2026-09-06/` (6 files, 80 KB)
