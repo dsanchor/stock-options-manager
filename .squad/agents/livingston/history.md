@@ -1379,3 +1379,23 @@ Per strict lockout policy: author of rejected code cannot participate in revisio
 6. **Idempotency:** sha256(security_id|txn_type|trade_date|quantity|gross_amount)[:32]. Upsert on commit ensures retry-safety.
 
 **Test outcome:** 130/130 new portfolio tests pass. All pre-existing failures (test_yfinance_data_provider, test_yfinance_technicals_dividend_availability, test_options_screener_endpoint sort tests, test_options_screener_cache_concurrency flaky) confirmed pre-existing — none introduced by these changes.
+
+---
+
+### 2026-09-06 — Portfolio Holdings 503 bug fix (provision_cosmosdb.sh missing containers)
+
+**Root cause:** `provision_cosmosdb.sh` created only 6 containers (`symbols`, `telemetry`, `settings`, `dgi_screener`, `calendar`, `agent_traces`) and omitted `portfolio` (partition `/account_id`) and `import_sessions` (partition `/session_id`). `CosmosDBService.__init__` probes these containers via `.read()` at startup; when not found, sets them to `None` and logs a warning. `_get_portfolio_svc()` in `portfolio_routes.py` correctly reads `getattr(cosmos, "portfolio_container", None)` and passes `None` into `CosmosPortfolioService`. Any operation then calls `_require_portfolio()` → raises `StorageUnavailableError` → route returns HTTP 503 → frontend shows "⚠️ Portfolio storage is not yet configured."
+
+**Code was correct end-to-end; only provisioning was incomplete.**
+
+**Fix:** Added steps 4g (portfolio) and 4h (import_sessions) to `provision_cosmosdb.sh`. Also added both containers to `docs/deployment.md` manual section. Import sessions uses `--ttl -1` (container-level per-document TTL; documents carry `ttl: 604800`).
+
+**Files changed:**
+- `backend/scripts/provision_cosmosdb.sh` — added containers 4g (portfolio, /account_id) and 4h (import_sessions, /session_id, TTL=-1); updated header count from six to eight
+- `docs/deployment.md` — added portfolio and import_sessions container blocks in manual provisioning section
+
+**Regression coverage (pre-existing):** `TestStorageUnavailable::test_holdings_503_when_portfolio_unavailable` and `test_import_session_503_when_sessions_unavailable` in `test_portfolio_endpoints.py` already covered this scenario. All 53 portfolio endpoint/holdings tests pass.
+
+**Deployment action required:** Run `bash scripts/provision_cosmosdb.sh` (or execute the two new `az cosmosdb sql container create` commands) against the live Azure Cosmos account to create the missing containers. After creation, restart the backend container so the startup probe succeeds.
+
+**Learning:** Provision scripts must be updated in the same PR as any new container registration in `CosmosDBService.__init__`. Best-effort container init logs warnings silently; this can hide missing provisioning until a feature is first used.

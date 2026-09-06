@@ -125,6 +125,35 @@ az cosmosdb sql container create \
   --partition-key-version 2 \
   -o none
 
+# Create portfolio container (partition key /account_id, ledger transactions)
+az cosmosdb sql container create \
+  --account-name "$COSMOSDB_ACCOUNT" \
+  --resource-group "$RESOURCE_GROUP" \
+  --database-name "$DATABASE_NAME" \
+  --name "portfolio" \
+  --partition-key-path "/account_id" \
+  --partition-key-version 2 \
+  -o none
+
+# Create import_sessions container (partition key /session_id, per-document 7-day TTL)
+az cosmosdb sql container create \
+  --account-name "$COSMOSDB_ACCOUNT" \
+  --resource-group "$RESOURCE_GROUP" \
+  --database-name "$DATABASE_NAME" \
+  --name "import_sessions" \
+  --partition-key-path "/session_id" \
+  --partition-key-version 2 \
+  -o none
+
+# Enable per-document TTL on import_sessions (-1 = sessions carry ttl: 604800 in the doc)
+az cosmosdb sql container update \
+  --account-name "$COSMOSDB_ACCOUNT" \
+  --resource-group "$RESOURCE_GROUP" \
+  --database-name "$DATABASE_NAME" \
+  --name "import_sessions" \
+  --ttl -1 \
+  -o none
+
 # Apply custom indexing policy
 az cosmosdb sql container update \
   --account-name "$COSMOSDB_ACCOUNT" \

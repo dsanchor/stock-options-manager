@@ -13,7 +13,7 @@
 #   1. Creates a resource group (if it doesn't exist)
 #   2. Creates a CosmosDB account (serverless by default)
 #   3. Creates the "stock-options-manager" database
-#   4. Creates six containers: "symbols", "telemetry", "settings", "dgi_screener", "calendar", "agent_traces"
+#   4. Creates eight containers: "symbols", "telemetry", "settings", "dgi_screener", "calendar", "agent_traces", "portfolio", "import_sessions"
 #   5. Applies custom indexing policy (index query fields, exclude large blobs)
 #   6. Retrieves and prints the connection endpoint and primary key
 #
@@ -265,6 +265,49 @@ az cosmosdb sql container update \
   -o none
 
 echo "  ✓ Agent Traces container ready"
+
+# ── 4g. Create Portfolio Container ───────────────────────────────────────────
+PORTFOLIO_CONTAINER="portfolio"
+echo "▶ Creating container '$PORTFOLIO_CONTAINER' (partition key: /account_id)..."
+
+az cosmosdb sql container create \
+  --account-name "$COSMOSDB_ACCOUNT" \
+  --resource-group "$RESOURCE_GROUP" \
+  --database-name "$DATABASE_NAME" \
+  --name "$PORTFOLIO_CONTAINER" \
+  --partition-key-path "/account_id" \
+  --partition-key-version 2 \
+  --only-show-errors \
+  -o none
+
+echo "  ✓ Portfolio container ready"
+
+# ── 4h. Create Import Sessions Container ─────────────────────────────────────
+IMPORT_SESSIONS_CONTAINER="import_sessions"
+echo "▶ Creating container '$IMPORT_SESSIONS_CONTAINER' (partition key: /session_id)..."
+
+az cosmosdb sql container create \
+  --account-name "$COSMOSDB_ACCOUNT" \
+  --resource-group "$RESOURCE_GROUP" \
+  --database-name "$DATABASE_NAME" \
+  --name "$IMPORT_SESSIONS_CONTAINER" \
+  --partition-key-path "/session_id" \
+  --partition-key-version 2 \
+  --only-show-errors \
+  -o none
+
+# Enable container-level TTL (-1 = per-document TTL; sessions carry ttl: 604800 in the doc)
+echo "▶ Enabling per-document TTL on '$IMPORT_SESSIONS_CONTAINER'..."
+az cosmosdb sql container update \
+  --account-name "$COSMOSDB_ACCOUNT" \
+  --resource-group "$RESOURCE_GROUP" \
+  --database-name "$DATABASE_NAME" \
+  --name "$IMPORT_SESSIONS_CONTAINER" \
+  --ttl -1 \
+  --only-show-errors \
+  -o none
+
+echo "  ✓ Import Sessions container ready"
 
 # ── 5. Apply Custom Indexing Policy ──────────────────────────────────────────
 echo "▶ Applying custom indexing policy..."
