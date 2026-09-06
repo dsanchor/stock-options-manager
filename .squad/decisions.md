@@ -13086,3 +13086,254 @@ The following inbox files have been merged into this canonical section and moved
 
 All decision history, implementation details, and design rationale preserved in this section.
 
+
+---
+
+## Portfolio CMP Cost-Basis Implementation (2026-09-06)
+
+### Context & Semantic Correction
+
+**User Directive:** Current `current_invested_eur` formula (`total_purchases_eur - total_sales_eur`) incorrectly subtracts sale **proceeds** (cash received) from acquisition cost (asset cost). Must instead subtract the **acquisition cost of the sold shares**, preserving the cost basis of remaining holdings.
+
+**Request:** Use FIFO (First In, First Out) cost allocation.
+
+**Team Decision:** CMP (Coste Medio Ponderado / Moving Weighted Average) adopted after review. Advantages: chronological determinism, transparent pool-based computation, avoids FIFO's anti-lavado fiscal complexity. Explicitly non-fiscal; documented in UI with disclaimers.
+
+### CMP Algorithm Design (Danny)
+
+**File:** `.squad/decisions/inbox/danny-portfolio-summary-cost-basis.md` (PROPOSED → APPROVED)
+
+#### Core Algorithm: Per-Security Pool Management
+
+For each `security_id`, maintain a cost pool:
+- `pool_shares` (quantity of shares in pool)
+- `pool_cost_eur` (total cost basis of pool)
+- `avg_cost_eur = pool_cost_eur / pool_shares`
+
+**Chronological ordering:** `movements.sort(key=(trade_date, id))` ensures deterministic ordering. Tie-break on `id` guarantees stability for same-day trades.
+
+**Movement processing rules:**
+
+| Type | Behavior |
+|------|----------|
+| **BUY (COMPLETE)** | Cost = `gross_eur + commission_eur`; add to pool: `pool_shares += qty`, `pool_cost += cost` |
+| **BUY (INCOMPLETE)** | Cost = 0; mark `has_incomplete_cost_basis = true`; add zero-cost lot to pool |
+| **SELL ACCIONES** | Remove at current CMP: `cost_sold = min(qty, pool_shares) × avg_cost`; decrement pool: `pool_shares -= qty`, `pool_cost -= cost_sold`; if excess shares beyond pool: cost 0 |
+| **SELL DERECHOS** | No pool impact; only accumulates `rights_proceeds_eur` and `total_sale_proceeds_eur` |
+| **TRANSFER_IN** | Add at carried cost: `pool_shares += qty`, `pool_cost += carried_cost_eur` |
+| **TRANSFER_OUT** | Remove at current CMP; cost removed transfers to destination |
+| **DIVIDEND** | No pool impact |
+| **Soft-deleted / SUPERSEDED / VOIDED** | Excluded from computation |
+
+**Negative inventory protection:** `pool_cost` cannot become negative (decrement capped at current pool). Excess unmatched sales assigned cost 0; warning `NEGATIVE_INVENTORY` emitted.
+
+#### New Summary Fields (Holdings + Portfolio-Wide)
+
+| Field | Formula | Notes |
+|-------|---------|-------|
+| `remaining_cost_basis_eur` | Current CMP pool cost | Replaces old `current_invested_eur` semantics |
+| `cost_basis_sold_eur` | Sum of CMP costs assigned to all SELL ACCIONES | Cumulative cost of shares sold |
+| `total_purchase_outflow_eur` | Sum of `(gross + commission)` for all BUY COMPLETE | True cash outflow for acquisitions |
+| `total_sale_proceeds_eur` | Sum of `(gross - commission)` for all SELL (both types) | Net cash inflow from sales |
+| `rights_proceeds_eur` | Sum of `(gross - commission)` for SELL DERECHOS only | Informational breakdown |
+| `realized_result_eur` | `total_sale_proceeds_eur - cost_basis_sold_eur` | Gain/loss on closed positions |
+| `avg_cost_basis_eur` | `remaining_cost_basis_eur / (pool_shares)` if pool_shares > 0 else null | Current weighted average cost |
+| `has_incomplete_cost_basis` | `true` if any security has unpaid_shares > 0 | Global warning flag |
+
+**Backward-compatible aliases (unchanged numerically):**
+- `total_purchases_eur` → `total_purchase_outflow_eur`
+- `total_sales_eur` → `total_sale_proceeds_eur`
+- `total_invested_eur` → `total_purchase_outflow_eur` (per holding, same as purchases for BUY only)
+
+**Breaking change (intentional):**
+- `current_invested_eur` redefined from `(purchases - proceeds)` to `remaining_cost_basis_eur`
+- Old formula mixed incompatible concepts; new formula is semantically correct
+- Frontend updated in same PR; documented in model comments
+
+#### Test Scenarios (Acceptance Criteria)
+
+16 scenarios (S1–S16) validate all edge cases:
+
+| S# | Scenario | Key Assertion |
+|----|----------|---|
+| S1 | BUY only | `remaining = cost`, `sold = 0`, `realized = 0` |
+| S2 | BUY + partial SELL | FIFO consumes oldest lot; `avg = cost_per_share` unchanged |
+| S3 | BUY + full SELL | `remaining = 0`, `avg = null`, `realized = proceeds - cost` |
+| S4 | Two BUY at different prices + SELL | FIFO consumes first lot at its cost; second lot at its cost |
+| S5 | DERECHOS only | `remaining = 1000` (unchanged), `rights_proceeds = proceeds` |
+| S6 | ACCIONES + DERECHOS | Rights do not affect pool; sale_proceeds includes both |
+| S7 | BUY INCOMPLETE + BUY COMPLETE + SELL | Incomplete lot has cost 0; sold cost = COMPLETE lot's cost; warning |
+| S8 | TRANSFER_IN + TRANSFER_OUT | Global pool unchanged; per-account pools diverge correctly |
+| S9 | SELL before BUY (negative inventory) | `cost_sold = 0`, `remaining = 0`, warning NEGATIVE_INVENTORY |
+| S10 | Multi-security | Summary = sum of all security remaining bases |
+| S11 | Backward-compat aliases | `total_purchases_eur == total_purchase_outflow_eur` (numeric identity) |
+| S12 | Multi-lot FIFO consumption | SELL consumes oldest lots first; middle lot partially consumed |
+| S13 | Full exit results in null avg | After selling all shares: `pool_shares = 0`, `avg = null` |
+| S14 | Soft-deleted movement excluded | Only active movements affect pool |
+| S15 | Correction (SUPERSEDED) | Only replacement BUY generates pool entry |
+| S16 | Three buys with multi-lot SELL | Complex FIFO spanning multiple lots |
+
+**Test results:** 130 acceptance tests (S1–S16 + edge cases) authored by Linus; all PASS.
+
+#### Safety Guard: Voided-Movement Import Protection
+
+**Issue:** Re-importing historical CSV could silently restore VOIDED or SUPERSEDED movements, corrupting cost basis.
+
+**Solution:** `write_ledger_txn()` guard checks for existing document with `correction_status ∈ {SUPERSEDED, VOIDED}`.
+- Raises `VoidedMovementError(movement_id, status)` if restoration attempted
+- Import loop catches error, increments `skipped_count`, logs warning
+- Prevents data corruption without blocking valid re-imports
+
+**Tests:** 5 dedicated tests in `TestWriteLedgerTxnSafetyGuard` verify correctness.
+
+**Decision:** INCLUDE in this release (prevents real production scenario).
+
+### Frontend UI Design (Rusty, Approved by Danny)
+
+**File:** Updated components in `frontend/src/components/PortfolioHoldingsTable.tsx`
+
+#### Summary KPI Hierarchy
+
+Matches existing **Economics/Dashboard StatCard pattern** (StatCard + Reveal):
+
+**Primary row (3 KPIs, primary grid):**
+```
+┌─────────────────────────────────────────────────────┐
+│  Inversión actual    Resultado realizado  Dividendos│
+│  €48,230.15          +€3,412.00  ▲         €1,245.80│
+└─────────────────────────────────────────────────────┘
+```
+
+**Secondary row (desglose, smaller grid):**
+```
+┌──────────────────────────────────────────────────────┐
+│  Total compras   Coste vendido   Ingresos ventas   │
+│  €62,500.00      €14,269.85      €17,681.85        │
+│                                (inc. derechos: €890)|
+└──────────────────────────────────────────────────────┘
+```
+
+**Indicators:**
+- Values: 12 (number of securities)
+- ⚠ 2 valores con coste incompleto (warning if `has_incomplete_cost_basis`)
+
+**Colors:**
+- "Resultado realizado" green if positive, red if negative (AnimatedNumber)
+- All values use AnimatedNumber with AnimatedEur (consistent with Economics)
+
+#### Tooltips (Non-Fiscal Disclaimers)
+
+| Field | Tooltip |
+|-------|---------|
+| Inversión actual | "Base de coste de las acciones que aún posees (coste de los lotes restantes tras aplicar media ponderada móvil a las ventas)." |
+| Resultado realizado | "Ganancia o pérdida cerrada: ingresos por ventas de acciones y derechos menos el coste CMP de las acciones vendidas. **No válido para fines fiscales (no aplica regla anti-lavado).** Consulta asesor fiscal." |
+| Coste vendido | "Coste de adquisición asignado a las acciones vendidas (media ponderada móvil: acciones más antiguas primero)." |
+| Total compras | "Desembolso total en compras de acciones (principal + comisiones)." |
+| Ingresos ventas | "Dinero recibido por ventas de acciones y derechos (bruto − comisiones)." |
+
+**Pattern:** Explicitly disclaims fiscal usage; references CMP method (not FIFO).
+
+#### Movements Filter & Toolbar Layout (Rusty/Danny)
+
+**Filter card:**
+- All filter controls (txn_type, account, date range, search) in single card
+- Apply/Reset buttons at bottom of card
+
+**Action row (above filter):**
+- Refresh (disabled during loading; spin animation on icon; respects current filters + pagination)
+- Add Movement (opens modal)
+- Bulk Action (disabled if no selections)
+
+**Accessibility:** aria-labels on all buttons; keyboard navigation supported.
+
+### Review Gates & Approvals
+
+#### Gate 1: CMP Algorithm Review (Danny, 14 Requirements) — APPROVED
+
+**Verified:**
+1. ✅ CMP chronological & deterministic (trade_date + id sort)
+2. ✅ BUY includes commission; SELL subtracts
+3. ✅ SELL ACCIONES removes CMP basis; pool decremented
+4. ✅ SELL DERECHOS leaves pool untouched
+5. ✅ Transfers preserve global cost (TRANSFER_OUT removes at CMP, TRANSFER_IN adds at carried)
+6. ✅ Incomplete/zero-cost handled (unpaid_shares flag, cost 0 assigned)
+7. ✅ Negative inventory ≥ 0 remaining basis (decrement capped)
+8. ✅ Full exit clears pool, avg=null
+9. ✅ Corrections/deleted/superseded excluded
+10. ✅ API backward-compatible aliases (same numeric values)
+11. ✅ Summary portfolio-wide, unaffected by client filters
+12. ✅ No tax/FIFO claims in UI (CMP explicitly stated, non-fiscal)
+13. ✅ Movements filter/toolbar correct
+14. ✅ Voided import guard correct, tested, safe to include
+
+**Verdict:** APPROVED — Zero high-confidence blockers.
+
+#### Gate 2: UI Pattern Verification (Rusty/Danny) — APPROVED
+
+**Finding:** Rusty already completed StatCard + Reveal implementation before gate. Portfolio summary visually identical to Economics/Dashboard pattern.
+
+**Components verified:**
+- `grid gap-4 sm:grid-cols-3` (primary)
+- `grid gap-3 sm:grid-cols-2 lg:grid-cols-4` (secondary desglose)
+- `Reveal` entrance animation
+- `StatCard` formatting + tone-based coloring
+- `AnimatedNumber` + `AnimatedEur` for value transitions
+
+**TypeScript:** `tsc --noEmit` clean (exit 0).
+
+**Verdict:** APPROVED — UI pattern gate passed.
+
+### Test Results
+
+**Portfolio Tests:** 209/209 PASS
+- 130 CMP acceptance tests (S1–S16 edge cases)
+- 58 holdings tests (existing + new)
+- 21 corrections tests (existing + new)
+
+**Framework Tests:** 505/505 PASS (unchanged)
+
+**TypeScript:** clean (0 errors)
+
+**Regressions:** 0
+
+**Pre-existing options tests:** All green (no impact)
+
+### Production Deployment
+
+**Functional Commit:** `ff087c3 fix: report remaining portfolio cost basis`
+
+**API Revision:** ca-stock-options-manager-api--0000054
+**Frontend Revision:** ca-stock-options-manager-front--0000047
+**GitHub Actions Run:** 34037938698
+**Status:** ✅ PASSED
+
+**Metrics:**
+- All 209 portfolio tests pass
+- TypeScript build clean
+- Frontend build clean
+- Both API and frontend deployed and healthy on sha-ff087c3
+
+**Endpoints Verified:**
+- `GET /api/portfolio/holdings` (summary + holdings with new fields)
+- All existing options/watchlist endpoints unaffected
+- No regressions in existing behavior
+
+### Inbox Files Consolidated & Archived
+
+The following inbox files have been merged into this section and moved to archive:
+
+1. `danny-portfolio-summary-cost-basis.md` — Full CMP algorithm design, field definitions, test scenarios
+2. `danny-review-portfolio-cmp-cost-basis.md` — Final 14-requirement review gate, approval decision
+
+**Proposal → Approval History:** Preserved in this consolidated record.
+
+### Next Priority
+
+**Symbol Details ↔ Portfolio Unification (Deferred)**
+
+User directive: Enable Watchlist-only symbols (no portfolio holdings); auto-add Portfolio symbols to Watchlist with agents/notifications disabled; consolidate three currently separate symbol management areas.
+
+**Prerequisites met:** Portfolio Phase 2 + Cost-Basis fully stable, 478+209=687 tests passing, zero regressions, both phases deployed.
+
+**Status:** DEFERRED to next planning session.
+

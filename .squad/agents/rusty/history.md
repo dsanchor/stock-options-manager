@@ -1798,3 +1798,175 @@ Initial feature rejected by Basher (D0) with D2 defect: TypeScript types and too
 **Validation:**
 - `npm run build` (clean, .next deleted): ✅ exit 0, TypeScript clean (41s), all 80+ routes in manifest including `/api/fx/[[...slug]]`, `/portfolio/accounts`
 
+
+### 2026-09-06 — Portfolio summary bar: refactored to StatCard/Reveal grid (same as Economics/Dashboard)
+- **Refinement:** User required the portfolio summary to use the exact same visual pattern as Economics summary and Dashboard KPI cards, not a custom flex bar.
+- **Reference pattern identified:** `StatCard` + `Reveal` + CSS `grid` (canonical in `EconomicsView.tsx` → `grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5` and `dashboard/page.tsx` → `grid gap-4 sm:grid-cols-2 lg:grid-cols-3`). Both import from `@/components/StatCard` and `@/components/Reveal`. StatCard accepts `value` (numeric, animated via CountUp), `prefix`, `suffix`, `decimals`, `tone`, and `tooltip` (`title` attribute).
+- **Changes to `PortfolioHoldingsTable.tsx`:**
+  - Added `StatCard` and `Reveal` imports.
+  - Removed the `formatEurSigned` helper (not needed: tone encodes sign; StatCard renders `€-123.45` natively for negative values).
+  - Replaced the bespoke summary bar `<div>` with two `grid` sections + an indicators row, all within a `<div className="space-y-4">`:
+    1. **Primary (3 cols):** `grid gap-4 sm:grid-cols-3` — "Inversión actual" (neutral), "Resultado realizado" (green/red dynamic), "Dividendos netos" (green). All with `Reveal` stagger and `tooltip`.
+    2. **Secondary (2–4 cols):** `grid gap-3 sm:grid-cols-2 lg:grid-cols-4` — "Compras totales", "Coste de las acciones vendidas" (conditional), "Ventas netas", "Ventas de derechos" (conditional). Fallbacks to existing fields when new backend fields absent.
+    3. **Indicators row:** Valores count, `has_incomplete_cost_basis` orange alert badge (`role="alert"`), Batch reassign / Refresh buttons.
+  - All agreed metrics, tooltips, incomplete-cost warning, portfolio-wide semantics (summary from server `data.summary`, unaffected by client filter), responsiveness, and accessibility preserved.
+- **Preserved:** PortfolioMovementsTable.tsx Movements toolbar refactor (approved, uncommitted).
+- **Validated:** `tsc --noEmit` exit 0 (clean).
+
+- **Task:** Implement the frontend portion of the improved portfolio summary
+  (Danny's `danny-portfolio-summary-cost-basis.md` contract). Backend fields
+  not yet shipped by Linus; implementation uses optional chaining with graceful
+  fallback to existing fields throughout.
+- **Types (`frontend/src/types/portfolio.ts`):**
+  - Added 6 optional fields to `HoldingEntry`: `total_purchase_outflow_eur`,
+    `cost_basis_sold_eur`, `remaining_cost_basis_eur`, `total_sale_proceeds_eur`,
+    `rights_proceeds_eur`, `realized_result_eur`.
+  - Added 7 optional fields to `HoldingsSummary`: same 6 + `has_incomplete_cost_basis`.
+  - All existing fields kept unchanged for backward compatibility with the
+    pre-migration backend.
+- **Summary bar (`frontend/src/components/PortfolioHoldingsTable.tsx`):**
+  - Added `formatEurSigned()` helper for signed currency display (`+€…` / `-€…`).
+  - Removed the old flat summary bar (Total Purchases / Total Sales / Current Invested).
+  - Replaced with a 3-section structured summary:
+    1. **Primary KPIs (larger):** "Inversión actual", "Resultado realizado" (green/red by sign; only shown when `realized_result_eur` present), "Dividendos netos".
+    2. **Secondary breakdown (smaller):** "Compras totales", "Coste de las acciones vendidas" (only when `cost_basis_sold_eur` present), "Ventas netas", "Ventas de derechos" (only when present and > 0).
+    3. **Indicators:** Valores count + `has_incomplete_cost_basis` warning badge + action buttons.
+  - All fields use `null ??` fallback: `remaining_cost_basis_eur ?? current_invested_eur`, `total_purchase_outflow_eur ?? total_purchases_eur`, `total_sale_proceeds_eur ?? total_sales_eur`.
+  - Removed `currentInvestedNegative` logic (green-when-negative was confusing; `remaining_cost_basis_eur` is always ≥ 0 by design).
+  - Tooltips on every KPI via `title` attribute (matching StatCard's pattern), explaining CMP method and fiscal non-validity.
+  - `has_incomplete_cost_basis` warning uses `role="alert"` + orange badge per the UX contract.
+  - Summary is drawn from `data.summary` (server-side), unaffected by client-side search/hide-zero filters.
+- **Preserved:** PortfolioMovementsTable.tsx Movements toolbar refactor (approved, uncommitted).
+- **Validated:** `tsc --noEmit` exit 0 (clean).
+
+- Separated Movements page layout to match the Watchlist (Symbols) pattern: filter inputs stay inside the existing bordered card; Refresh, Add movement, and Bulk import now live in an external `justify-end` flex row above the filter card, outside it entirely.
+- Added a **Refresh** button: triggers `load(offset, buildFilter())` (respects current pagination offset and active filters), shows `animate-spin` on the `RefreshCw` icon while `loading` is true, and is `disabled` during load (prevents double-firing). Errors surface through the existing `error` state banner below the filter card — no new convention introduced.
+- Also added `aria-label` to the type-filter `<select>` and the Security ID / date `<input>` elements that were missing accessible labels.
+- No changes to filter semantics, pagination, backend calls, or financial calculations.
+- Validated: `tsc --noEmit` clean project-wide (exit 0).
+
+---
+
+## 2026-09-06 — Portfolio CMP Cost-Basis Frontend & UI Design
+
+**Role:** Frontend Implementation, UI Pattern Design
+**Status:** ✅ COMPLETE & RELEASED
+
+### Summary KPI Hierarchy Design
+
+**Task:** Implement Portfolio summary UI matching existing Economics/Dashboard StatCard pattern; update Movements filter/toolbar layout; add CMP-specific tooltips.
+
+**Design Deliverable:** PortfolioHoldingsTable.tsx with StatCard + Reveal components
+
+#### Primary KPI Row (3 KPIs)
+
+**Grid:** `grid gap-4 sm:grid-cols-3`
+
+**Cards:**
+1. **Inversión actual** — `remaining_cost_basis_eur` (replaces old `current_invested_eur`)
+2. **Resultado realizado** — `realized_result_eur` (proceeds − cost_sold)
+3. **Dividendos netos** — `total_dividends_eur`
+
+**Styling:**
+- StatCard + Reveal (matches Economics/Dashboard pattern)
+- AnimatedNumber + AnimatedEur for value transitions
+- "Resultado realizado" color: green if positive, red if negative
+- All values use Reveal entrance animation
+
+#### Secondary Desglose Row (4 cards on large screens)
+
+**Grid:** `grid gap-3 sm:grid-cols-2 lg:grid-cols-4`
+
+**Cards:**
+1. **Total compras** — `total_purchase_outflow_eur`
+2. **Coste vendido** — `cost_basis_sold_eur`
+3. **Ingresos ventas** — `total_sale_proceeds_eur` (with "(inc. derechos: €X)" note if `rights_proceeds_eur > 0`)
+
+**Styling:**
+- Same StatCard + Reveal pattern
+- Slightly smaller spacing (gap-3 vs gap-4)
+- Responsive: 2-col on mobile/tablet, 4-col on desktop
+
+#### Indicators
+
+- **Values:** "Valores: N" (number of securities)
+- **Warning:** "⚠ X valores con coste incompleto" (if `has_incomplete_cost_basis = true`)
+
+### Tooltips (Non-Fiscal Disclaimers)
+
+| Field | Tooltip |
+|-------|---------|
+| Inversión actual | "Base de coste de las acciones que aún posees (coste de los lotes restantes tras aplicar media ponderada móvil a las ventas)." |
+| Resultado realizado | "Ganancia o pérdida cerrada: ingresos por ventas de acciones y derechos menos el coste CMP de las acciones vendidas. **No válido para fines fiscales (no aplica regla anti-lavado).** Consulta asesor fiscal." |
+| Coste vendido | "Coste de adquisición asignado a las acciones vendidas (media ponderada móvil: acciones más antiguas primero)." |
+| Total compras | "Desembolso total en compras de acciones (principal + comisiones)." |
+| Ingresos ventas | "Dinero recibido por ventas de acciones y derechos (bruto − comisiones)." |
+
+**Pattern:** Explicitly disclaims fiscal usage; references CMP method (not FIFO); strongly recommends consulting tax advisor for fiscal purposes.
+
+### Movements Filter & Toolbar
+
+**Filter Card:**
+- Consolidates all filter controls (txn_type, account, date range, search)
+- Apply/Reset buttons at bottom
+- Aria-labels for accessibility
+
+**Action Row (Above Filter):**
+- **Refresh:** Reloads data respecting current filters + pagination; disabled during loading; spin animation on icon
+- **Add Movement:** Opens add movement modal
+- **Bulk Action:** Disabled if no selections; triggers batch operation
+
+**Layout:** Action row precedes filter card visually, giving prominence to refresh/add operations.
+
+**Accessibility:** All buttons have aria-labels; keyboard navigation supported (Tab, Enter, Escape).
+
+### TypeScript Types
+
+**Updated:** `frontend/src/types/portfolio.ts`
+- Extended `HoldingsSummary` with new CMP fields
+- `HoldingEntry` types updated to include optional new fields
+- `WarningType` enum extended with cost-basis warnings
+
+**Compilation:** `tsc --noEmit` clean (exit 0)
+
+### UI Pattern Verification
+
+**Comparison with Economics/Dashboard:**
+- Dashboard: `grid gap-4 sm:grid-cols-2 lg:grid-cols-3` + Reveal + StatCard
+- Economics: `grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5` + Reveal + StatCard
+- Portfolio primary: `grid gap-4 sm:grid-cols-3` + Reveal + StatCard (3 KPIs)
+- Portfolio secondary: `grid gap-3 sm:grid-cols-2 lg:grid-cols-4` + Reveal + StatCard (desglose)
+
+**Identical elements:**
+- `h-full` on Reveal for consistent height
+- Animated entrance via Reveal component
+- Tone-based coloring (green/red for positive/negative)
+- Tooltip via `title` attribute
+- AnimatedNumber + AnimatedEur for value transitions
+
+**Verdict:** ✅ UI pattern gate passed — Portfolio summary visually matches Economics/Dashboard KPI hierarchy.
+
+### Code Quality
+
+- **Dead code cleanup:** `formatEur()` function (line 36) now dead code (AnimatedNumber handles formatting). Can be cleaned up in follow-up, non-blocking.
+- **Responsive design:** Mobile-first, scales to desktop with appropriate breakpoints
+- **Accessibility:** aria-labels, keyboard navigation, semantic HTML
+- **Performance:** StatCard memoization inherited from existing components
+
+### Deployment
+
+**Commit:** `ff087c3 fix: report remaining portfolio cost basis`
+- Frontend revision: ca-stock-options-manager-front--0000047
+- GitHub Actions: ✅ PASSED
+- Status: Deployed and healthy on sha-ff087c3
+
+### Key Insights
+
+1. **Matching existing design patterns is essential for coherent UI.** Reusing StatCard + Reveal from Economics/Dashboard ensures visual consistency across the app.
+
+2. **Non-fiscal disclaimers must be prominent.** Tooltips explicitly state CMP method, non-fiscal status, and recommendation to consult tax advisor — prevents user confusion about calculation method.
+
+3. **Secondary metrics (desglose) provide transparency.** Breaking down purchases, sold cost, and proceeds helps users understand the cost-basis calculation.
+
+4. **Accessibility matters for financial data.** aria-labels and keyboard navigation are essential for users relying on screen readers or keyboard-only navigation.
+
