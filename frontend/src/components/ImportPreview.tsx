@@ -15,6 +15,9 @@ const WARNING_LABELS: Record<WarningType, string> = {
   ZERO_COST_ACQUISITION: "Zero-cost acquisition",
   RIGHTS_AMOUNT: "Rights / scrip amount",
   PROBABLE_DUPLICATE: "Probable duplicate",
+  DERECHOS_WITH_QUANTITY: "Rights sale with quantity",
+  ACCIONES_ZERO_QUANTITY: "Share sale, zero quantity",
+  INVALID_SALES_TYPE: "Invalid sale type",
 };
 
 /** Preview table showing movements to be committed, persistent warnings, and confirm button. */
@@ -117,6 +120,11 @@ export default function ImportPreview({ preview, onCommit, onBack, committing }:
                     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${txnBadge(m.txn_type)}`}>
                       {m.txn_type}
                     </span>
+                    {m.txn_type === "SELL" && m.sales_type === "DERECHOS" && (
+                      <span className="ml-1 rounded-full px-1.5 py-0.5 text-xs bg-accent-orange/15 text-accent-orange">
+                        Derechos
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-2">
                     <div className="font-mono font-semibold text-text">{m.ticker}</div>

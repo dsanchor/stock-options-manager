@@ -435,3 +435,145 @@ class TestIsoDatesRegressionSales:
         rows = parse_sales(_encode(self._CSV_ISO))
         assert len(rows) == 1
         assert rows[0]["sale_date"] == "2016-07-18"
+
+
+# ---------------------------------------------------------------------------
+# Sales parser — Tipo (4th column) support
+# Authoritative header: Año | Empresa | Fecha venta | Tipo | Acciones | Comisión | Total Venta
+# Regression coverage for danny-rights-sale-contract design.
+# ---------------------------------------------------------------------------
+
+_SALES_7COL_ACCIONES = (
+    "Año\tEmpresa\tFecha venta\tTipo\tAcciones\tComisión\tTotal Venta\n"
+    "2024\tApple Inc.\t20/06/2024\tAcciones\t5\t7,50\t1.050,00\n"
+    "2024\tTelefónica\t25/06/2024\tACCIONES\t50\t4,00\t200,00\n"
+)
+
+_SALES_7COL_DERECHOS = (
+    "Año\tEmpresa\tFecha venta\tTipo\tAcciones\tComisión\tTotal Venta\n"
+    "2024\tApple Inc.\t20/06/2024\tDerechos\t5\t7,50\t1.050,00\n"
+    "2024\tTelefónica\t25/06/2024\tderechos\t50\t4,00\t200,00\n"
+)
+
+_SALES_7COL_MIXED = (
+    "Año\tEmpresa\tFecha venta\tTipo\tAcciones\tComisión\tTotal Venta\n"
+    "2024\tApple Inc.\t20/06/2024\tAcciones\t5\t7,50\t1.050,00\n"
+    "2024\tTelefónica\t25/06/2024\tDerechos\t0\t4,00\t200,00\n"
+)
+
+_SALES_7COL_EMPTY_TIPO = (
+    "Año\tEmpresa\tFecha venta\tTipo\tAcciones\tComisión\tTotal Venta\n"
+    "2024\tApple Inc.\t20/06/2024\t\t5\t7,50\t1.050,00\n"
+)
+
+_SALES_7COL_INVALID_TIPO = (
+    "Año\tEmpresa\tFecha venta\tTipo\tAcciones\tComisión\tTotal Venta\n"
+    "2024\tApple Inc.\t20/06/2024\tOtro\t5\t7,50\t1.050,00\n"
+)
+
+
+class TestSalesParserSalesType:
+    """Regression: Tipo column (4th position) in 7-column sales CSV.
+
+    Authoritative header: Año | Empresa | Fecha venta | Tipo | Acciones | Comisión | Total Venta
+    All assertions are un-weakened.
+    """
+
+    def test_6col_defaults_to_acciones(self):
+        """6-column CSV (no Tipo) → every row has sales_type='ACCIONES'."""
+        rows = parse_sales(_encode(SALES_CSV))
+        for row in rows:
+            assert row.get("sales_type") == "ACCIONES"
+
+    def test_7col_header_parses_without_error(self):
+        """7-column CSV with Tipo header is accepted and returns correct row count."""
+        rows = parse_sales(_encode(_SALES_7COL_ACCIONES))
+        assert len(rows) == 2
+
+    def test_7col_acciones_normalized(self):
+        """'Acciones' and 'ACCIONES' both normalize to the canonical 'ACCIONES'."""
+        rows = parse_sales(_encode(_SALES_7COL_ACCIONES))
+        for row in rows:
+            assert row["sales_type"] == "ACCIONES"
+
+    def test_7col_derechos_normalized(self):
+        """'Derechos' and 'derechos' both normalize to the canonical 'DERECHOS'."""
+        rows = parse_sales(_encode(_SALES_7COL_DERECHOS))
+        for row in rows:
+            assert row["sales_type"] == "DERECHOS"
+
+    def test_7col_sales_type_raw_preserved(self):
+        """sales_type_raw carries the original, un-normalized cell value."""
+        rows = parse_sales(_encode(_SALES_7COL_DERECHOS))
+        assert rows[0]["sales_type_raw"] == "Derechos"
+        assert rows[1]["sales_type_raw"] == "derechos"
+
+    def test_7col_mixed_tipos(self):
+        """First row ACCIONES, second row DERECHOS — each parsed independently."""
+        rows = parse_sales(_encode(_SALES_7COL_MIXED))
+        assert rows[0]["sales_type"] == "ACCIONES"
+        assert rows[1]["sales_type"] == "DERECHOS"
+
+    def test_7col_empty_tipo_defaults_acciones(self):
+        """Empty Tipo cell → defaults to 'ACCIONES' with no INVALID_SALES_TYPE warning."""
+        rows = parse_sales(_encode(_SALES_7COL_EMPTY_TIPO))
+        assert rows[0]["sales_type"] == "ACCIONES"
+        assert not any(w.get("type") == "INVALID_SALES_TYPE" for w in rows[0]["warnings"])
+
+    def test_7col_invalid_tipo_raises_value_error(self):
+        """A non-empty Tipo value that cannot be normalized raises ValueError."""
+        with pytest.raises(ValueError):
+            parse_sales(_encode(_SALES_7COL_INVALID_TIPO))
+
+    def test_7col_whitespace_stripped_from_tipo(self):
+        """Leading/trailing whitespace in Tipo cell is stripped before normalization."""
+        csv = (
+            "Año\tEmpresa\tFecha venta\tTipo\tAcciones\tComisión\tTotal Venta\n"
+            "2024\tApple Inc.\t20/06/2024\t  Acciones  \t5\t7,50\t1.050,00\n"
+        )
+        rows = parse_sales(_encode(csv))
+        assert rows[0]["sales_type"] == "ACCIONES"
+
+    def test_7col_accent_insensitive_derechos(self):
+        """Accented variant of a valid word normalizes correctly (accent-insensitive)."""
+        # NFKD decomposition strips the accent → "DERECHOS"
+        csv = (
+            "Año\tEmpresa\tFecha venta\tTipo\tAcciones\tComisión\tTotal Venta\n"
+            "2024\tApple Inc.\t20/06/2024\tDérechos\t5\t7,50\t1.050,00\n"
+        )
+        rows = parse_sales(_encode(csv))
+        assert rows[0]["sales_type"] == "DERECHOS"
+
+    def test_7col_derechos_with_positive_qty_warns(self):
+        """DERECHOS sale with quantity > 0 emits a DERECHOS_WITH_QUANTITY warning."""
+        csv = (
+            "Año\tEmpresa\tFecha venta\tTipo\tAcciones\tComisión\tTotal Venta\n"
+            "2024\tApple Inc.\t20/06/2024\tDerechos\t15\t7,50\t1.050,00\n"
+        )
+        rows = parse_sales(_encode(csv))
+        assert rows[0]["sales_type"] == "DERECHOS"
+        warning_types = [w["type"] for w in rows[0]["warnings"]]
+        assert "DERECHOS_WITH_QUANTITY" in warning_types
+
+    def test_7col_acciones_zero_qty_warns(self):
+        """ACCIONES sale with quantity == 0 emits an ACCIONES_ZERO_QUANTITY warning."""
+        csv = (
+            "Año\tEmpresa\tFecha venta\tTipo\tAcciones\tComisión\tTotal Venta\n"
+            "2024\tApple Inc.\t20/06/2024\tAcciones\t0\t7,50\t1.050,00\n"
+        )
+        rows = parse_sales(_encode(csv))
+        assert rows[0]["sales_type"] == "ACCIONES"
+        warning_types = [w["type"] for w in rows[0]["warnings"]]
+        assert "ACCIONES_ZERO_QUANTITY" in warning_types
+
+    def test_6col_no_sales_type_warnings(self):
+        """6-column CSV with normal rows produces no sales-type-related warnings."""
+        rows = parse_sales(_encode(SALES_CSV))
+        sales_type_warning_kinds = {
+            "DERECHOS_WITH_QUANTITY",
+            "ACCIONES_ZERO_QUANTITY",
+            "INVALID_SALES_TYPE",
+        }
+        for row in rows:
+            actual = {w["type"] for w in row["warnings"]}
+            assert not (actual & sales_type_warning_kinds)

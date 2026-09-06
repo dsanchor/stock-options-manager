@@ -8,7 +8,10 @@ export type WarningType =
   | "NEGATIVE_INVENTORY"
   | "ZERO_COST_ACQUISITION"
   | "RIGHTS_AMOUNT"
-  | "PROBABLE_DUPLICATE";
+  | "PROBABLE_DUPLICATE"
+  | "DERECHOS_WITH_QUANTITY"
+  | "ACCIONES_ZERO_QUANTITY"
+  | "INVALID_SALES_TYPE";
 export type AssetClass = "Equity";
 export type SecurityStatus = "ACTIVE" | "DELISTED";
 export type FxRateSource = "ECB" | "BROKER" | "MANUAL";
@@ -121,6 +124,9 @@ export interface LedgerMovement {
   created_at: string;
   cost_basis_status?: CostBasisStatus;
   source_derechos_amount?: string;
+  // Sale classification — present only on SELL movements
+  sales_type?: "ACCIONES" | "DERECHOS" | null;
+  is_rights_sale?: boolean | null;
   warnings?: MovementWarning[];
 }
 

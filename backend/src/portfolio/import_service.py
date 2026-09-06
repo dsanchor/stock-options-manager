@@ -536,7 +536,9 @@ def _build_preview_movements(
         if txn_type == "BUY":
             holdings_delta[security_id] = holdings_delta.get(security_id, Decimal("0")) + qty
         elif txn_type == "SELL":
-            holdings_delta[security_id] = holdings_delta.get(security_id, Decimal("0")) - qty
+            # DERECHOS sales do not affect share count
+            if (movement.get("sales_type") or "ACCIONES") == "ACCIONES":
+                holdings_delta[security_id] = holdings_delta.get(security_id, Decimal("0")) - qty
 
         if row_warnings:
             movement["warnings"] = row_warnings
@@ -584,6 +586,8 @@ def _row_to_movement(
         cost_basis_status = "COMPLETE"
         derechos = row.get("derechos", Decimal("0"))
         source_derechos = str(derechos) if derechos > Decimal("0") else None
+        sales_type = None
+        sales_type_raw = None
     elif fmt == "purchases":
         trade_date = row.get("purchase_date", "")
         gross = row.get("total_cost", Decimal("0"))
@@ -595,6 +599,8 @@ def _row_to_movement(
         txn_type = "BUY"
         cost_basis_status = row.get("cost_basis_status", "COMPLETE")
         source_derechos = None
+        sales_type = None
+        sales_type_raw = None
     else:  # sales
         trade_date = row.get("sale_date", "")
         gross = row.get("total_proceeds", Decimal("0"))
@@ -606,6 +612,8 @@ def _row_to_movement(
         txn_type = "SELL"
         cost_basis_status = "COMPLETE"
         source_derechos = None
+        sales_type = row.get("sales_type", "ACCIONES")
+        sales_type_raw = row.get("sales_type_raw", "")
 
     # Deterministic movement ID
     ticker = security_id_to_ticker(security_id)
@@ -664,6 +672,11 @@ def _row_to_movement(
 
     if source_derechos:
         movement["source_derechos_amount"] = source_derechos
+
+    if sales_type is not None:
+        movement["sales_type"] = sales_type
+        movement["sales_type_raw"] = sales_type_raw or ""
+        movement["is_rights_sale"] = (sales_type == "DERECHOS")
 
     return movement
 
@@ -808,7 +821,7 @@ def _build_preview_response(
     preview_movements = []
     for m in movements:
         row_idx = m.get("source_row_index", 0)
-        preview_movements.append({
+        entry: Dict[str, Any] = {
             "row_index": row_idx,
             "txn_type": m.get("txn_type"),
             "security_id": m.get("security_id"),
@@ -821,7 +834,10 @@ def _build_preview_response(
             "wht_source_eur": (m.get("withholding") or {}).get("source", {}) and
                               (m.get("withholding", {}).get("source") or {}).get("amount_eur", "0.00"),
             "net_eur": m.get("net", {}).get("eur_amount"),
-        })
+        }
+        if m.get("sales_type") is not None:
+            entry["sales_type"] = m["sales_type"]
+        preview_movements.append(entry)
 
     return {
         "session_id": doc.get("session_id"),

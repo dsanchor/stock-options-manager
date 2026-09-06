@@ -102,7 +102,11 @@ class HoldingsService:
                     agg["zero_cost_count"] += 1
                 agg["buy_count"] += 1
             elif txn_type == "SELL":
-                agg["total_shares"] -= qty
+                # DERECHOS sales contribute to proceeds but do NOT decrement share count.
+                # Existing movements without sales_type default to ACCIONES behaviour.
+                sale_type = m.get("sales_type") or "ACCIONES"
+                if sale_type == "ACCIONES":
+                    agg["total_shares"] -= qty
                 agg["total_sales_eur"] += gross_eur - commission_eur
             elif txn_type == "DIVIDEND":
                 net_eur = _d((m.get("net") or {}).get("eur_amount", "0"))

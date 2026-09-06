@@ -582,3 +582,148 @@ class TestPerSecurityTotals:
         assert by_id["XNYS:AAPL"]["total_sales_eur"] == "597.00"
         assert by_id["XMAD:TEF"]["total_purchases_eur"] == "402.00"
         assert by_id["XMAD:TEF"]["total_sales_eur"] == "0.00"
+
+
+# ---------------------------------------------------------------------------
+# Rights sales — ACCIONES / DERECHOS sales_type distinction
+# Regression coverage for danny-rights-sale-contract design.
+# Tests will fail until Livingston's implementation is merged; assertions are
+# intentionally un-weakened so the failures are explicit.
+# ---------------------------------------------------------------------------
+
+def _make_movement_with_sales_type(
+    movement_id, security_id, txn_type, quantity, gross_eur,
+    sales_type=None, **kwargs,
+):
+    """Build a ledger movement dict with an explicit sales_type field."""
+    m = _make_movement(movement_id, security_id, txn_type, quantity, gross_eur, **kwargs)
+    if sales_type is not None:
+        m["sales_type"] = sales_type
+    return m
+
+
+class TestRightsSaleHoldings:
+    """Holdings computation must honour the ACCIONES/DERECHOS distinction."""
+
+    def test_derechos_sale_does_not_decrement_shares(self):
+        """BUY 100 + SELL 30 (DERECHOS) → total_shares remains 100."""
+        movements = [
+            _make_movement_with_sales_type("t1", "XNYS:AAPL", "BUY", "100", "20000.00"),
+            _make_movement_with_sales_type(
+                "t2", "XNYS:AAPL", "SELL", "30", "600.00", sales_type="DERECHOS"
+            ),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        h = result["holdings"][0]
+        assert Decimal(h["total_shares"]) == Decimal("100")
+
+    def test_acciones_sale_decrements_shares(self):
+        """BUY 100 + SELL 30 (ACCIONES) → total_shares = 70."""
+        movements = [
+            _make_movement_with_sales_type("t1", "XNYS:AAPL", "BUY", "100", "20000.00"),
+            _make_movement_with_sales_type(
+                "t2", "XNYS:AAPL", "SELL", "30", "600.00", sales_type="ACCIONES"
+            ),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        h = result["holdings"][0]
+        assert Decimal(h["total_shares"]) == Decimal("70")
+
+    def test_mixed_sales_types_only_acciones_decrements(self):
+        """BUY 100, SELL 30 (ACCIONES), SELL 20 (DERECHOS) → total_shares = 70."""
+        movements = [
+            _make_movement_with_sales_type("t1", "XNYS:AAPL", "BUY", "100", "20000.00"),
+            _make_movement_with_sales_type(
+                "t2", "XNYS:AAPL", "SELL", "30", "600.00",
+                sales_type="ACCIONES", commission_eur="5",
+            ),
+            _make_movement_with_sales_type(
+                "t3", "XNYS:AAPL", "SELL", "20", "400.00",
+                sales_type="DERECHOS", commission_eur="5",
+            ),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        h = result["holdings"][0]
+        assert Decimal(h["total_shares"]) == Decimal("70")
+
+    def test_total_sales_eur_includes_both_acciones_and_derechos(self):
+        """total_sales_eur sums net proceeds from both sale types."""
+        movements = [
+            _make_movement_with_sales_type("t1", "XNYS:AAPL", "BUY", "100", "20000.00"),
+            _make_movement_with_sales_type(
+                "t2", "XNYS:AAPL", "SELL", "30", "600.00",
+                sales_type="ACCIONES", commission_eur="5",
+            ),
+            _make_movement_with_sales_type(
+                "t3", "XNYS:AAPL", "SELL", "20", "400.00",
+                sales_type="DERECHOS", commission_eur="5",
+            ),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        h = result["holdings"][0]
+        # (600 - 5) + (400 - 5) = 595 + 395 = 990
+        assert Decimal(h["total_sales_eur"]) == Decimal("990.00")
+
+    def test_backward_compat_no_sales_type_defaults_to_acciones(self):
+        """Legacy SELL without sales_type field defaults to ACCIONES (decrements shares)."""
+        movements = [
+            _make_movement("t1", "XNYS:AAPL", "BUY", "100", "20000.00"),
+            _make_movement("t2", "XNYS:AAPL", "SELL", "30", "600.00"),  # no sales_type
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        h = result["holdings"][0]
+        # Must behave as ACCIONES: 100 - 30 = 70
+        assert Decimal(h["total_shares"]) == Decimal("70")
+
+    def test_design_doc_example_exact_values(self):
+        """Exact example from design §4.3: BUY 100, SELL 30 ACCIONES, SELL 15 DERECHOS."""
+        movements = [
+            _make_movement_with_sales_type(
+                "t1", "XNYS:AAPL", "BUY", "100", "2000.00", commission_eur="20"
+            ),
+            _make_movement_with_sales_type(
+                "t2", "XNYS:AAPL", "SELL", "30", "600.00",
+                sales_type="ACCIONES", commission_eur="5",
+            ),
+            _make_movement_with_sales_type(
+                "t3", "XNYS:AAPL", "SELL", "15", "300.00",
+                sales_type="DERECHOS", commission_eur="5",
+            ),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        h = result["holdings"][0]
+        # total_shares = 100 - 30 = 70 (DERECHOS not subtracted)
+        assert Decimal(h["total_shares"]) == Decimal("70")
+        # total_invested_eur = 2000 + 20 = 2020
+        assert Decimal(h["total_invested_eur"]) == Decimal("2020.00")
+        # total_sales_eur = (600-5) + (300-5) = 595 + 295 = 890
+        assert Decimal(h["total_sales_eur"]) == Decimal("890.00")
+
+    def test_only_derechos_sales_leaves_shares_unchanged(self):
+        """All SELLs are DERECHOS → total_shares equals total BUY quantity."""
+        movements = [
+            _make_movement_with_sales_type("t1", "XNYS:AAPL", "BUY", "100", "20000.00"),
+            _make_movement_with_sales_type(
+                "t2", "XNYS:AAPL", "SELL", "50", "1000.00", sales_type="DERECHOS"
+            ),
+            _make_movement_with_sales_type(
+                "t3", "XNYS:AAPL", "SELL", "60", "1200.00", sales_type="DERECHOS"
+            ),
+        ]
+        portfolio_svc, securities_svc = _make_services(movements)
+        svc = HoldingsService(portfolio_svc, securities_svc)
+        result = svc.compute_holdings()
+        h = result["holdings"][0]
+        assert Decimal(h["total_shares"]) == Decimal("100")

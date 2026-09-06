@@ -11,6 +11,9 @@ const WARNING_SHORT: Record<WarningType, string> = {
   ZERO_COST_ACQUISITION: "Incomplete cost basis",
   RIGHTS_AMOUNT: "Rights amount pending",
   PROBABLE_DUPLICATE: "Probable duplicate",
+  DERECHOS_WITH_QUANTITY: "Rights sale with quantity",
+  ACCIONES_ZERO_QUANTITY: "Share sale, zero quantity",
+  INVALID_SALES_TYPE: "Invalid sale type",
 };
 
 function Skeleton() {

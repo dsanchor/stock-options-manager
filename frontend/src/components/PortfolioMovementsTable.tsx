@@ -18,6 +18,9 @@ const WARNING_SHORT: Record<WarningType, string> = {
   ZERO_COST_ACQUISITION: "Incomplete cost basis",
   RIGHTS_AMOUNT: "Rights amount",
   PROBABLE_DUPLICATE: "Probable duplicate",
+  DERECHOS_WITH_QUANTITY: "Rights sale with quantity",
+  ACCIONES_ZERO_QUANTITY: "Share sale, zero quantity",
+  INVALID_SALES_TYPE: "Invalid sale type",
 };
 
 const PAGE_SIZE = 50;
@@ -285,6 +288,11 @@ function MovementRow({
           >
             {m.txn_type}
           </span>
+          {m.txn_type === "SELL" && m.is_rights_sale && (
+            <span className="ml-1 rounded-full px-1.5 py-0.5 text-xs bg-accent-orange/15 text-accent-orange">
+              Derechos
+            </span>
+          )}
         </td>
         <td className="px-4 py-2">
           <div className="font-mono font-semibold text-text">{m.ticker}</div>

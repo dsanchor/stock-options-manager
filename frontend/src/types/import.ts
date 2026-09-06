@@ -106,6 +106,8 @@ export interface PreviewMovement {
   fees_eur: string;
   wht_source_eur?: string;
   net_eur: string;
+  // Sale classification — present on SELL rows from 7-column CSVs
+  sales_type?: "ACCIONES" | "DERECHOS";
   warnings?: MovementWarning[];
 }
 
