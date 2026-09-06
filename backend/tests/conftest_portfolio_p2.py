@@ -77,6 +77,9 @@ class FakePortfolioContainer:
         # security_id filter
         if "@security_id" in param_map:
             results = [d for d in results if d.get("security_id") == param_map["@security_id"]]
+        # ca_group_id filter (Amendment H)
+        if "@ca_group_id" in param_map:
+            results = [d for d in results if d.get("ca_group_id") == param_map["@ca_group_id"]]
         # date filter
         if "@as_of_date" in param_map:
             results = [d for d in results if d.get("trade_date", "") <= param_map["@as_of_date"]]

@@ -3,6 +3,7 @@
 Expected columns (7):
   Año | Empresa | Fecha compra | Valor compra | Acciones | Total (€) | Comisión
 
+Bilingual: Spanish or English headers are both accepted (Amendment G).
 Zero-price purchases (Valor compra = 0 with Acciones > 0) are flagged as
 ZERO_COST_ACQUISITION — pending corporate-action share acquisitions.
 
@@ -12,8 +13,9 @@ Delimiter auto-detected: tab, semicolon, comma.
 
 from __future__ import annotations
 
+import unicodedata
 from decimal import Decimal
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Set
 
 from .common import (
     normalize_company_name,
@@ -23,21 +25,24 @@ from .common import (
     read_csv_rows,
 )
 
-_REQUIRED_COLS = [
-    "año",
-    "empresa",
-    "fecha compra",
-    "valor compra",
-    "acciones",
-    "total (€)",
-    "comisión",
-]
+# Positional alias map: position → set of acceptable normalized header values.
+# Any of the aliases at a given position is accepted (Amendment G §G.4.1).
+_PURCHASES_HEADER_ALIASES: Dict[int, Set[str]] = {
+    0: {"ano", "year"},
+    1: {"empresa", "company"},
+    2: {"fecha compra", "fecha de compra", "purchase date", "buy date", "date"},
+    3: {"valor compra", "precio", "price per share", "price", "unit price"},
+    4: {"acciones", "shares", "quantity"},
+    5: {"total (€)", "total (eur)", "total", "total cost", "trade value"},
+    6: {"comision", "commission", "fees"},
+}
 
 
 def _normalize_header(h: str) -> str:
-    import unicodedata
+    """NFKD → strip combining marks → lowercase → collapse whitespace."""
     nfkd = unicodedata.normalize("NFKD", h)
-    return "".join(c for c in nfkd if not unicodedata.combining(c)).lower().strip()
+    stripped = "".join(c for c in nfkd if not unicodedata.combining(c)).lower().strip()
+    return " ".join(stripped.split())
 
 
 def parse_purchases(content: bytes) -> List[Dict[str, Any]]:
@@ -67,16 +72,17 @@ def parse_purchases(content: bytes) -> List[Dict[str, Any]]:
     header_row = rows[0]
     normalized_headers = [_normalize_header(h) for h in header_row]
 
-    for i, expected in enumerate(_REQUIRED_COLS):
-        if i >= len(normalized_headers):
+    # Validate each position using the bilingual alias map.
+    for pos, aliases in _PURCHASES_HEADER_ALIASES.items():
+        if pos >= len(normalized_headers):
             raise ValueError(
-                f"Missing column at position {i+1}: expected '{expected}'"
+                f"Missing column at position {pos + 1}: expected one of {sorted(aliases)}"
             )
-        actual = normalized_headers[i]
-        normalized_expected = _normalize_header(expected)
-        if actual != normalized_expected:
+        actual = normalized_headers[pos]
+        if actual not in aliases:
             raise ValueError(
-                f"Column {i+1} mismatch: expected '{expected}', got '{actual}'"
+                f"Column {pos + 1}: unrecognized header {header_row[pos]!r}. "
+                f"Expected one of: {', '.join(sorted(aliases))}"
             )
 
     results: List[Dict[str, Any]] = []

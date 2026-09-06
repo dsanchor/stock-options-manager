@@ -4,6 +4,7 @@ Expected columns (first 8):
   Año | Empresa | Fecha de cobro | Importe Bruto | Importe Neto |
   Importe en Derechos | Retención Origen | Retención Destino
 
+Bilingual: Spanish or English headers are both accepted (Amendment G).
 Additional columns beyond col 8 are preserved as `extra_cols`.
 
 Spanish locale: DD/MM/YYYY dates, decimal comma numbers.
@@ -12,8 +13,9 @@ Delimiter auto-detected: tab, semicolon, comma.
 
 from __future__ import annotations
 
+import unicodedata
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from .common import (
     normalize_company_name,
@@ -23,23 +25,24 @@ from .common import (
     read_csv_rows,
 )
 
-# Canonical header names accepted (case-insensitive, stripped)
-_REQUIRED_COLS = [
-    "año",
-    "empresa",
-    "fecha de cobro",
-    "importe bruto",
-    "importe neto",
-    "importe en derechos",
-    "retención origen",
-    "retención destino",
-]
+# Positional alias map for dividend CSV headers (Amendment G §G.4.4).
+_DIVIDENDS_HEADER_ALIASES: Dict[int, Set[str]] = {
+    0: {"ano", "year"},
+    1: {"empresa", "company"},
+    2: {"fecha de cobro", "fecha cobro", "payment date", "date"},
+    3: {"importe bruto", "gross amount", "gross"},
+    4: {"importe neto", "net amount", "net"},
+    5: {"importe en derechos", "rights amount", "scrip amount"},
+    6: {"retencion origen", "source withholding", "withholding source", "wht source"},
+    7: {"retencion destino", "destination withholding", "withholding destination", "wht destination", "wht dest"},
+}
 
 
 def _normalize_header(h: str) -> str:
-    import unicodedata
+    """NFKD → strip combining marks → lowercase → collapse whitespace."""
     nfkd = unicodedata.normalize("NFKD", h)
-    return "".join(c for c in nfkd if not unicodedata.combining(c)).lower().strip()
+    stripped = "".join(c for c in nfkd if not unicodedata.combining(c)).lower().strip()
+    return " ".join(stripped.split())
 
 
 def parse_dividends(content: bytes) -> List[Dict[str, Any]]:
@@ -70,18 +73,16 @@ def parse_dividends(content: bytes) -> List[Dict[str, Any]]:
     header_row = rows[0]
     normalized_headers = [_normalize_header(h) for h in header_row]
 
-    # Verify required columns exist in first 8 positions
-    for i, expected in enumerate(_REQUIRED_COLS):
-        if i >= len(normalized_headers):
+    for pos, aliases in _DIVIDENDS_HEADER_ALIASES.items():
+        if pos >= len(normalized_headers):
             raise ValueError(
-                f"Missing column at position {i+1}: expected '{expected}'"
+                f"Missing column at position {pos + 1}: expected one of {sorted(aliases)}"
             )
-        actual = normalized_headers[i]
-        # Normalize expected too (strip accents) so comparison is accent-insensitive
-        normalized_expected = _normalize_header(expected)
-        if actual != normalized_expected:
+        actual = normalized_headers[pos]
+        if actual not in aliases:
             raise ValueError(
-                f"Column {i+1} mismatch: expected '{expected}', got '{actual}'"
+                f"Column {pos + 1}: unrecognized header {header_row[pos]!r}. "
+                f"Expected one of: {', '.join(sorted(aliases))}"
             )
 
     results: List[Dict[str, Any]] = []

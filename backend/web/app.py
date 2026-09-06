@@ -959,14 +959,30 @@ async def api_get_symbol(request: Request, symbol: str):
 
 
 def _map_recent_movement(m: dict) -> dict:
-    """Map a raw ledger_txn doc to the RecentMovement wire shape."""
+    """Map a raw ledger_txn doc to the RecentMovement wire shape.
+
+    Exposes fields needed for the Stocks history tab: type, date, quantity,
+    gross/fees/net amounts, account, sales_type (SELL), and audit provenance.
+    DIVIDEND-specific fields (withholding) are omitted pending Danny's amendment.
+    """
     gross = m.get("gross") or {}
+    fees = m.get("fees") or {}
+    net = m.get("net") or {}
     return {
         "id": m.get("id"),
         "txn_type": m.get("txn_type"),
         "trade_date": m.get("trade_date"),
         "quantity": str(m.get("quantity", "")) if m.get("quantity") is not None else None,
         "gross_eur": gross.get("eur_amount") or m.get("net_eur"),
+        "fees_eur": fees.get("total_eur"),
+        "net_eur": net.get("eur_amount"),
+        "currency": gross.get("currency"),
+        "account_id": m.get("account_id"),
+        # SELL-specific
+        "sales_type": m.get("sales_type"),
+        # Audit
+        "correction_status": m.get("correction_status"),
+        "import_source": m.get("import_source"),
     }
 
 
@@ -1052,14 +1068,17 @@ def _compute_symbol_detail(
                      h.get("ticker", "").upper() == sym),
                     None,
                 )
+                # Fetch movements independently of holding presence (same fix as main path).
+                recent_movs: List[Dict] = []
+                total_movs_count = 0
+                try:
+                    movs, total_movs_count = holdings_svc.portfolio_svc.get_movements(
+                        security_id=security_id, limit=10
+                    )
+                    recent_movs = [_map_recent_movement(_clean_doc(m)) for m in movs]
+                except Exception:
+                    pass
                 if holding:
-                    try:
-                        movs, _ = holdings_svc.portfolio_svc.get_movements(
-                            security_id=security_id, limit=5
-                        )
-                        recent_movs = [_map_recent_movement(_clean_doc(m)) for m in movs]
-                    except Exception:
-                        recent_movs = []
                     portfolio_field = {
                         "current_shares": holding.get("total_shares"),
                         "average_cost_eur": holding.get("avg_cost_basis_eur"),
@@ -1069,7 +1088,17 @@ def _compute_symbol_detail(
                             holdings_svc, security_id, holding
                         ),
                         "recent_movements": recent_movs,
-                        "movement_count": len(recent_movs),
+                        "movement_count": total_movs_count,
+                    }
+                elif recent_movs:
+                    portfolio_field = {
+                        "current_shares": "0",
+                        "average_cost_eur": None,
+                        "current_invested_eur": None,
+                        "total_dividends_eur": None,
+                        "holdings_by_account": [],
+                        "recent_movements": recent_movs,
+                        "movement_count": total_movs_count,
                     }
             except Exception as exc:
                 logger.warning("_compute_symbol_detail portfolio_only lookup failed: %s", exc)
@@ -1206,20 +1235,24 @@ def _compute_symbol_detail(
                      if h.get("ticker", "").upper() == sym),
                     None,
                 )
-            if holding:
-                # Recent movements for this security (last 5)
-                recent_movements: List[Dict] = []
-                if hasattr(holdings_svc.portfolio_svc, "get_movements"):
-                    try:
-                        movs, _ = holdings_svc.portfolio_svc.get_movements(
-                            security_id=security_id_from_config, limit=5
-                        )
-                        recent_movements = [
-                            _map_recent_movement(_clean_doc(m)) for m in movs
-                        ]
-                    except Exception:
-                        pass
 
+            # Fetch movements independently of whether a holding was found.
+            # A security with zero current shares (fully sold, historical) still
+            # has a valid ledger and should show its BUY/SELL/DIVIDEND history.
+            recent_movements: List[Dict] = []
+            total_movement_count = 0
+            if hasattr(holdings_svc.portfolio_svc, "get_movements"):
+                try:
+                    movs, total_movement_count = holdings_svc.portfolio_svc.get_movements(
+                        security_id=security_id_from_config, limit=10
+                    )
+                    recent_movements = [
+                        _map_recent_movement(_clean_doc(m)) for m in movs
+                    ]
+                except Exception:
+                    pass
+
+            if holding:
                 portfolio_field = {
                     "current_shares": holding.get("total_shares"),
                     "average_cost_eur": holding.get("avg_cost_basis_eur"),
@@ -1229,7 +1262,19 @@ def _compute_symbol_detail(
                         holdings_svc, security_id_from_config, holding
                     ),
                     "recent_movements": recent_movements,
-                    "movement_count": len(recent_movements),
+                    "movement_count": total_movement_count,
+                }
+            elif recent_movements:
+                # No active holding (fully exited or superseded) but movements exist —
+                # expose them so the Stocks tab can show historical activity.
+                portfolio_field = {
+                    "current_shares": "0",
+                    "average_cost_eur": None,
+                    "current_invested_eur": None,
+                    "total_dividends_eur": None,
+                    "holdings_by_account": [],
+                    "recent_movements": recent_movements,
+                    "movement_count": total_movement_count,
                 }
         except Exception as exc:
             logger.warning(

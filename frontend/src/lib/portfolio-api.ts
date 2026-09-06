@@ -27,6 +27,12 @@ import type {
   BatchReassignmentPreviewRequest,
   BatchReassignmentPreviewResponse,
   FxRateResponse,
+  CorporateActionCreateRequest,
+  CorporateActionCreateResponse,
+  CorporateActionVoidRequest,
+  CorporateActionVoidResponse,
+  CorporateActionCorrectRequest,
+  CorporateActionCorrectResponse,
 } from "@/types/portfolio";
 import type {
   ImportSession,
@@ -92,6 +98,7 @@ export interface MovementsFilter {
   account_id?: string;
   security_id?: string;
   txn_type?: string;
+  ca_group_id?: string;        // filter to one corporate-action group
   date_from?: string;
   date_to?: string;
   limit?: number;
@@ -105,6 +112,7 @@ export async function getMovements(
   if (filter.account_id) params.set("account_id", filter.account_id);
   if (filter.security_id) params.set("security_id", filter.security_id);
   if (filter.txn_type) params.set("txn_type", filter.txn_type);
+  if (filter.ca_group_id) params.set("ca_group_id", filter.ca_group_id);
   if (filter.date_from) params.set("date_from", filter.date_from);
   if (filter.date_to) params.set("date_to", filter.date_to);
   if (filter.limit !== undefined) params.set("limit", String(filter.limit));
@@ -387,4 +395,47 @@ export async function getFxRate(
 ): Promise<FxRateResponse> {
   const qs = new URLSearchParams({ from_currency: fromCurrency, to_currency: toCurrency, date });
   return fetchJSON<FxRateResponse>(`/api/fx/rates?${qs.toString()}`);
+}
+
+// ─── Amendment H: Corporate Action Groups ────────────────────────────────────
+
+/** POST /api/portfolio/corporate-actions — creates N linked legs sharing a ca_group_id. */
+export async function createCorporateAction(
+  data: CorporateActionCreateRequest,
+): Promise<CorporateActionCreateResponse> {
+  return fetchJSON<CorporateActionCreateResponse>("/api/portfolio/corporate-actions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** POST /api/portfolio/corporate-actions/{ca_group_id}/void — voids all active legs in a group. */
+export async function voidCorporateActionGroup(
+  caGroupId: string,
+  data: CorporateActionVoidRequest,
+): Promise<CorporateActionVoidResponse> {
+  return fetchJSON<CorporateActionVoidResponse>(
+    `/api/portfolio/corporate-actions/${encodeURIComponent(caGroupId)}/void`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+/** POST /api/portfolio/corporate-actions/{ca_group_id}/correct — atomically replaces all legs. */
+export async function correctCorporateActionGroup(
+  caGroupId: string,
+  data: CorporateActionCorrectRequest,
+): Promise<CorporateActionCorrectResponse> {
+  return fetchJSON<CorporateActionCorrectResponse>(
+    `/api/portfolio/corporate-actions/${encodeURIComponent(caGroupId)}/correct`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    },
+  );
 }

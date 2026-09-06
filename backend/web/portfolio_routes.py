@@ -872,6 +872,8 @@ async def correct_movement(request: Request, movement_id: str):
         msg = str(exc)
         if "already_superseded" in msg:
             return _err("already_superseded", msg, 409)
+        if "transfer_not_correctable" in msg:
+            return _err("transfer_not_correctable", msg, 405)
         return _err("validation_error", msg, 400)
     except StorageUnavailableError as exc:
         return _storage_503(str(exc))
@@ -1046,9 +1048,7 @@ async def batch_reassign_movements(request: Request):
         return _err("validation_error", "dest_account_id is required", 400)
     if source == dest:
         return _err("validation_error", "source_account_id and dest_account_id must differ", 400)
-    reason = str(body.get("reason", "")).strip()
-    if not reason:
-        return _err("validation_error", "reason is required", 400)
+    reason = (body.get("reason") or "").strip() or "Batch account reassignment"
 
     try:
         svc = _get_portfolio_svc(request)
@@ -1498,4 +1498,143 @@ async def get_fx_rate_endpoint(
         )
     except Exception as exc:
         logger.exception("get_fx_rate_endpoint failed")
+        return _err("internal_error", str(exc), 500)
+
+
+# ===========================================================================
+# Amendment H — Corporate-Action Groups
+# ===========================================================================
+
+@router.post("/api/portfolio/corporate-actions")
+async def create_corporate_action(request: Request):
+    """POST /api/portfolio/corporate-actions — create a linked corporate-action group.
+
+    Amendment H §H.3.6: creates N ledger_txn docs sharing a ca_group_id.
+    All-or-nothing: if any leg fails validation, the entire request is rejected.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return _err("validation_error", "Invalid JSON body", 400)
+
+    for field in ("event_type", "security_id", "payment_date", "legs"):
+        if not body.get(field):
+            return _err("validation_error", f"{field} is required", 400)
+
+    if not isinstance(body.get("legs"), list):
+        return _err("validation_error", "legs must be a list", 400)
+
+    try:
+        svc = _get_portfolio_svc(request)
+        result = svc.create_corporate_action(body)
+        return JSONResponse(result, status_code=201)
+    except StorageUnavailableError as exc:
+        return _storage_503(str(exc))
+    except RuntimeError as exc:
+        return _storage_503(str(exc))
+    except ValueError as exc:
+        return _err("validation_error", str(exc), 400)
+    except Exception as exc:
+        logger.exception("create_corporate_action failed")
+        return _err("internal_error", str(exc), 500)
+
+
+@router.post("/api/portfolio/corporate-actions/{ca_group_id}/void")
+async def void_corporate_action_group(request: Request, ca_group_id: str):
+    """POST /api/portfolio/corporate-actions/{ca_group_id}/void — void all active legs.
+
+    Amendment H §H.3.7: atomically voids all active legs in the group.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return _err("validation_error", "Invalid JSON body", 400)
+
+    account_id = body.get("account_id", "")
+    if not account_id:
+        return _err("validation_error", "account_id is required", 400)
+
+    reason = body.get("reason", "")
+
+    try:
+        svc = _get_portfolio_svc(request)
+        result = svc.void_corporate_action_group(ca_group_id, account_id, reason)
+        return JSONResponse(result)
+    except StorageUnavailableError as exc:
+        return _storage_503(str(exc))
+    except RuntimeError as exc:
+        return _storage_503(str(exc))
+    except ValueError as exc:
+        msg = str(exc)
+        if "no_active_legs" in msg:
+            return _err("not_found", msg, 404)
+        return _err("validation_error", msg, 400)
+    except Exception as exc:
+        logger.exception("void_corporate_action_group failed")
+        return _err("internal_error", str(exc), 500)
+
+
+@router.post("/api/portfolio/corporate-actions/{ca_group_id}/correct")
+async def correct_corporate_action_group(request: Request, ca_group_id: str):
+    """POST /api/portfolio/corporate-actions/{ca_group_id}/correct
+
+    Atomically replace a corporate-action group with corrected legs.
+    All original legs are superseded; new legs share a new ca_group_id and
+    carry replaces_ca_group_id pointing to the original.
+
+    Request body:
+      {
+        "account_id": "<str>",          # required
+        "correction_note": "<str>",     # required, non-empty
+        "event_type": "<CaEventType>",  # e.g. CASH_DIVIDEND
+        "security_id": "<str|null>",    # optional — inferred from original legs
+        "payment_date": "<YYYY-MM-DD|null>",
+        "notes": "<str|null>",
+        "legs": [                       # required, non-empty list
+          {
+            "leg_type": "CASH_DIVIDEND|RIGHTS_SOLD|SHARE_ACQUISITION|CASH_TOP_UP",
+            "trade_date": "...",
+            "quantity": "...",
+            "gross": {"amount": "...", "currency": "...", "eur_amount": "..."},
+            "fees": {"total": "...", "currency": "...", "total_eur": "..."},
+            "withholding": {... or null},
+            "fx": {... or null},
+            "cost_basis_status": "COMPLETE|INCOMPLETE|null",
+            "notes": "<str|null>"
+          }
+        ]
+      }
+
+    Errors:
+      400 validation_error   — invalid fields / missing required legs / empty correction_note
+      404 not_found          — no active legs for ca_group_id
+      409 integrity_error    — phase-2 supersession failed; new docs deleted; original intact
+      400 ca_group_correction_failed — phase-1 write failed; no partial state
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return _err("validation_error", "Invalid JSON body", 400)
+
+    body["ca_group_id_path"] = ca_group_id  # informational only
+
+    try:
+        svc = _get_portfolio_svc(request)
+        result = svc.correct_corporate_action_group(ca_group_id, body)
+        return JSONResponse(result, status_code=201)
+    except StorageUnavailableError as exc:
+        return _storage_503(str(exc))
+    except RuntimeError as exc:
+        return _storage_503(str(exc))
+    except ValueError as exc:
+        msg = str(exc)
+        if "no_active_legs" in msg:
+            return _err("not_found", msg, 404)
+        if "integrity_error" in msg:
+            return _err("integrity_error", msg, 409)
+        if "ca_group_correction_failed" in msg:
+            return _err("ca_group_correction_failed", msg, 400)
+        return _err("validation_error", msg, 400)
+    except Exception as exc:
+        logger.exception("correct_corporate_action_group failed")
         return _err("internal_error", str(exc), 500)

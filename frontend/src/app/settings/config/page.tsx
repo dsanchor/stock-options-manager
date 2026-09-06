@@ -3,7 +3,7 @@ import { apiFetch } from "@/lib/api";
 import type { SettingsConfig } from "@/types/settings";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Configuration — Option Income Lab" };
+export const metadata = { title: "Configuration — Portfolio Income Lab" };
 
 export default async function SettingsConfigPage() {
   let data: SettingsConfig | null = null;

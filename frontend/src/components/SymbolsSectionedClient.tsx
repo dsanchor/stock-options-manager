@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import SymbolsTable from "@/components/SymbolsTable";
 import type { SymbolRow } from "@/types/symbols";
 
@@ -14,11 +14,23 @@ interface Props {
 export default function SymbolsSectionedClient({
   portfolioRows,
   watchlistRows,
-  portfolioCount,
+  portfolioCount: _portfolioCount,
   watchlistCount,
 }: Props) {
   const [portfolioOpen, setPortfolioOpen] = useState(true);
   const [watchlistOpen, setWatchlistOpen] = useState(true);
+  const [hideZeroPortfolio, setHideZeroPortfolio] = useState(true);
+
+  const filteredPortfolioRows = useMemo(() => {
+    if (!hideZeroPortfolio) return portfolioRows;
+    return portfolioRows.filter((r) => {
+      if (r.portfolio_shares == null) return true; // null = no data yet → keep visible
+      const shares = parseFloat(r.portfolio_shares);
+      if (isNaN(shares)) return true;
+      if (shares < 0) return true; // negative shares always visible (anomaly)
+      return shares !== 0;
+    });
+  }, [portfolioRows, hideZeroPortfolio]);
 
   return (
     <div className="space-y-6">
@@ -26,18 +38,34 @@ export default function SymbolsSectionedClient({
       <section aria-label="Portfolio symbols">
         <SectionHeader
           title="Portfolio"
-          count={portfolioCount}
+          count={filteredPortfolioRows.length}
           open={portfolioOpen}
           onToggle={() => setPortfolioOpen((v) => !v)}
         />
         {portfolioOpen && (
-          portfolioRows.length === 0 ? (
+          <div className="mt-2 flex items-center justify-end px-1">
+            <label className="flex items-center gap-2 cursor-pointer select-none text-text-muted hover:text-text">
+              <input
+                type="checkbox"
+                checked={hideZeroPortfolio}
+                onChange={(e) => setHideZeroPortfolio(e.target.checked)}
+                className="rounded border-border"
+                aria-label="Hide zero-share portfolio symbols"
+              />
+              <span className="text-xs">Hide zero-share</span>
+            </label>
+          </div>
+        )}
+        {portfolioOpen && (
+          filteredPortfolioRows.length === 0 ? (
             <p className="mt-3 text-sm text-text-muted pl-1">
-              No portfolio symbols. Import movements to see securities here.
+              {hideZeroPortfolio && portfolioRows.length > 0
+                ? "All portfolio symbols have zero shares. Uncheck \u2018Hide zero-share\u2019 to see historical positions."
+                : "No portfolio symbols. Import movements to see securities here."}
             </p>
           ) : (
             <div className="mt-3">
-              <SymbolsTable rows={portfolioRows} listSection="portfolio" />
+              <SymbolsTable rows={filteredPortfolioRows} listSection="portfolio" />
             </div>
           )
         )}

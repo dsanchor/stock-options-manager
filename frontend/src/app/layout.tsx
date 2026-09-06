@@ -12,8 +12,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Option Income Lab",
-  description: "Where boring dividends get interesting — covered calls, cash-secured puts, and AI-powered monitoring.",
+  title: "Portfolio Income Lab",
+  description: "DGI, Dividends & Options — AI-powered income portfolio monitoring with covered calls, cash-secured puts, and dividend growth investing.",
 };
 
 export default function RootLayout({

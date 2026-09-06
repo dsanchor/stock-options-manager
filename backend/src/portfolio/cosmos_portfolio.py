@@ -78,6 +78,172 @@ def _d(v: Any) -> Decimal:
         return Decimal("0")
 
 
+def _derive_wht_rate_pct(amount_eur: Decimal, gross_eur: Decimal) -> str:
+    """Derive WHT rate_pct = amount_eur / gross_eur × 100 (server-authoritative).
+
+    Returns "0" when gross_eur is zero (no division error).
+    Rounds to 2 decimal places.
+    """
+    if gross_eur == Decimal("0"):
+        return "0"
+    rate = (amount_eur / gross_eur) * Decimal("100")
+    return str(rate.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+def _apply_wht_rate_derivation(wht: Optional[Dict[str, Any]], gross_eur: Decimal) -> Optional[Dict[str, Any]]:
+    """Derive and overwrite rate_pct in withholding source/destination dicts.
+
+    Returns a shallow-copied withholding dict with server-computed rate_pct fields.
+    Does not mutate the input dict.
+    """
+    if not isinstance(wht, dict):
+        return wht
+    result = dict(wht)
+    if isinstance(result.get("source"), dict):
+        src = dict(result["source"])
+        src["rate_pct"] = _derive_wht_rate_pct(_d(src.get("amount_eur", "0")), gross_eur)
+        result["source"] = src
+    if isinstance(result.get("destination"), dict):
+        dst = dict(result["destination"])
+        dst["rate_pct"] = _derive_wht_rate_pct(_d(dst.get("amount_eur", "0")), gross_eur)
+        result["destination"] = dst
+    return result
+
+
+# Leg type → txn_type mapping for corporate-action groups (Amendment H §H.3.3)
+_CA_LEG_TXN_TYPE = {
+    "CASH_DIVIDEND": "DIVIDEND",
+    "RIGHTS_SOLD": "SELL",
+    "SHARE_ACQUISITION": "BUY",
+    "CASH_TOP_UP": "BUY",
+}
+
+# Required leg types per event type (Amendment H §H.4)
+_CA_REQUIRED_LEGS: Dict[str, set] = {
+    "CASH_DIVIDEND": {"CASH_DIVIDEND"},
+    "DIVIDEND_WITH_SCRIP": {"CASH_DIVIDEND", "SHARE_ACQUISITION"},
+    "SCRIP_DIVIDEND": {"SHARE_ACQUISITION"},
+    "RIGHTS_ISSUE": {"SHARE_ACQUISITION"},
+}
+
+# Financial fields on a group leg that must not be patched individually.
+# Non-financial fields (trade_date, notes) remain individually correctable.
+_CA_FINANCIAL_FIELDS: frozenset = frozenset({
+    "gross", "fees", "withholding", "quantity", "fx", "sales_type", "cost_basis_status",
+})
+
+
+def _validate_correction_fields(txn_type: str, correction_data: Dict[str, Any]) -> None:
+    """Validate correction field constraints per movement type.
+
+    Raises ValueError with a human-readable detail message on the first violation found.
+    All per-field structural checks (enum values, numeric ranges, required sub-fields,
+    type applicability) are centralised here so correct_movement stays readable.
+    """
+    # ── Type-specific field restrictions ──────────────────────────────────
+    if txn_type == "BUY":
+        if "withholding" in correction_data and correction_data["withholding"] is not None:
+            raise ValueError("withholding is not applicable to BUY movements")
+        if correction_data.get("sales_type") is not None:
+            raise ValueError("sales_type is not applicable to BUY movements")
+
+    if txn_type == "SELL":
+        if correction_data.get("cost_basis_status") is not None:
+            raise ValueError("cost_basis_status is not applicable to SELL movements")
+
+    if txn_type == "DIVIDEND":
+        if correction_data.get("sales_type") is not None:
+            raise ValueError("sales_type is not applicable to DIVIDEND movements")
+        if correction_data.get("cost_basis_status") is not None:
+            raise ValueError("cost_basis_status is not applicable to DIVIDEND movements")
+
+    # ── Gross structure ───────────────────────────────────────────────────
+    if correction_data.get("gross") is not None:
+        g = correction_data["gross"]
+        if not isinstance(g, dict):
+            raise ValueError("gross must be an object with amount, currency, and eur_amount")
+        for req in ("amount", "currency", "eur_amount"):
+            if req not in g or g[req] is None:
+                raise ValueError(f"gross.{req} is required when providing gross")
+        try:
+            if Decimal(str(g["amount"])) < Decimal("0"):
+                raise ValueError("gross.amount must be >= 0")
+            if Decimal(str(g["eur_amount"])) < Decimal("0"):
+                raise ValueError("gross.eur_amount must be >= 0")
+        except ValueError:
+            raise
+        except Exception:
+            raise ValueError("gross.amount and gross.eur_amount must be valid numeric strings")
+
+    # ── Fees structure ────────────────────────────────────────────────────
+    if correction_data.get("fees") is not None:
+        f = correction_data["fees"]
+        if not isinstance(f, dict):
+            raise ValueError("fees must be an object with total, currency, and total_eur")
+        for req in ("total", "currency", "total_eur"):
+            if req not in f or f[req] is None:
+                raise ValueError(f"fees.{req} is required when providing fees")
+
+    # ── FX structure ──────────────────────────────────────────────────────
+    if correction_data.get("fx") is not None:
+        fx = correction_data["fx"]
+        if not isinstance(fx, dict):
+            raise ValueError("fx must be an object with rate and rate_source")
+        if "rate" not in fx:
+            raise ValueError("fx.rate is required")
+        try:
+            rate_val = Decimal(str(fx["rate"]))
+        except Exception:
+            raise ValueError("fx.rate must be a valid positive number")
+        if rate_val <= Decimal("0"):
+            raise ValueError("fx.rate must be > 0")
+        if "rate_source" in fx and fx["rate_source"] not in ("ECB", "BROKER", "MANUAL"):
+            raise ValueError("fx.rate_source must be one of: ECB, BROKER, MANUAL")
+
+    # ── sales_type enum ───────────────────────────────────────────────────
+    if correction_data.get("sales_type") is not None:
+        if correction_data["sales_type"] not in ("ACCIONES", "DERECHOS"):
+            raise ValueError("sales_type must be ACCIONES or DERECHOS")
+
+    # ── cost_basis_status enum ────────────────────────────────────────────
+    if correction_data.get("cost_basis_status") is not None:
+        if correction_data["cost_basis_status"] not in ("COMPLETE", "INCOMPLETE"):
+            raise ValueError("cost_basis_status must be COMPLETE or INCOMPLETE")
+
+    # ── Withholding structure (D.2) ───────────────────────────────────────
+    if "withholding" in correction_data and correction_data["withholding"] is not None:
+        wht = correction_data["withholding"]
+        if not isinstance(wht, dict):
+            raise ValueError("withholding must be an object or null")
+        if "source" in wht and wht["source"] is not None:
+            src = wht["source"]
+            if not isinstance(src, dict):
+                raise ValueError("withholding.source must be an object or null")
+            if "amount_eur" not in src:
+                raise ValueError("withholding.source must include amount_eur")
+        if "destination" in wht and wht["destination"] is not None:
+            dst = wht["destination"]
+            if not isinstance(dst, dict):
+                raise ValueError("withholding.destination must be an object or null")
+            if "amount_eur" not in dst:
+                raise ValueError("withholding.destination must include amount_eur")
+
+    # ── Quantity: null only permitted for DIVIDEND ────────────────────────
+    if "quantity" in correction_data and correction_data["quantity"] is None:
+        if txn_type != "DIVIDEND":
+            raise ValueError(
+                "quantity must be a non-null numeric string for BUY and SELL movements"
+            )
+
+    if correction_data.get("quantity") is not None:
+        try:
+            q_val = Decimal(str(correction_data["quantity"]))
+        except Exception:
+            raise ValueError("quantity must be a valid numeric string")
+        if q_val < Decimal("0"):
+            raise ValueError("quantity must be >= 0")
+
+
 class CosmosPortfolioService:
     """Portfolio and import-sessions Cosmos operations."""
 
@@ -429,7 +595,7 @@ class CosmosPortfolioService:
             doc["fx"] = {"rate": "1.000000000", "rate_source": "ECB"}
 
         if wht:
-            doc["withholding"] = wht
+            doc["withholding"] = _apply_wht_rate_derivation(wht, gross_eur)
 
         if txn_type == "SELL":
             doc["sales_type"] = sales_type
@@ -442,6 +608,11 @@ class CosmosPortfolioService:
 
         if data.get("notes"):
             doc["notes"] = data["notes"]
+
+        # Corporate-action group fields (Amendment H §H.3.2)
+        for ca_field in ("ca_group_id", "ca_leg_type", "ca_event_type", "ca_group_seq"):
+            if data.get(ca_field) is not None:
+                doc[ca_field] = data[ca_field]
 
         created = self.portfolio_container.upsert_item(doc)
 
@@ -467,7 +638,8 @@ class CosmosPortfolioService:
 
         Creates a new active doc linked to the original; marks original SUPERSEDED.
         Returns {"original": ..., "replacement": ...}.
-        Raises ValueError if already superseded/voided.
+        Raises ValueError if already superseded/voided or if correction fields are invalid.
+        Raises ValueError with 'transfer_not_correctable' prefix for transfer movements.
         """
         self._require_portfolio()
 
@@ -478,9 +650,32 @@ class CosmosPortfolioService:
         if original.get("correction_status") in ("SUPERSEDED", "VOIDED"):
             raise ValueError(f"already_superseded: movement {movement_id} is already {original['correction_status']}")
 
+        # Transfers must be voided+recreated — not patchable
+        txn_type = original.get("txn_type", "")
+        if txn_type in _TRANSFER_TYPES:
+            raise ValueError(
+                "transfer_not_correctable: Transfer movements cannot be corrected individually. "
+                "Void the transfer pair and create a new one."
+            )
+
+        # Group legs: financial field changes must go through group correction endpoint
+        _orig_ca_group_id = original.get("ca_group_id")
+        if _orig_ca_group_id:
+            _financial_keys = _CA_FINANCIAL_FIELDS.intersection(correction_data)
+            if _financial_keys:
+                raise ValueError(
+                    f"group_leg_correction_required: Movement {movement_id} belongs to "
+                    f"corporate-action group {_orig_ca_group_id!r}. "
+                    f"Financial field(s) {sorted(_financial_keys)} must be corrected via "
+                    f"POST /api/portfolio/corporate-actions/{_orig_ca_group_id}/correct"
+                )
+
         correction_note = correction_data.get("correction_note", "").strip()
         if not correction_note:
             raise ValueError("correction_note is required")
+
+        # Validate all supplied correction fields against type-specific rules
+        _validate_correction_fields(txn_type, correction_data)
 
         now = self._now()
         new_id = f"mvt_{uuid4().hex}"
@@ -498,15 +693,31 @@ class CosmosPortfolioService:
         # Remove superseded_by if carried over
         replacement.pop("superseded_by", None)
 
-        # Apply field overrides from correction_data
-        overridable = ("trade_date", "quantity", "gross", "fees", "withholding",
-                       "fx", "sales_type", "cost_basis_status", "notes")
-        for field in overridable:
+        # Apply field overrides from correction_data.
+        # Non-nullable fields: only applied when value is not None (absent means "no change").
+        # Nullable fields (withholding, quantity for DIVIDEND): applied when key is present in
+        # the body, so an explicit JSON null can intentionally clear the field.
+        _NONNULL_OVERRIDABLE = ("trade_date", "gross", "fees", "fx", "sales_type",
+                                "cost_basis_status", "notes")
+        _NULLABLE_OVERRIDABLE = ("withholding", "quantity")
+
+        for field in _NONNULL_OVERRIDABLE:
             if correction_data.get(field) is not None:
                 replacement[field] = correction_data[field]
 
-        # Recompute net if gross/fees changed
-        if "gross" in correction_data or "fees" in correction_data or "withholding" in correction_data:
+        for field in _NULLABLE_OVERRIDABLE:
+            if field in correction_data:
+                val = correction_data[field]
+                if val is None:
+                    # Explicit null: remove the field (clear it)
+                    replacement.pop(field, None)
+                else:
+                    replacement[field] = val
+
+        # Recompute net whenever gross, fees, or withholding are touched.
+        # Key-presence check so explicit null (cleared withholding) also triggers recompute.
+        _net_trigger_fields = {"gross", "fees", "withholding"}
+        if _net_trigger_fields.intersection(correction_data):
             gross = replacement.get("gross") or {}
             fees = replacement.get("fees") or {}
             wht = replacement.get("withholding")
@@ -524,6 +735,11 @@ class CosmosPortfolioService:
                 "currency": currency,
                 "eur_amount": str(net_eur.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)),
             }
+            # Derive WHT rate_pct server-side after net recompute (Amendment H §H.1.2).
+            if isinstance(replacement.get("withholding"), dict):
+                replacement["withholding"] = _apply_wht_rate_derivation(
+                    replacement["withholding"], gross_eur
+                )
 
         # Write replacement
         self.portfolio_container.upsert_item(replacement)
@@ -538,6 +754,469 @@ class CosmosPortfolioService:
         return {
             "original": _clean(orig_doc),
             "replacement": _clean(replacement),
+        }
+
+    def create_corporate_action(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a corporate-action group as linked ledger_txn documents.
+
+        Amendment H §H.3.6: All legs share a ca_group_id.
+        All-or-nothing: if any leg fails validation, the entire request is rejected
+        before any document is written.
+
+        Returns {"ca_group_id": ..., "event_type": ..., "movements": [...]}.
+        """
+        self._require_portfolio()
+
+        event_type = request.get("event_type", "")
+        if event_type not in _CA_REQUIRED_LEGS:
+            raise ValueError(
+                f"event_type must be one of {sorted(_CA_REQUIRED_LEGS)}; got {event_type!r}"
+            )
+
+        security_id = request.get("security_id", "")
+        if not security_id:
+            raise ValueError("security_id is required")
+
+        account_id = request.get("account_id", "_unassigned")
+        payment_date = request.get("payment_date", "")
+        if not payment_date:
+            raise ValueError("payment_date is required")
+        notes = request.get("notes")
+        legs = request.get("legs", [])
+        if not legs:
+            raise ValueError("legs must not be empty")
+
+        # Validate required legs for this event type.
+        provided_leg_types = {leg.get("leg_type") for leg in legs}
+        required = _CA_REQUIRED_LEGS[event_type]
+        missing = required - provided_leg_types
+        if missing:
+            raise ValueError(
+                f"event_type {event_type!r} requires leg types: {sorted(missing)}"
+            )
+
+        # Validate unknown leg types.
+        valid_leg_types = set(_CA_LEG_TXN_TYPE)
+        invalid_legs = provided_leg_types - valid_leg_types
+        if invalid_legs:
+            raise ValueError(f"Unknown leg_type(s): {sorted(invalid_legs)}")
+
+        # Build and validate all leg docs before writing any (all-or-nothing).
+        ca_group_id = f"cag_{uuid4().hex}"
+        now = self._now()
+        ticker = security_id.split(":")[-1] if ":" in security_id else security_id
+        docs_to_write: List[Dict[str, Any]] = []
+
+        for seq, leg in enumerate(legs, start=1):
+            leg_type = leg.get("leg_type", "")
+            txn_type = _CA_LEG_TXN_TYPE[leg_type]
+            trade_date = leg.get("trade_date") or payment_date
+
+            # Derive quantity and overrides per leg type.
+            if leg_type == "CASH_TOP_UP":
+                quantity = "0"
+                cost_basis_status = "INCOMPLETE"
+            elif leg_type == "SHARE_ACQUISITION":
+                quantity = str(leg.get("quantity") or "0")
+                cost_basis_status = leg.get("cost_basis_status") or "INCOMPLETE"
+            else:
+                quantity = str(leg.get("quantity") or "0")
+                cost_basis_status = leg.get("cost_basis_status")
+
+            sales_type = "DERECHOS" if leg_type == "RIGHTS_SOLD" else None
+
+            gross = leg.get("gross") or {}
+            fees_data = leg.get("fees") or {}
+            wht = leg.get("withholding")
+            fx = leg.get("fx")
+
+            gross_eur = _d(gross.get("eur_amount", "0"))
+            fees_eur = _d(fees_data.get("total_eur", "0"))
+            wht_s = Decimal("0")
+            wht_d = Decimal("0")
+            if isinstance(wht, dict):
+                wht_s = _d((wht.get("source") or {}).get("amount_eur", "0"))
+                wht_d = _d((wht.get("destination") or {}).get("amount_eur", "0"))
+
+            net_eur = gross_eur - fees_eur - wht_s - wht_d
+            currency = gross.get("currency", "EUR").upper()
+
+            movement_id = f"mvt_{uuid4().hex}"
+            doc: Dict[str, Any] = {
+                "id": movement_id,
+                "account_id": account_id,
+                "doc_type": "ledger_txn",
+                "txn_type": txn_type,
+                "security_id": security_id,
+                "ticker": ticker,
+                "trade_date": trade_date,
+                "quantity": quantity,
+                "gross": {
+                    "amount": str(gross.get("amount", "0")),
+                    "currency": currency,
+                    "eur_amount": str(gross_eur),
+                },
+                "fees": {
+                    "total": str(fees_data.get("total", "0")),
+                    "currency": fees_data.get("currency", currency),
+                    "total_eur": str(fees_eur),
+                },
+                "net": {
+                    "amount": str(net_eur.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)),
+                    "currency": currency,
+                    "eur_amount": str(net_eur.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)),
+                },
+                "import_source": "manual",
+                "correction_status": "ACTIVE",
+                "ca_group_id": ca_group_id,
+                "ca_leg_type": leg_type,
+                "ca_event_type": event_type,
+                "ca_group_seq": seq,
+                "created_at": now,
+                "updated_at": now,
+            }
+
+            doc["fx"] = fx if fx else {"rate": "1.000000000", "rate_source": "ECB"}
+
+            if wht:
+                doc["withholding"] = _apply_wht_rate_derivation(wht, gross_eur)
+
+            if sales_type:
+                doc["sales_type"] = sales_type
+
+            if txn_type == "BUY":
+                doc["cost_basis_status"] = cost_basis_status or "COMPLETE"
+
+            leg_notes = leg.get("notes") or notes
+            if leg_notes:
+                doc["notes"] = leg_notes
+
+            docs_to_write.append(doc)
+
+        # All validation passed — write all legs.
+        created_movements = []
+        for doc in docs_to_write:
+            written = self.portfolio_container.upsert_item(doc)
+            created_movements.append(_clean(written))
+
+        # Best-effort symbol_config enrollment.
+        try:
+            ensure_symbol_config(
+                self.symbols_container, security_id, source="manual_movement"
+            )
+        except Exception as exc:
+            logger.warning(
+                "ensure_symbol_config failed for corporate_action %s: %s", security_id, exc
+            )
+
+        return {
+            "ca_group_id": ca_group_id,
+            "event_type": event_type,
+            "movements": created_movements,
+        }
+
+    def void_corporate_action_group(
+        self, ca_group_id: str, account_id: str, reason: str = ""
+    ) -> Dict[str, Any]:
+        """Void all active legs of a corporate-action group.
+
+        Amendment H §H.3.7: equivalent to voiding each leg individually but atomic.
+        Returns {"ca_group_id": ..., "voided_count": N, "movements": [...]}.
+        Raises ValueError if no active legs found for the given group.
+        """
+        self._require_portfolio()
+
+        # Query all active legs for this ca_group_id across the account.
+        conditions = [
+            "c.doc_type = 'ledger_txn'",
+            "c.ca_group_id = @ca_group_id",
+            "(NOT IS_DEFINED(c.correction_status) OR c.correction_status = 'ACTIVE')",
+        ]
+        params = [{"name": "@ca_group_id", "value": ca_group_id}]
+        if account_id and account_id != "_unassigned":
+            conditions.append("c.account_id = @account_id")
+            params.append({"name": "@account_id", "value": account_id})
+
+        where = " AND ".join(conditions)
+        query = f"SELECT * FROM c WHERE {where}"
+        items = list(self.portfolio_container.query_items(
+            query=query,
+            parameters=params,
+            enable_cross_partition_query=True,
+        ))
+
+        if not items:
+            raise ValueError(
+                f"no_active_legs: No active legs found for ca_group_id {ca_group_id!r}"
+            )
+
+        now = self._now()
+        voided_docs = []
+        for item in items:
+            item_account = item.get("account_id", account_id)
+            item["correction_status"] = "VOIDED"
+            if reason:
+                item["void_reason"] = reason
+            item["updated_at"] = now
+            self.portfolio_container.replace_item(item=item["id"], body=item)
+            voided_docs.append(_clean(item))
+
+        return {
+            "ca_group_id": ca_group_id,
+            "voided_count": len(voided_docs),
+            "movements": voided_docs,
+        }
+
+    def correct_corporate_action_group(
+        self, ca_group_id: str, request: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Replace a corporate-action group via atomic two-phase correction.
+
+        Phase 1 — Write replacement legs:
+          Build all new leg docs in memory (full validation before any write).
+          Upsert each; on mid-write failure delete already-created docs and raise.
+
+        Phase 2 — Supersede originals:
+          Replace each original doc with correction_status=SUPERSEDED.
+          On mid-supersession failure delete ALL new docs and raise integrity_error.
+
+        Since all legs share the same account_id (same Cosmos partition) both phases
+        operate within a single partition; cross-partition compensation logic is still
+        implemented for future safety.
+
+        Returns:
+          {
+            "original_ca_group_id": ...,
+            "ca_group_id": ...,
+            "event_type": ...,
+            "correction_note": ...,
+            "movements": [...]   # new replacement legs
+          }
+
+        Raises:
+          ValueError("correction_note is required")
+          ValueError("account_id is required")
+          ValueError("no_active_legs: ...")
+          ValueError("event_type must be ...")
+          ValueError("ca_group_correction_failed: ...")  — write failed; no partial state
+          ValueError("integrity_error: ...")             — phase 2 failed; new docs deleted
+        """
+        self._require_portfolio()
+
+        correction_note = str(request.get("correction_note", "") or "").strip()
+        if not correction_note:
+            raise ValueError("correction_note is required")
+
+        account_id = str(request.get("account_id", "") or "").strip()
+        if not account_id:
+            raise ValueError("account_id is required")
+
+        # ── 1. Load all active original legs ────────────────────────────────
+        orig_conditions = [
+            "c.doc_type = 'ledger_txn'",
+            "c.ca_group_id = @ca_group_id",
+            "(NOT IS_DEFINED(c.correction_status) OR c.correction_status = 'ACTIVE')",
+        ]
+        orig_params = [{"name": "@ca_group_id", "value": ca_group_id}]
+        orig_query = f"SELECT * FROM c WHERE {' AND '.join(orig_conditions)}"
+        original_legs = list(self.portfolio_container.query_items(
+            query=orig_query,
+            parameters=orig_params,
+            enable_cross_partition_query=True,
+        ))
+
+        if not original_legs:
+            raise ValueError(
+                f"no_active_legs: No active legs found for ca_group_id {ca_group_id!r}"
+            )
+
+        # ── 2. Validate replacement request ─────────────────────────────────
+        event_type = str(request.get("event_type") or "").strip()
+        if event_type not in _CA_REQUIRED_LEGS:
+            raise ValueError(
+                f"event_type must be one of {sorted(_CA_REQUIRED_LEGS)}; got {event_type!r}"
+            )
+
+        security_id = (
+            str(request.get("security_id") or "").strip()
+            or original_legs[0].get("security_id", "")
+        )
+        if not security_id:
+            raise ValueError("security_id is required")
+
+        payment_date = (
+            str(request.get("payment_date") or "").strip()
+            or original_legs[0].get("trade_date", "")
+        )
+
+        legs = request.get("legs") or []
+        if not legs:
+            raise ValueError("legs must not be empty")
+
+        provided_leg_types = {leg.get("leg_type") for leg in legs}
+        required_types = _CA_REQUIRED_LEGS[event_type]
+        missing = required_types - provided_leg_types
+        if missing:
+            raise ValueError(
+                f"event_type {event_type!r} requires leg types: {sorted(missing)}"
+            )
+        invalid_types = provided_leg_types - set(_CA_LEG_TXN_TYPE)
+        if invalid_types:
+            raise ValueError(f"Unknown leg_type(s): {sorted(invalid_types)}")
+
+        # ── 3. Build all replacement leg docs in memory ──────────────────────
+        new_ca_group_id = f"cag_{uuid4().hex}"
+        now = self._now()
+        ticker = security_id.split(":")[-1] if ":" in security_id else security_id
+        group_notes = request.get("notes")
+        docs_to_write: List[Dict[str, Any]] = []
+
+        for seq, leg in enumerate(legs, start=1):
+            leg_type = leg.get("leg_type", "")
+            txn_type = _CA_LEG_TXN_TYPE[leg_type]
+            trade_date = leg.get("trade_date") or payment_date
+
+            if leg_type == "CASH_TOP_UP":
+                quantity = "0"
+                cost_basis_status = "INCOMPLETE"
+            elif leg_type == "SHARE_ACQUISITION":
+                quantity = str(leg.get("quantity") or "0")
+                cost_basis_status = leg.get("cost_basis_status") or "INCOMPLETE"
+            else:
+                quantity = str(leg.get("quantity") or "0")
+                cost_basis_status = leg.get("cost_basis_status")
+
+            sales_type = "DERECHOS" if leg_type == "RIGHTS_SOLD" else None
+
+            gross = leg.get("gross") or {}
+            fees_data = leg.get("fees") or {}
+            wht = leg.get("withholding")
+            fx = leg.get("fx")
+
+            gross_eur = _d(gross.get("eur_amount", "0"))
+            fees_eur = _d(fees_data.get("total_eur", "0"))
+            wht_s = Decimal("0")
+            wht_d = Decimal("0")
+            if isinstance(wht, dict):
+                wht_s = _d((wht.get("source") or {}).get("amount_eur", "0"))
+                wht_d = _d((wht.get("destination") or {}).get("amount_eur", "0"))
+
+            net_eur = gross_eur - fees_eur - wht_s - wht_d
+            currency = gross.get("currency", "EUR").upper()
+            new_mvt_id = f"mvt_{uuid4().hex}"
+
+            doc: Dict[str, Any] = {
+                "id": new_mvt_id,
+                "account_id": account_id,
+                "doc_type": "ledger_txn",
+                "txn_type": txn_type,
+                "security_id": security_id,
+                "ticker": ticker,
+                "trade_date": trade_date,
+                "quantity": quantity,
+                "gross": {
+                    "amount": str(gross.get("amount", "0")),
+                    "currency": currency,
+                    "eur_amount": str(gross_eur),
+                },
+                "fees": {
+                    "total": str(fees_data.get("total", "0")),
+                    "currency": fees_data.get("currency", currency),
+                    "total_eur": str(fees_eur),
+                },
+                "net": {
+                    "amount": str(net_eur.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)),
+                    "currency": currency,
+                    "eur_amount": str(net_eur.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)),
+                },
+                "import_source": "manual",
+                "correction_status": "ACTIVE",
+                "ca_group_id": new_ca_group_id,
+                "ca_leg_type": leg_type,
+                "ca_event_type": event_type,
+                "ca_group_seq": seq,
+                "replaces_ca_group_id": ca_group_id,
+                "correction_note": correction_note,
+                "created_at": now,
+                "updated_at": now,
+            }
+
+            doc["fx"] = fx if fx else {"rate": "1.000000000", "rate_source": "ECB"}
+
+            if wht:
+                doc["withholding"] = _apply_wht_rate_derivation(wht, gross_eur)
+
+            if sales_type:
+                doc["sales_type"] = sales_type
+
+            if txn_type == "BUY":
+                doc["cost_basis_status"] = cost_basis_status or "COMPLETE"
+
+            leg_notes = leg.get("notes") or group_notes
+            if leg_notes:
+                doc["notes"] = leg_notes
+
+            docs_to_write.append(doc)
+
+        # ── Phase 1: Write replacement legs ─────────────────────────────────
+        created_new: List[Dict[str, Any]] = []
+        try:
+            for doc in docs_to_write:
+                written = self.portfolio_container.upsert_item(doc)
+                created_new.append(_clean(written))
+        except Exception as phase1_exc:
+            for written in created_new:
+                try:
+                    self.portfolio_container.delete_item(
+                        item=written["id"], partition_key=account_id
+                    )
+                except Exception:
+                    logger.warning(
+                        "ca_group_correction: compensation delete failed for %s", written["id"]
+                    )
+            raise ValueError(
+                f"ca_group_correction_failed: Failed writing replacement leg: {phase1_exc}"
+            ) from phase1_exc
+
+        # ── Phase 2: Supersede original legs ─────────────────────────────────
+        phase2_exc: Optional[Exception] = None
+        for orig in original_legs:
+            try:
+                orig_account = orig.get("account_id", account_id)
+                orig_doc = self.portfolio_container.read_item(
+                    item=orig["id"], partition_key=orig_account
+                )
+                orig_doc["correction_status"] = "SUPERSEDED"
+                orig_doc["superseded_by_ca_group_id"] = new_ca_group_id
+                orig_doc["updated_at"] = now
+                self.portfolio_container.replace_item(item=orig["id"], body=orig_doc)
+            except Exception as exc:
+                phase2_exc = exc
+                break
+
+        if phase2_exc is not None:
+            # Compensate: delete all replacement legs, preserve original state
+            for written in created_new:
+                try:
+                    self.portfolio_container.delete_item(
+                        item=written["id"], partition_key=account_id
+                    )
+                except Exception:
+                    logger.warning(
+                        "ca_group_correction: integrity compensation delete failed for %s",
+                        written["id"],
+                    )
+            raise ValueError(
+                f"integrity_error: Group correction partially failed superseding originals: "
+                f"{phase2_exc}. Replacement legs deleted; original group intact."
+            ) from phase2_exc
+
+        return {
+            "original_ca_group_id": ca_group_id,
+            "ca_group_id": new_ca_group_id,
+            "event_type": event_type,
+            "correction_note": correction_note,
+            "movements": created_new,
         }
 
     def get_movements(

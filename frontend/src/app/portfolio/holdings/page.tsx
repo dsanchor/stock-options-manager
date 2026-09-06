@@ -1,6 +1,6 @@
 import PortfolioHoldingsTable from "@/components/PortfolioHoldingsTable";
 
-export const metadata = { title: "Portfolio — Option Income Lab" };
+export const metadata = { title: "Portfolio — Portfolio Income Lab" };
 
 export default function HoldingsPage() {
   return (

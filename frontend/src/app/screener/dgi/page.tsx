@@ -3,7 +3,7 @@ import { apiFetch } from "@/lib/api";
 import type { DgiEntry, DgiTopResponse } from "@/types/dgi";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "DGI Screener — Option Income Lab" };
+export const metadata = { title: "DGI Screener — Portfolio Income Lab" };
 
 export default async function DgiPage() {
   let entries: DgiEntry[] = [];

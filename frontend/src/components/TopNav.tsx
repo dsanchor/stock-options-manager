@@ -94,7 +94,10 @@ export function TopNav() {
           <span className="grid h-8 w-8 place-items-center rounded-[10px] bg-[image:var(--grad-blue)] text-base text-white shadow-[var(--shadow-glow-blue)] transition-transform group-hover:scale-105">
             <FlaskConical size={17} />
           </span>
-          <span className="text-gradient">Option Income Lab</span>
+          <span className="flex flex-col leading-tight">
+            <span className="text-gradient">Portfolio Income Lab</span>
+            <span className="hidden text-[0.65rem] font-normal text-text-muted sm:block">DGI, Dividends &amp; Options</span>
+          </span>
         </Link>
 
         {/* Desktop nav */}

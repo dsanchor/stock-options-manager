@@ -403,3 +403,556 @@ class TestWriteLedgerTxnSafetyGuard:
         # Should not raise — guard skipped when account_id is absent
         result = svc.write_ledger_txn(doc)
         assert result["id"] == "mvt_no_acct_001"
+
+
+# ===========================================================================
+# C-1 through C-15: Full-correction field matrix (Danny contract §F.1)
+# ===========================================================================
+
+def _seed_full(fake, mid, txn_type="BUY", quantity="100", gross_eur="18250",
+               commission_eur="7.50", security_id="XNYS:AAPL", account_id="_unassigned",
+               trade_date="2024-01-15", withholding=None, sales_type=None,
+               cost_basis_status="COMPLETE", notes=None, currency="EUR",
+               quantity_override=None):
+    """Seed a full movement document for field-matrix tests."""
+    ticker = security_id.split(":")[-1]
+    qty = quantity_override if quantity_override is not None else quantity
+    gross_d = Decimal(gross_eur)
+    fees_d = Decimal(commission_eur)
+    wht_s = Decimal("0")
+    wht_d_val = Decimal("0")
+    if isinstance(withholding, dict):
+        wht_s = Decimal(str((withholding.get("source") or {}).get("amount_eur", "0")))
+        dst = withholding.get("destination")
+        if dst is not None:
+            wht_d_val = Decimal(str(dst.get("amount_eur", "0")))
+    net = gross_d - fees_d - wht_s - wht_d_val
+    doc = {
+        "id": mid,
+        "doc_type": "ledger_txn",
+        "txn_type": txn_type,
+        "security_id": security_id,
+        "ticker": ticker,
+        "trade_date": trade_date,
+        "quantity": qty,
+        "gross": {"amount": gross_eur, "currency": currency, "eur_amount": gross_eur},
+        "fees": {"total": commission_eur, "currency": currency, "total_eur": commission_eur},
+        "net": {
+            "amount": str(net.quantize(Decimal("0.000001"))),
+            "currency": currency,
+            "eur_amount": str(net.quantize(Decimal("0.000001"))),
+        },
+        "account_id": account_id,
+        "correction_status": "ACTIVE",
+        "import_source": "csv_import",
+        "created_at": "2026-09-06T10:00:00Z",
+        "warnings": [],
+    }
+    if withholding is not None:
+        doc["withholding"] = withholding
+    if txn_type == "SELL" and sales_type:
+        doc["sales_type"] = sales_type
+    if txn_type == "BUY" and cost_basis_status:
+        doc["cost_basis_status"] = cost_basis_status
+    if notes:
+        doc["notes"] = notes
+    fake.portfolio_container._store[mid] = doc
+    return doc
+
+
+class TestFullCorrectionFieldMatrix:
+    """C-1 through C-13: Field-matrix corrections per Danny contract §F.1."""
+
+    # ── C-1: BUY — gross + fees override with net recompute ──────────────
+    def test_c1_buy_gross_fees_override(self, client):
+        c, fake = client
+        _seed_full(fake, "c1_001", txn_type="BUY",
+                   gross_eur="18250", commission_eur="7.50")
+        resp = c.post("/api/portfolio/movements/c1_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Wrong gross and fees",
+            "gross": {"amount": "17000", "currency": "EUR", "eur_amount": "17000"},
+            "fees": {"total": "5.00", "currency": "EUR", "total_eur": "5.00"},
+        })
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        repl = data["replacement"]
+        assert repl["gross"]["eur_amount"] == "17000", "gross should be updated"
+        assert repl["fees"]["total_eur"] == "5.00", "fees should be updated"
+        net_expected = Decimal("17000") - Decimal("5.00")
+        assert Decimal(repl["net"]["eur_amount"]) == net_expected, (
+            f"net should be recomputed as {net_expected}, got {repl['net']['eur_amount']}"
+        )
+
+    # ── C-2: BUY — cost_basis_status INCOMPLETE→COMPLETE ─────────────────
+    def test_c2_buy_cost_basis_status_change(self, client):
+        c, fake = client
+        orig = _seed_full(fake, "c2_001", txn_type="BUY", cost_basis_status="INCOMPLETE")
+        orig["cost_basis_status"] = "INCOMPLETE"
+        fake.portfolio_container._store["c2_001"] = orig
+        resp = c.post("/api/portfolio/movements/c2_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Completing cost basis",
+            "cost_basis_status": "COMPLETE",
+        })
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["replacement"]["cost_basis_status"] == "COMPLETE"
+
+    # ── C-3: SELL — withholding source added ─────────────────────────────
+    def test_c3_sell_withholding_source_added(self, client):
+        c, fake = client
+        _seed_full(fake, "c3_001", txn_type="SELL", sales_type="ACCIONES",
+                   gross_eur="5000", commission_eur="3.00")
+        resp = c.post("/api/portfolio/movements/c3_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Adding source withholding",
+            "withholding": {
+                "source": {"country": "US", "rate_pct": "15", "amount_eur": "45.30"},
+            },
+        })
+        assert resp.status_code == 200, resp.text
+        repl = resp.json()["replacement"]
+        assert repl["withholding"]["source"]["amount_eur"] == "45.30"
+        # net = 5000 - 3.00 - 45.30 = 4951.70
+        net_expected = Decimal("5000") - Decimal("3.00") - Decimal("45.30")
+        assert Decimal(repl["net"]["eur_amount"]) == net_expected
+
+    # ── C-4: SELL — sales_type ACCIONES→DERECHOS ─────────────────────────
+    def test_c4_sell_sales_type_acciones_to_derechos(self, client):
+        c, fake = client
+        _seed_full(fake, "c4_001", txn_type="SELL", sales_type="ACCIONES")
+        resp = c.post("/api/portfolio/movements/c4_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Was a rights sale not a share sale",
+            "sales_type": "DERECHOS",
+        })
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["replacement"]["sales_type"] == "DERECHOS"
+
+    # ─────────────────────────────────────────────────────────────────────
+    # C-5 through C-7, C-10, C-12, C-13: DIVIDEND — ⚠️ PENDING AMENDMENT
+    # Danny's in-flight amendment redefines the DIVIDEND model:
+    #   • Withholding amounts user-entered; rate_pct auto-calculated (not stored as input)
+    #   • DIVIDEND may be a linked COMPOSITE corporate action:
+    #       residual cash leg + partial rights sale + shares from remaining rights
+    #       + optional investor cash top-up to round whole shares
+    #   • Multiple linked movements MUST NOT be flattened; quantity/cost must not be fabricated
+    # These tests exercise the CURRENT single-movement model (contract v1 §B.4/B.5).
+    # Do NOT base new DIVIDEND creation or composite-correction UI on these.
+    # Will be revised once the amended contract lands.
+    # ─────────────────────────────────────────────────────────────────────
+
+    # ── C-5: DIVIDEND — withholding destination null→value ───────────────
+    def test_c5_dividend_wht_dest_null_to_value(self, client):
+        c, fake = client
+        _seed_full(fake, "c5_001", txn_type="DIVIDEND",
+                   gross_eur="300", commission_eur="0",
+                   withholding={"source": {"country": "US", "rate_pct": "15", "amount_eur": "45"},
+                                "destination": None})
+        resp = c.post("/api/portfolio/movements/c5_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Adding destination withholding",
+            "withholding": {
+                "source": {"country": "US", "rate_pct": "15", "amount_eur": "45"},
+                "destination": {"country": "ES", "rate_pct": "19", "amount_eur": "57"},
+            },
+        })
+        assert resp.status_code == 200, resp.text
+        repl = resp.json()["replacement"]
+        assert repl["withholding"]["destination"]["amount_eur"] == "57"
+        # net = 300 - 0 - 45 - 57 = 198
+        assert Decimal(repl["net"]["eur_amount"]) == Decimal("198")
+
+    # ── C-6: DIVIDEND — withholding destination value→null ───────────────
+    def test_c6_dividend_wht_dest_value_to_null(self, client):
+        c, fake = client
+        _seed_full(fake, "c6_001", txn_type="DIVIDEND",
+                   gross_eur="300", commission_eur="0",
+                   withholding={"source": {"country": "US", "rate_pct": "15", "amount_eur": "45"},
+                                "destination": {"country": "ES", "rate_pct": "19", "amount_eur": "57"}})
+        resp = c.post("/api/portfolio/movements/c6_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Clearing destination WHT — not captured",
+            "withholding": {
+                "source": {"country": "US", "rate_pct": "15", "amount_eur": "45"},
+                "destination": None,
+            },
+        })
+        assert resp.status_code == 200, resp.text
+        repl = resp.json()["replacement"]
+        assert repl["withholding"]["destination"] is None
+        # net = 300 - 0 - 45 - 0 = 255  (destination null → 0 in formula)
+        assert Decimal(repl["net"]["eur_amount"]) == Decimal("255")
+
+    # ── C-7: DIVIDEND — withholding destination zero ──────────────────────
+    def test_c7_dividend_wht_dest_zero(self, client):
+        c, fake = client
+        _seed_full(fake, "c7_001", txn_type="DIVIDEND",
+                   gross_eur="300", commission_eur="0",
+                   withholding={"source": {"country": "US", "rate_pct": "15", "amount_eur": "45"},
+                                "destination": None})
+        resp = c.post("/api/portfolio/movements/c7_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Confirmed zero destination",
+            "withholding": {
+                "source": {"country": "US", "rate_pct": "15", "amount_eur": "45"},
+                "destination": {"country": "ES", "rate_pct": "0", "amount_eur": "0"},
+            },
+        })
+        assert resp.status_code == 200, resp.text
+        repl = resp.json()["replacement"]
+        dst = repl["withholding"]["destination"]
+        assert dst is not None
+        assert dst["amount_eur"] == "0"
+        # net = 300 - 0 - 45 - 0 = 255  (same as null-destination case)
+        assert Decimal(repl["net"]["eur_amount"]) == Decimal("255")
+
+    # ── C-8: gross change → net recomputed using original fees ────────────
+    def test_c8_gross_change_triggers_net_recompute(self, client):
+        c, fake = client
+        _seed_full(fake, "c8_001", txn_type="BUY",
+                   gross_eur="10000", commission_eur="5.00")
+        resp = c.post("/api/portfolio/movements/c8_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Gross was wrong",
+            "gross": {"amount": "9000", "currency": "EUR", "eur_amount": "9000"},
+        })
+        assert resp.status_code == 200, resp.text
+        repl = resp.json()["replacement"]
+        # net = new_gross 9000 - original_fees 5.00 = 8995.00
+        assert Decimal(repl["net"]["eur_amount"]) == Decimal("8995.00")
+        assert repl["gross"]["eur_amount"] == "9000"
+
+    # ── C-9: fees change → net recomputed using original gross ────────────
+    def test_c9_fees_change_triggers_net_recompute(self, client):
+        c, fake = client
+        _seed_full(fake, "c9_001", txn_type="SELL", sales_type="ACCIONES",
+                   gross_eur="5000", commission_eur="3.00")
+        resp = c.post("/api/portfolio/movements/c9_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Fees were wrong",
+            "fees": {"total": "10.00", "currency": "EUR", "total_eur": "10.00"},
+        })
+        assert resp.status_code == 200, resp.text
+        repl = resp.json()["replacement"]
+        # net = original_gross 5000 - new_fees 10.00 = 4990.00
+        assert Decimal(repl["net"]["eur_amount"]) == Decimal("4990.00")
+        assert repl["fees"]["total_eur"] == "10.00"
+
+    # ── C-10: withholding change → net recomputed ─────────────────────────
+    def test_c10_withholding_change_triggers_net_recompute(self, client):
+        c, fake = client
+        _seed_full(fake, "c10_001", txn_type="DIVIDEND",
+                   gross_eur="1000", commission_eur="0",
+                   withholding={"source": {"country": "US", "rate_pct": "15", "amount_eur": "150"},
+                                "destination": {"country": "ES", "rate_pct": "10", "amount_eur": "100"}})
+        resp = c.post("/api/portfolio/movements/c10_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Withholding amounts corrected",
+            "withholding": {
+                "source": {"country": "US", "rate_pct": "15", "amount_eur": "100"},
+                "destination": {"country": "ES", "rate_pct": "19", "amount_eur": "190"},
+            },
+        })
+        assert resp.status_code == 200, resp.text
+        repl = resp.json()["replacement"]
+        # net = 1000 - 0 - 100 - 190 = 710
+        assert Decimal(repl["net"]["eur_amount"]) == Decimal("710")
+
+    # ── C-11: FX override ─────────────────────────────────────────────────
+    def test_c11_fx_override(self, client):
+        c, fake = client
+        orig = _seed_full(fake, "c11_001", txn_type="BUY")
+        orig["fx"] = {"rate": "1.050000000", "rate_source": "ECB"}
+        fake.portfolio_container._store["c11_001"] = orig
+        resp = c.post("/api/portfolio/movements/c11_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Wrong FX rate",
+            "fx": {"rate": "1.085000000", "rate_source": "MANUAL"},
+        })
+        assert resp.status_code == 200, resp.text
+        repl = resp.json()["replacement"]
+        assert repl["fx"]["rate"] == "1.085000000"
+        assert repl["fx"]["rate_source"] == "MANUAL"
+
+    # ── C-12: DIVIDEND quantity null preserved when not provided ──────────
+    def test_c12_dividend_quantity_null_preserved(self, client):
+        c, fake = client
+        orig = _seed_full(fake, "c12_001", txn_type="DIVIDEND",
+                          gross_eur="200", commission_eur="0")
+        orig["quantity"] = None  # simulate null quantity on a DIVIDEND
+        fake.portfolio_container._store["c12_001"] = orig
+        # Correct trade_date only — do not touch quantity
+        resp = c.post("/api/portfolio/movements/c12_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Fixing payment date",
+            "trade_date": "2024-03-15",
+        })
+        assert resp.status_code == 200, resp.text
+        repl = resp.json()["replacement"]
+        assert repl.get("quantity") is None, (
+            "DIVIDEND null quantity must be preserved when quantity not in correction body"
+        )
+        assert repl["trade_date"] == "2024-03-15"
+
+    # ── C-13: DIVIDEND quantity null→value via correction ─────────────────
+    def test_c13_dividend_quantity_null_to_value(self, client):
+        c, fake = client
+        orig = _seed_full(fake, "c13_001", txn_type="DIVIDEND",
+                          gross_eur="200", commission_eur="0")
+        orig["quantity"] = None
+        fake.portfolio_container._store["c13_001"] = orig
+        resp = c.post("/api/portfolio/movements/c13_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Setting quantity from statement",
+            "quantity": "150",
+        })
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["replacement"]["quantity"] == "150"
+
+
+class TestFullCorrectionValidation:
+    """C-14 through C-15: Validation and rejection per Danny contract §F.1.
+
+    C-14a/b use DIVIDEND movements to test withholding structure rules.
+    NOTE: The withholding field shape for DIVIDEND is subject to Danny's in-flight
+    amendment (amount user-entered, rate_pct auto-calculated). The structural rule
+    that amount_eur is required when source/destination is non-null is expected to
+    remain valid; the rate_pct direction may change. Revisit after amendment lands.
+    """
+
+    # ── C-14a: invalid withholding structure — source missing amount_eur ──
+    def test_c14_invalid_withholding_source_missing_amount_eur(self, client):
+        c, fake = client
+        _seed_full(fake, "c14_001", txn_type="DIVIDEND",
+                   gross_eur="300", commission_eur="0")
+        resp = c.post("/api/portfolio/movements/c14_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Bad withholding",
+            "withholding": {
+                "source": {"country": "US", "rate_pct": "15"},  # missing amount_eur
+            },
+        })
+        assert resp.status_code == 400, resp.text
+        data = resp.json()
+        assert data["error"] == "validation_error"
+        assert "amount_eur" in data["detail"]
+
+    # ── C-14b: invalid withholding — not an object ────────────────────────
+    def test_c14b_invalid_withholding_not_object(self, client):
+        c, fake = client
+        _seed_full(fake, "c14b_001", txn_type="DIVIDEND",
+                   gross_eur="300", commission_eur="0")
+        resp = c.post("/api/portfolio/movements/c14b_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Bad withholding",
+            "withholding": "not-an-object",
+        })
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "validation_error"
+
+    # ── C-14c: invalid sales_type ─────────────────────────────────────────
+    def test_c14c_invalid_sales_type_value(self, client):
+        c, fake = client
+        _seed_full(fake, "c14c_001", txn_type="SELL", sales_type="ACCIONES")
+        resp = c.post("/api/portfolio/movements/c14c_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Bad sales type",
+            "sales_type": "OPTIONS",  # invalid
+        })
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "validation_error"
+
+    # ── C-14d: BUY with withholding → rejected ────────────────────────────
+    def test_c14d_buy_with_withholding_rejected(self, client):
+        c, fake = client
+        _seed_full(fake, "c14d_001", txn_type="BUY")
+        resp = c.post("/api/portfolio/movements/c14d_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "BUY should not have withholding",
+            "withholding": {
+                "source": {"country": "US", "rate_pct": "15", "amount_eur": "10"},
+            },
+        })
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["error"] == "validation_error"
+        assert "BUY" in data["detail"]
+
+    # ── C-14e: SELL with cost_basis_status → rejected ─────────────────────
+    def test_c14e_sell_with_cost_basis_status_rejected(self, client):
+        c, fake = client
+        _seed_full(fake, "c14e_001", txn_type="SELL", sales_type="ACCIONES")
+        resp = c.post("/api/portfolio/movements/c14e_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "SELL should not have cost_basis_status",
+            "cost_basis_status": "COMPLETE",
+        })
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "validation_error"
+
+    # ── C-14f: DIVIDEND with sales_type → rejected ────────────────────────
+    def test_c14f_dividend_with_sales_type_rejected(self, client):
+        c, fake = client
+        _seed_full(fake, "c14f_001", txn_type="DIVIDEND",
+                   gross_eur="200", commission_eur="0")
+        resp = c.post("/api/portfolio/movements/c14f_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "DIVIDEND should not have sales_type",
+            "sales_type": "ACCIONES",
+        })
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "validation_error"
+
+    # ── C-14g: FX rate = 0 → rejected ────────────────────────────────────
+    def test_c14g_fx_rate_zero_rejected(self, client):
+        c, fake = client
+        _seed_full(fake, "c14g_001", txn_type="BUY")
+        resp = c.post("/api/portfolio/movements/c14g_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Bad FX rate",
+            "fx": {"rate": "0", "rate_source": "ECB"},
+        })
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["error"] == "validation_error"
+        assert "rate" in data["detail"].lower()
+
+    # ── C-14h: FX invalid rate_source → rejected ──────────────────────────
+    def test_c14h_fx_invalid_rate_source_rejected(self, client):
+        c, fake = client
+        _seed_full(fake, "c14h_001", txn_type="BUY")
+        resp = c.post("/api/portfolio/movements/c14h_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Bad FX source",
+            "fx": {"rate": "1.1", "rate_source": "UNKNOWN"},
+        })
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "validation_error"
+
+    # ── C-14i: gross missing sub-field ────────────────────────────────────
+    def test_c14i_gross_missing_eur_amount(self, client):
+        c, fake = client
+        _seed_full(fake, "c14i_001", txn_type="BUY")
+        resp = c.post("/api/portfolio/movements/c14i_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Partial gross",
+            "gross": {"amount": "1000", "currency": "EUR"},  # missing eur_amount
+        })
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["error"] == "validation_error"
+        assert "eur_amount" in data["detail"]
+
+    # ── C-14j: negative quantity → rejected ───────────────────────────────
+    def test_c14j_negative_quantity_rejected(self, client):
+        c, fake = client
+        _seed_full(fake, "c14j_001", txn_type="BUY")
+        resp = c.post("/api/portfolio/movements/c14j_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Negative quantity",
+            "quantity": "-10",
+        })
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "validation_error"
+
+    # ── C-14k: null quantity on BUY → rejected ────────────────────────────
+    def test_c14k_null_quantity_on_buy_rejected(self, client):
+        c, fake = client
+        _seed_full(fake, "c14k_001", txn_type="BUY")
+        resp = c.post("/api/portfolio/movements/c14k_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Null quantity on BUY",
+            "quantity": None,
+        })
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "validation_error"
+
+    # ── C-15: TRANSFER correction → 405 ──────────────────────────────────
+    def test_c15_transfer_correction_returns_405(self, client):
+        c, fake = client
+        # Seed a TRANSFER_OUT movement
+        fake.portfolio_container._store["c15_t_out"] = {
+            "id": "c15_t_out",
+            "doc_type": "ledger_txn",
+            "txn_type": "TRANSFER_OUT",
+            "security_id": "XNYS:AAPL",
+            "ticker": "AAPL",
+            "trade_date": "2024-01-15",
+            "quantity": "100",
+            "gross": {"amount": "0", "currency": "EUR", "eur_amount": "0"},
+            "fees": {"total": "0", "currency": "EUR", "total_eur": "0"},
+            "net": {"amount": "0", "currency": "EUR", "eur_amount": "0"},
+            "account_id": "_unassigned",
+            "correction_status": "ACTIVE",
+            "import_source": "manual",
+            "created_at": "2026-09-06T10:00:00Z",
+            "warnings": [],
+        }
+        resp = c.post("/api/portfolio/movements/c15_t_out/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Trying to correct a transfer",
+        })
+        assert resp.status_code == 405, resp.text
+        data = resp.json()
+        assert data["error"] == "transfer_not_correctable"
+
+    def test_c15_transfer_in_correction_returns_405(self, client):
+        c, fake = client
+        fake.portfolio_container._store["c15_t_in"] = {
+            "id": "c15_t_in",
+            "doc_type": "ledger_txn",
+            "txn_type": "TRANSFER_IN",
+            "security_id": "XNYS:AAPL",
+            "ticker": "AAPL",
+            "trade_date": "2024-01-15",
+            "quantity": "100",
+            "gross": {"amount": "0", "currency": "EUR", "eur_amount": "0"},
+            "fees": {"total": "0", "currency": "EUR", "total_eur": "0"},
+            "net": {"amount": "0", "currency": "EUR", "eur_amount": "0"},
+            "account_id": "_unassigned",
+            "correction_status": "ACTIVE",
+            "import_source": "manual",
+            "created_at": "2026-09-06T10:00:00Z",
+            "warnings": [],
+        }
+        resp = c.post("/api/portfolio/movements/c15_t_in/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Trying to correct a transfer",
+        })
+        assert resp.status_code == 405
+        assert resp.json()["error"] == "transfer_not_correctable"
+
+
+class TestCorrectionImportSourceProvenence:
+    """Replacement always has import_source=manual; original preserves its original source."""
+
+    def test_replacement_import_source_is_manual(self, client):
+        c, fake = client
+        doc = _seed_full(fake, "prov_001", txn_type="BUY")
+        doc["import_source"] = "csv_import"
+        fake.portfolio_container._store["prov_001"] = doc
+        resp = c.post("/api/portfolio/movements/prov_001/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Provenance test",
+            "quantity": "50",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["replacement"]["import_source"] == "manual"
+        assert data["original"]["import_source"] == "csv_import"
+
+    def test_original_import_source_preserved(self, client):
+        c, fake = client
+        doc = _seed_full(fake, "prov_002", txn_type="SELL", sales_type="ACCIONES")
+        doc["import_source"] = "csv_import"
+        fake.portfolio_container._store["prov_002"] = doc
+        resp = c.post("/api/portfolio/movements/prov_002/correct", json={
+            "account_id": "_unassigned",
+            "correction_note": "Provenance test on SELL",
+            "quantity": "80",
+        })
+        assert resp.status_code == 200
+        # Original in store should still have csv_import
+        stored_orig = fake.portfolio_container._store["prov_002"]
+        assert stored_orig["import_source"] == "csv_import"

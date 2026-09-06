@@ -1,3 +1,7 @@
+/**
+ * @deprecated Replaced by StockTransactionsTable (Amendment I).
+ * No longer rendered on the symbol detail page. Preserved for backward compat.
+ */
 import Link from "next/link";
 import type { RecentMovement } from "@/types/symbol-detail";
 
@@ -13,6 +17,11 @@ const TXN_LABELS: Record<string, { label: string; cls: string }> = {
   DIVIDEND: { label: "Dividend", cls: "text-accent-blue border-accent-blue/40 bg-accent-blue/10" },
   TRANSFER_IN: { label: "In", cls: "text-text-muted border-border bg-bg-input" },
   TRANSFER_OUT: { label: "Out", cls: "text-text-muted border-border bg-bg-input" },
+};
+
+const SALES_TYPE_LABELS: Record<string, string> = {
+  ACCIONES: "Shares",
+  DERECHOS: "Rights",
 };
 
 function eur(v: string | null | undefined): string {
@@ -33,7 +42,7 @@ export default function SymbolMovementsTable({ movements, movementCount, securit
   if (movements.length === 0) {
     return (
       <div className="surface rounded-[var(--radius)] border border-border p-4">
-        <h3 className="mb-2 text-sm font-semibold text-text">Recent Movements</h3>
+        <h3 className="mb-2 text-sm font-semibold text-text">Stock Movements</h3>
         <p className="text-sm text-text-muted">No movements recorded.</p>
       </div>
     );
@@ -47,7 +56,7 @@ export default function SymbolMovementsTable({ movements, movementCount, securit
     <div className="surface rounded-[var(--radius)] border border-border overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/60">
         <h3 className="text-sm font-semibold text-text">
-          Recent Movements
+          Stock Movements
           {movementCount !== undefined && movementCount > movements.length && (
             <span className="ml-1.5 text-xs font-normal text-text-muted">
               (showing {movements.length} of {movementCount})
@@ -62,28 +71,31 @@ export default function SymbolMovementsTable({ movements, movementCount, securit
         </Link>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[480px] text-sm">
+        <table className="w-full min-w-[540px] text-sm">
           <thead>
             <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-muted">
               <th className="px-4 py-2 font-medium">Date</th>
               <th className="px-4 py-2 font-medium">Type</th>
               <th className="px-4 py-2 font-medium text-right">Qty</th>
-              <th className="px-4 py-2 font-medium text-right">Amount (EUR)</th>
+              <th className="px-4 py-2 font-medium text-right">Gross (EUR)</th>
+              <th className="px-4 py-2 font-medium text-right">Net (EUR)</th>
             </tr>
           </thead>
           <tbody>
             {movements.map((m) => {
               const meta = TXN_LABELS[m.txn_type] ?? { label: m.txn_type, cls: "text-text-muted border-border bg-bg-input" };
+              const salesSuffix = m.sales_type ? ` · ${SALES_TYPE_LABELS[m.sales_type] ?? m.sales_type}` : "";
               return (
                 <tr key={m.id} className="border-b border-border/40 last:border-0">
                   <td className="px-4 py-2 font-mono text-xs text-text-muted">{m.trade_date}</td>
                   <td className="px-4 py-2">
                     <span className={`inline-block rounded-[var(--radius-pill)] border px-2 py-0.5 text-xs ${meta.cls}`}>
-                      {meta.label}
+                      {meta.label}{salesSuffix}
                     </span>
                   </td>
                   <td className="px-4 py-2 text-right font-mono text-xs">{qty(m.quantity)}</td>
                   <td className="px-4 py-2 text-right font-mono text-xs">{eur(m.gross_eur)}</td>
+                  <td className="px-4 py-2 text-right font-mono text-xs text-text-muted">{eur(m.net_eur)}</td>
                 </tr>
               );
             })}

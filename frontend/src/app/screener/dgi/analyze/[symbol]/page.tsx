@@ -11,7 +11,7 @@ export async function generateMetadata({
   params: Promise<{ symbol: string }>;
 }) {
   const { symbol } = await params;
-  return { title: `DGI Analysis — ${symbol.toUpperCase()} — Option Income Lab` };
+  return { title: `DGI Analysis — ${symbol.toUpperCase()} — Portfolio Income Lab` };
 }
 
 export default async function DgiAnalyzePage({

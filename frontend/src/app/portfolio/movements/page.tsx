@@ -1,6 +1,6 @@
 import PortfolioMovementsTable from "@/components/PortfolioMovementsTable";
 
-export const metadata = { title: "Movements — Option Income Lab" };
+export const metadata = { title: "Movements — Portfolio Income Lab" };
 
 export default function MovementsPage() {
   return (

@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { X, History } from "lucide-react";
+import { X, History, Link2, Trash2 } from "lucide-react";
 import type { LedgerMovement, WarningType } from "@/types/portfolio";
+import { SALES_TYPE_LABELS } from "@/types/portfolio";
+import { getMovements, voidCorporateActionGroup } from "@/lib/portfolio-api";
 import MovementCorrectionDialog from "./MovementCorrectionDialog";
 import ReassignmentDialog from "./ReassignmentDialog";
+import CorporateActionForm, { buildCaInitialState } from "./CorporateActionForm";
 
 const TXN_BADGE: Record<string, string> = {
   BUY: "bg-accent-green/15 text-accent-green",
@@ -57,9 +60,38 @@ export interface MovementDetailDialogProps {
   onRefresh: () => void;
 }
 
+const CA_LEG_BADGE: Record<string, string> = {
+  CASH_DIVIDEND: "bg-accent-blue/15 text-accent-blue",
+  RIGHTS_SOLD: "bg-accent-red/15 text-accent-red",
+  SHARE_ACQUISITION: "bg-accent-green/15 text-accent-green",
+  CASH_TOP_UP: "bg-accent-orange/15 text-accent-orange",
+};
+const CA_LEG_LABEL: Record<string, string> = {
+  CASH_DIVIDEND: "Cash Dividend",
+  RIGHTS_SOLD: "Rights Sold",
+  SHARE_ACQUISITION: "Share Acquisition",
+  CASH_TOP_UP: "Cash Top-Up",
+};
+const CA_EVENT_LABEL: Record<string, string> = {
+  CASH_DIVIDEND: "Cash Dividend",
+  DIVIDEND_WITH_SCRIP: "Dividend with Scrip",
+  SCRIP_DIVIDEND: "Scrip Dividend",
+  RIGHTS_ISSUE: "Rights Issue",
+};
+
 export default function MovementDetailDialog({ movement: m, onClose, onRefresh }: MovementDetailDialogProps) {
   const [showCorrect, setShowCorrect] = useState(false);
   const [showReassign, setShowReassign] = useState(false);
+  const [showGroupCorrect, setShowGroupCorrect] = useState(false);
+
+  // Corporate action group state
+  const [groupLegs, setGroupLegs] = useState<LedgerMovement[] | null>(null);
+  const [groupLoading, setGroupLoading] = useState(false);
+  const [groupError, setGroupError] = useState<string | null>(null);
+  const [voidConfirm, setVoidConfirm] = useState(false);
+  const [voidReason, setVoidReason] = useState("");
+  const [voiding, setVoiding] = useState(false);
+  const [voidError, setVoidError] = useState<string | null>(null);
 
   const handleClose = useCallback(() => onClose(), [onClose]);
 
@@ -69,7 +101,82 @@ export default function MovementDetailDialog({ movement: m, onClose, onRefresh }
     return () => document.removeEventListener("keydown", onKey);
   }, [handleClose]);
 
+  // Fetch sibling legs when this is a CA group member
+  useEffect(() => {
+    if (!m.ca_group_id) return;
+    setGroupLoading(true);
+    setGroupError(null);
+    getMovements({ security_id: m.security_id, ca_group_id: m.ca_group_id, limit: 20 })
+      .then((r) => setGroupLegs(r.movements))
+      .catch(() => setGroupError("Could not load group legs."))
+      .finally(() => setGroupLoading(false));
+  }, [m.ca_group_id, m.security_id]);
+
+  async function handleVoidGroup() {
+    if (!m.ca_group_id) return;
+    setVoiding(true);
+    setVoidError(null);
+    try {
+      await voidCorporateActionGroup(m.ca_group_id, {
+        account_id: m.account_id,
+        reason: voidReason.trim() || "User-initiated void",
+      });
+      setVoidConfirm(false);
+      onRefresh();
+      onClose();
+    } catch (err) {
+      const e = err as { data?: { detail?: string } };
+      setVoidError(e.data?.detail ?? (err instanceof Error ? err.message : "Void failed."));
+    } finally {
+      setVoiding(false);
+    }
+  }
+
   const importSourceLabel = m.import_source === "csv_import" ? "CSV Import" : "Manual";
+
+  if (showGroupCorrect && m.ca_group_id) {
+    return (
+      <div
+        className="fixed inset-0 z-[200] flex items-start justify-center overflow-auto bg-black/60 p-4"
+        onClick={() => setShowGroupCorrect(false)}
+      >
+        <div
+          className="mt-12 mb-12 w-full max-w-[700px] rounded-[var(--radius)] border border-border bg-bg-card"
+          onClick={(e) => e.stopPropagation()}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Replace corporate action group"
+        >
+          <div className="flex items-center justify-between border-b border-border px-5 py-3">
+            <div>
+              <h3 className="text-base font-semibold text-text">Replace corporate action group</h3>
+              <p className="text-xs text-text-muted mt-0.5">
+                All legs are replaced atomically. Original group preserved as SUPERSEDED audit trail.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowGroupCorrect(false)}
+              aria-label="Close"
+              className="rounded-[var(--radius)] p-1 text-text-muted hover:bg-bg-hover hover:text-text transition-colors"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <div className="px-5 py-4 overflow-y-auto max-h-[80vh]">
+            <CorporateActionForm
+              mode="correct"
+              caGroupId={m.ca_group_id}
+              initialState={buildCaInitialState(groupLegs ?? [m], m)}
+              accounts={[]}
+              securities={[]}
+              onSuccess={() => { setShowGroupCorrect(false); onRefresh(); onClose(); }}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (showCorrect) {
     return (
@@ -143,7 +250,7 @@ export default function MovementDetailDialog({ movement: m, onClose, onRefresh }
           {/* Core fields */}
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
             <Field label="Date" value={m.trade_date} mono />
-            <Field label="Security ID" value={m.security_id} mono />
+            <Field label="Symbol ID" value={m.security_id} mono />
             <Field label="Account" value={accountDisplay(m.account_id)} />
             {m.quantity != null && (
               <Field
@@ -155,7 +262,7 @@ export default function MovementDetailDialog({ movement: m, onClose, onRefresh }
             {m.txn_type === "SELL" && (
               <Field
                 label="Sale type"
-                value={m.sales_type === "DERECHOS" ? "Derechos (rights)" : m.sales_type === "ACCIONES" ? "Acciones (shares)" : null}
+                value={m.sales_type != null ? (SALES_TYPE_LABELS[m.sales_type] ?? m.sales_type) : null}
               />
             )}
           </div>
@@ -202,7 +309,7 @@ export default function MovementDetailDialog({ movement: m, onClose, onRefresh }
           {/* Derechos note */}
           {m.txn_type === "SELL" && m.sales_type === "DERECHOS" && (
             <div className="rounded-[var(--radius)] border border-accent-blue/20 bg-accent-blue/5 px-4 py-2 text-xs text-text-muted">
-              ℹ Rights (derechos) sale: proceeds are recorded but <strong className="text-text">share quantity is not reduced</strong> — rights entitlements are separate from ordinary share ownership.
+              ℹ Rights sale: proceeds are recorded but <strong className="text-text">share quantity is not reduced</strong> — rights entitlements are separate from ordinary share ownership.
             </div>
           )}
 
@@ -252,6 +359,140 @@ export default function MovementDetailDialog({ movement: m, onClose, onRefresh }
             </div>
           )}
 
+          {/* Corporate action group panel */}
+          {m.ca_group_id && (
+            <div>
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+                <Link2 size={12} className="text-accent-blue" />
+                Corporate action group
+              </div>
+              <div className="rounded-[var(--radius)] border border-accent-blue/20 bg-accent-blue/5 px-4 py-3 space-y-3">
+                {/* Group meta */}
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  {m.ca_event_type && (
+                    <div>
+                      <div className="text-text-muted mb-0.5">Event type</div>
+                      <div className="font-medium text-text">{CA_EVENT_LABEL[m.ca_event_type] ?? m.ca_event_type}</div>
+                    </div>
+                  )}
+                  {m.ca_leg_type && (
+                    <div>
+                      <div className="text-text-muted mb-0.5">This leg</div>
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${CA_LEG_BADGE[m.ca_leg_type] ?? "bg-bg-hover text-text-muted"}`}>
+                        {CA_LEG_LABEL[m.ca_leg_type] ?? m.ca_leg_type}
+                        {m.ca_group_seq != null ? ` #${m.ca_group_seq}` : ""}
+                      </span>
+                    </div>
+                  )}
+                  <div className="col-span-2">
+                    <div className="text-text-muted mb-0.5">Group ID</div>
+                    <div className="font-mono text-text-muted text-xs">{m.ca_group_id}</div>
+                  </div>
+                </div>
+
+                {/* Sibling legs */}
+                {groupLoading && (
+                  <div className="text-xs text-text-muted">Loading group legs…</div>
+                )}
+                {groupError && (
+                  <div className="text-xs text-accent-red">{groupError}</div>
+                )}
+                {groupLegs && groupLegs.length > 0 && (
+                  <div>
+                    <div className="text-xs text-text-muted mb-1.5 font-medium">All legs in this group</div>
+                    <div className="space-y-1">
+                      {groupLegs.map((leg) => (
+                        <div
+                          key={leg.id}
+                          className={`flex items-center gap-2 rounded-[var(--radius)] border px-3 py-1.5 text-xs ${
+                            leg.id === m.id
+                              ? "border-accent-blue/30 bg-accent-blue/5"
+                              : "border-border bg-bg-card/50"
+                          }`}
+                        >
+                          {leg.ca_leg_type && (
+                            <span className={`rounded-full px-1.5 py-0.5 font-medium ${CA_LEG_BADGE[leg.ca_leg_type] ?? "bg-bg-hover text-text-muted"}`}>
+                              {CA_LEG_LABEL[leg.ca_leg_type] ?? leg.ca_leg_type}
+                            </span>
+                          )}
+                          <span className="font-mono text-text-muted">{leg.trade_date}</span>
+                          {leg.quantity != null && (
+                            <span className="text-text">× {Number(leg.quantity).toLocaleString("en-US", { maximumFractionDigits: 4 })}</span>
+                          )}
+                          <span className="ml-auto font-mono text-text">
+                            €{Number(leg.gross?.eur_amount || "0").toLocaleString("es-ES", { minimumFractionDigits: 2 })}
+                          </span>
+                          {leg.correction_status && leg.correction_status !== "ACTIVE" && (
+                            <span className="text-accent-orange">{leg.correction_status}</span>
+                          )}
+                          {leg.id === m.id && (
+                            <span className="text-accent-blue font-medium">← this</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Group action buttons */}
+                <div className="flex flex-wrap gap-2">
+                  {/* Replace entire group */}
+                  <button
+                    type="button"
+                    onClick={() => setShowGroupCorrect(true)}
+                    className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-accent-blue/30 px-3 py-1 text-xs text-accent-blue hover:bg-accent-blue/5 transition-colors"
+                  >
+                    <History size={11} />
+                    Replace entire group
+                  </button>
+
+                  {/* Void group confirmation */}
+                  {!voidConfirm ? (
+                    <button
+                      type="button"
+                      onClick={() => setVoidConfirm(true)}
+                      className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-accent-red/30 px-3 py-1 text-xs text-accent-red hover:bg-accent-red/5 transition-colors"
+                    >
+                      <Trash2 size={11} />
+                      Void entire group
+                    </button>
+                  ) : (
+                    <div className="w-full space-y-2 rounded-[var(--radius)] border border-accent-red/30 bg-accent-red/5 p-3">
+                      <p className="text-xs font-medium text-accent-red">
+                        Void all {groupLegs?.length ?? "?"} legs in this group? This cannot be undone.
+                      </p>
+                      <input
+                        type="text"
+                        value={voidReason}
+                        onChange={(e) => setVoidReason(e.target.value)}
+                        placeholder="Reason (optional)"
+                        className="w-full rounded-[var(--radius)] border border-border bg-bg-input px-2 py-1 text-xs text-text placeholder:text-text-muted focus:border-accent-red focus:outline-none"
+                      />
+                      {voidError && <p className="text-xs text-accent-red">{voidError}</p>}
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={handleVoidGroup}
+                          disabled={voiding}
+                          className="rounded-[var(--radius)] bg-accent-red/15 px-3 py-1 text-xs text-accent-red hover:bg-accent-red/25 disabled:opacity-50"
+                        >
+                          {voiding ? "Voiding…" : "Confirm void"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setVoidConfirm(false); setVoidError(null); }}
+                          className="rounded-[var(--radius)] border border-border px-3 py-1 text-xs text-text-muted hover:bg-bg-hover"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Correction audit chain */}
           {(m.corrects_movement_id || m.superseded_by || m.correction_note) && (
             <div className="rounded-[var(--radius)] border border-accent-orange/20 bg-accent-orange/5 px-4 py-3 text-xs space-y-1">
@@ -276,14 +517,22 @@ export default function MovementDetailDialog({ movement: m, onClose, onRefresh }
 
         {/* Actions */}
         <div className="flex items-center justify-between gap-2 border-t border-border px-5 py-3">
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               type="button"
               onClick={() => setShowCorrect(true)}
-              className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-border px-3 py-1.5 text-xs text-text-muted hover:bg-bg-hover hover:text-text transition-colors"
+              disabled={m.txn_type === "TRANSFER_OUT" || m.txn_type === "TRANSFER_IN"}
+              title={
+                m.txn_type === "TRANSFER_OUT" || m.txn_type === "TRANSFER_IN"
+                  ? "Transfers cannot be corrected individually. Void the transfer pair and create a new one."
+                  : m.ca_group_id
+                  ? "Correct this leg only — group fields (ca_group_id, leg type) are preserved"
+                  : undefined
+              }
+              className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-border px-3 py-1.5 text-xs text-text-muted hover:bg-bg-hover hover:text-text transition-colors disabled:cursor-not-allowed disabled:opacity-40"
             >
               <History size={13} />
-              Correct movement
+              {m.ca_group_id ? "Correct this leg" : "Correct movement"}
             </button>
             <button
               type="button"

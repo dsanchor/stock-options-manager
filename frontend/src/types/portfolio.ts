@@ -18,6 +18,16 @@ export type SecurityStatus = "ACTIVE" | "DELISTED";
 export type FxRateSource = "ECB" | "BROKER" | "MANUAL";
 export type ImportSource = "csv_import" | "manual";
 
+// Amendment G: Display-only labels for sales_type enum values (internal enum stays ACCIONES/DERECHOS)
+export const SALES_TYPE_LABELS: Record<"ACCIONES" | "DERECHOS", string> = {
+  ACCIONES: "Stocks",
+  DERECHOS: "Rights",
+};
+
+// Amendment H: Corporate action group types (Phase H-α — linked ledger legs)
+export type CaLegType = "CASH_DIVIDEND" | "RIGHTS_SOLD" | "SHARE_ACQUISITION" | "CASH_TOP_UP";
+export type CaEventType = "DIVIDEND_WITH_SCRIP" | "SCRIP_DIVIDEND" | "RIGHTS_ISSUE" | "CASH_DIVIDEND";
+
 // ─── Security Master ─────────────────────────────────────────────────────────
 
 export interface SecurityAlias {
@@ -148,6 +158,12 @@ export interface LedgerMovement {
 
   // Phase 2: reassignment provenance
   reassigned_from?: { account_id: string; movement_id: string };
+
+  // Amendment H: corporate action group linkage (Phase H-α)
+  ca_group_id?: string;
+  ca_leg_type?: CaLegType;
+  ca_event_type?: CaEventType;
+  ca_group_seq?: number;
 }
 
 export interface MovementsResponse {
@@ -320,11 +336,13 @@ export interface MovementCorrectionRequest {
   correction_note: string;      // required for audit trail
   // Any corrected fields:
   trade_date?: string;
-  quantity?: string;
+  quantity?: string | null;     // null clears quantity (DIVIDEND only)
   gross?: AmountInput;
   fees?: FeesInput;
+  withholding?: WithholdingInput | null;   // null = clear; object = override both legs
   fx?: { rate: string; rate_source: FxRateSource };
   sales_type?: "ACCIONES" | "DERECHOS";
+  cost_basis_status?: CostBasisStatus;     // BUY only
   notes?: string;
 }
 
@@ -403,4 +421,66 @@ export interface FxRateResponse {
   rate: string;
   rate_source: string;
   note?: string | null;
+}
+
+// ─── Amendment H: Corporate Action Groups ────────────────────────────────────
+
+export interface CorporateActionLegRequest {
+  leg_type: CaLegType;
+  trade_date: string;                        // REQUIRED per leg
+  quantity?: string;                         // SHARE_ACQUISITION, RIGHTS_SOLD
+  gross?: AmountInput;
+  fees?: FeesInput | null;
+  withholding?: WithholdingInput | null;
+  fx?: { rate: string; rate_source: FxRateSource };
+  cost_basis_status?: CostBasisStatus;       // SHARE_ACQUISITION only
+  notes?: string;
+}
+
+/** POST /api/portfolio/corporate-actions */
+export interface CorporateActionCreateRequest {
+  event_type: CaEventType;                   // CASH_DIVIDEND | DIVIDEND_WITH_SCRIP | SCRIP_DIVIDEND | RIGHTS_ISSUE
+  security_id: string;
+  account_id: string;
+  payment_date: string;                      // REQUIRED; YYYY-MM-DD
+  ex_dividend_date?: string;                 // optional
+  notes?: string;                            // applied to all legs unless leg.notes set
+  legs: CorporateActionLegRequest[];
+}
+
+export interface CorporateActionCreateResponse {
+  ca_group_id: string;
+  event_type: CaEventType;
+  movements: LedgerMovement[];
+}
+
+/** POST /api/portfolio/corporate-actions/{ca_group_id}/void */
+export interface CorporateActionVoidRequest {
+  account_id: string;
+  reason?: string;
+}
+
+export interface CorporateActionVoidResponse {
+  ca_group_id: string;
+  voided_count: number;
+  movements: LedgerMovement[];
+}
+
+/** POST /api/portfolio/corporate-actions/{ca_group_id}/correct — Amendment H group correction */
+export interface CorporateActionCorrectRequest {
+  account_id: string;
+  correction_note: string;              // required, non-empty
+  event_type: CaEventType;
+  security_id?: string;                 // inferred from original if omitted
+  payment_date?: string;                // inferred from original if omitted
+  notes?: string;
+  legs: CorporateActionLegRequest[];
+}
+
+export interface CorporateActionCorrectResponse {
+  original_ca_group_id: string;
+  ca_group_id: string;
+  event_type: CaEventType;
+  correction_note: string;
+  movements: LedgerMovement[];
 }

@@ -11,6 +11,7 @@ Two 7-column variants are supported — Tipo may appear in either position:
   B) Tipo appended after Total Venta (design-doc layout):
      Año | Empresa | Fecha venta | Acciones | Comisión | Total Venta | Tipo
 
+Bilingual: Spanish or English headers and type values are both accepted (Amendment G).
 Spanish locale: DD/MM/YYYY dates, decimal comma numbers.
 Delimiter auto-detected: tab, semicolon, comma.
 """
@@ -19,7 +20,7 @@ from __future__ import annotations
 
 import unicodedata
 from decimal import Decimal
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Set
 
 from .common import (
     normalize_company_name,
@@ -29,63 +30,61 @@ from .common import (
     read_csv_rows,
 )
 
-# 6-column format (legacy): no Tipo column, all sales default to ACCIONES
-_REQUIRED_COLS_6 = [
-    "año",
-    "empresa",
-    "fecha venta",
-    "acciones",
-    "comisión",
-    "total venta",
-]
+# Aliases that indicate a "Tipo/Type" column (used for variant detection).
+_TIPO_ALIASES: Set[str] = {"tipo", "type", "sale type"}
 
-# 7-column variant A: Tipo between Fecha venta and Acciones
-_REQUIRED_COLS_7A = [
-    "año",
-    "empresa",
-    "fecha venta",
-    "tipo",
-    "acciones",
-    "comisión",
-    "total venta",
-]
-
-# 7-column variant B: Tipo appended after Total Venta
-_REQUIRED_COLS_7B = [
-    "año",
-    "empresa",
-    "fecha venta",
-    "acciones",
-    "comisión",
-    "total venta",
-    "tipo",
-]
+# Bilingual header aliases per expected position.
+# Positions are defined relative to the 6-column base layout:
+#   0=Year, 1=Company, 2=Date, 3=Shares, 4=Commission, 5=TotalProceeds
+# For 7A Tipo sits at position 3; 7B at position 6.
+_SALES_BASE_ALIASES: Dict[int, Set[str]] = {
+    0: {"ano", "year"},
+    1: {"empresa", "company"},
+    2: {"fecha venta", "fecha de venta", "sale date", "sell date", "date"},
+}
+# Shares, commission, total — position differs between variants; validated separately below.
+_SHARES_ALIASES: Set[str] = {"acciones", "shares", "quantity"}
+_COMMISSION_ALIASES: Set[str] = {"comision", "commission", "fees"}
+_TOTAL_ALIASES: Set[str] = {"total venta", "total", "total proceeds", "proceeds"}
 
 _VALID_SALES_TYPES = {"ACCIONES", "DERECHOS"}
 
+# Bilingual sales type aliases (Amendment G §G.4.3).
+_SALES_TYPE_ALIASES: Dict[str, str] = {
+    "ACCIONES": "ACCIONES",
+    "DERECHOS": "DERECHOS",
+    "STOCKS": "ACCIONES",
+    "SHARES": "ACCIONES",
+    "RIGHTS": "DERECHOS",
+}
+
 
 def _normalize_header(h: str) -> str:
+    """NFKD → strip combining marks → lowercase → collapse whitespace."""
     nfkd = unicodedata.normalize("NFKD", h)
-    return "".join(c for c in nfkd if not unicodedata.combining(c)).lower().strip()
+    stripped = "".join(c for c in nfkd if not unicodedata.combining(c)).lower().strip()
+    return " ".join(stripped.split())
 
 
 def _normalize_sales_type(raw: str) -> str:
     """Normalize a Tipo cell to 'ACCIONES' or 'DERECHOS'.
 
-    - Empty / whitespace → 'ACCIONES' (fail-safe default)
-    - Case-, whitespace-, and accent-insensitive match
-    - Non-empty, unrecognized value → raises ValueError
+    - Empty / whitespace → 'ACCIONES' (legacy default for 6-column files)
+    - Case-, whitespace-, and accent-insensitive; accepts Spanish and English aliases
+    - Non-empty, unrecognized value → raises ValueError (Amendment G §G.4.3)
     """
     stripped = raw.strip()
     if not stripped:
         return "ACCIONES"
     nfkd = unicodedata.normalize("NFKD", stripped)
-    normalized = "".join(c for c in nfkd if not unicodedata.combining(c)).upper()
-    if normalized in _VALID_SALES_TYPES:
-        return normalized
-    raise ValueError(
-        f"Invalid Tipo value '{raw}'; must be 'Acciones' or 'Derechos'"
-    )
+    normalized = "".join(c for c in nfkd if not unicodedata.combining(c)).upper().strip()
+    normalized = " ".join(normalized.split())
+    mapped = _SALES_TYPE_ALIASES.get(normalized)
+    if mapped is None:
+        raise ValueError(
+            f"Invalid Tipo value {raw!r}; must be one of: Acciones, Derechos, Stocks, Shares, Rights"
+        )
+    return mapped
 
 
 def parse_sales(content: bytes) -> List[Dict[str, Any]]:
@@ -116,32 +115,66 @@ def parse_sales(content: bytes) -> List[Dict[str, Any]]:
     normalized_headers = [_normalize_header(h) for h in header_row]
 
     # Detect format variant by inspecting header positions.
-    #   7A: Tipo at index 3 (between Fecha venta and Acciones)
-    #   7B: Tipo at index 6 (appended after Total Venta)
-    #    6: no Tipo column
+    # 7A: position 3 matches a "tipo" alias (Tipo between Fecha venta and Acciones).
+    # 7B: position 6 matches a "tipo" alias (Tipo appended after Total Venta).
+    #  6: no Tipo column.
     n = len(normalized_headers)
-    if n >= 4 and normalized_headers[3] == "tipo":
+    if n >= 4 and normalized_headers[3] in _TIPO_ALIASES:
         variant = "7A"
-        expected_cols = _REQUIRED_COLS_7A
         min_cols = 7
-    elif n >= 7 and normalized_headers[6] == "tipo":
+    elif n >= 7 and normalized_headers[6] in _TIPO_ALIASES:
         variant = "7B"
-        expected_cols = _REQUIRED_COLS_7B
         min_cols = 7
     else:
         variant = "6"
-        expected_cols = _REQUIRED_COLS_6
         min_cols = 6
 
-    for i, expected in enumerate(expected_cols):
-        if i >= len(normalized_headers):
+    # Validate the first three base columns (year, company, date) — same for all variants.
+    for pos, aliases in _SALES_BASE_ALIASES.items():
+        if pos >= len(normalized_headers):
             raise ValueError(
-                f"Missing column at position {i+1}: expected '{expected}'"
+                f"Missing column at position {pos + 1}: expected one of {sorted(aliases)}"
             )
-        actual = normalized_headers[i]
-        if actual != _normalize_header(expected):
+        actual = normalized_headers[pos]
+        if actual not in aliases:
             raise ValueError(
-                f"Column {i+1} mismatch: expected '{expected}', got '{actual}'"
+                f"Column {pos + 1}: unrecognized header {header_row[pos]!r}. "
+                f"Expected one of: {', '.join(sorted(aliases))}"
+            )
+
+    # Validate variant-specific data columns.
+    if variant == "7A":
+        # pos 3 = tipo (already validated via detection), 4=shares, 5=commission, 6=total
+        variant_checks = [
+            (4, _SHARES_ALIASES),
+            (5, _COMMISSION_ALIASES),
+            (6, _TOTAL_ALIASES),
+        ]
+    elif variant == "7B":
+        # pos 3=shares, 4=commission, 5=total, 6=tipo (already validated)
+        variant_checks = [
+            (3, _SHARES_ALIASES),
+            (4, _COMMISSION_ALIASES),
+            (5, _TOTAL_ALIASES),
+        ]
+    else:
+        # 6-col: pos 3=shares, 4=commission, 5=total
+        variant_checks = [
+            (3, _SHARES_ALIASES),
+            (4, _COMMISSION_ALIASES),
+            (5, _TOTAL_ALIASES),
+        ]
+
+    for pos, aliases in variant_checks:
+        if pos >= len(normalized_headers):
+            raise ValueError(
+                f"Missing column at position {pos + 1}: expected one of {sorted(aliases)}"
+            )
+        actual = normalized_headers[pos]
+        if actual not in aliases:
+            raise ValueError(
+                f"Column {pos + 1}: unrecognized header {header_row[pos]!r}. "
+                f"Expected one of: {', '.join(sorted(aliases))}"
             )
 
     results: List[Dict[str, Any]] = []

@@ -2,6 +2,7 @@
 
 import type { ImportPreviewData } from "@/types/import";
 import type { WarningType } from "@/types/portfolio";
+import { SALES_TYPE_LABELS } from "@/types/portfolio";
 
 interface Props {
   preview: ImportPreviewData;
@@ -94,7 +95,7 @@ export default function ImportPreview({ preview, onCommit, onBack, committing }:
                 Type
               </th>
               <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-text-muted">
-                Security
+                Symbol
               </th>
               <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-text-muted">
                 Date
@@ -122,7 +123,7 @@ export default function ImportPreview({ preview, onCommit, onBack, committing }:
                     </span>
                     {m.txn_type === "SELL" && m.sales_type === "DERECHOS" && (
                       <span className="ml-1 rounded-full px-1.5 py-0.5 text-xs bg-accent-orange/15 text-accent-orange">
-                        Derechos
+                        {SALES_TYPE_LABELS.DERECHOS}
                       </span>
                     )}
                   </td>

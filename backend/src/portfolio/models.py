@@ -351,6 +351,11 @@ class ManualMovementCreate(BaseModel):
     sales_type: Optional[str] = None      # SELL only: ACCIONES | DERECHOS
     cost_basis_status: Optional[str] = None  # BUY only: COMPLETE | INCOMPLETE
     notes: Optional[str] = None
+    # Corporate-action group fields (Amendment H — set by server, echoed from request)
+    ca_group_id: Optional[str] = None
+    ca_leg_type: Optional[str] = None
+    ca_event_type: Optional[str] = None
+    ca_group_seq: Optional[int] = None
 
     @field_validator("trade_date")
     @classmethod
@@ -475,3 +480,122 @@ class FxRateResponse(BaseModel):
     rate: str
     rate_source: str
     note: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Amendment H: Corporate-Action Groups (Phase H-α)
+# ---------------------------------------------------------------------------
+
+class CaLegType(str, Enum):
+    CASH_DIVIDEND = "CASH_DIVIDEND"
+    RIGHTS_SOLD = "RIGHTS_SOLD"
+    SHARE_ACQUISITION = "SHARE_ACQUISITION"
+    CASH_TOP_UP = "CASH_TOP_UP"
+
+
+class CaEventType(str, Enum):
+    CASH_DIVIDEND = "CASH_DIVIDEND"
+    DIVIDEND_WITH_SCRIP = "DIVIDEND_WITH_SCRIP"
+    SCRIP_DIVIDEND = "SCRIP_DIVIDEND"
+    RIGHTS_ISSUE = "RIGHTS_ISSUE"
+
+
+class CorporateActionLegCreate(BaseModel):
+    """One leg within a corporate-action group (maps to a ledger_txn document)."""
+    leg_type: str                                   # CaLegType value
+    trade_date: str
+    quantity: Optional[str] = None                  # null for CASH_DIVIDEND
+    gross: MoneyAmountInput
+    fees: Optional[FeesInput] = None
+    withholding: Optional[Any] = None
+    fx: Optional[Dict[str, str]] = None
+    cost_basis_status: Optional[str] = None
+    notes: Optional[str] = None
+
+    @field_validator("leg_type")
+    @classmethod
+    def valid_leg_type(cls, v: str) -> str:
+        valid = {e.value for e in CaLegType}
+        if v not in valid:
+            raise ValueError(f"leg_type must be one of {sorted(valid)}; got {v!r}")
+        return v
+
+    @field_validator("trade_date")
+    @classmethod
+    def valid_date(cls, v: str) -> str:
+        from datetime import date
+        try:
+            date.fromisoformat(v)
+        except ValueError:
+            raise ValueError(f"trade_date must be YYYY-MM-DD, got {v!r}")
+        return v
+
+
+class CorporateActionCorrectRequest(BaseModel):
+    """Request body for POST /api/portfolio/corporate-actions/{ca_group_id}/correct."""
+    account_id: str
+    correction_note: str
+    event_type: str                                 # CaEventType value
+    security_id: Optional[str] = None              # inferred from original when omitted
+    payment_date: Optional[str] = None             # inferred from original when omitted
+    notes: Optional[str] = None
+    legs: List[CorporateActionLegCreate]
+
+    @field_validator("correction_note")
+    @classmethod
+    def note_nonempty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("correction_note must not be empty")
+        return v
+
+    @field_validator("event_type")
+    @classmethod
+    def valid_event_type(cls, v: str) -> str:
+        valid = {e.value for e in CaEventType}
+        if v not in valid:
+            raise ValueError(f"event_type must be one of {sorted(valid)}; got {v!r}")
+        return v
+
+    @field_validator("legs")
+    @classmethod
+    def legs_nonempty(cls, v: List[CorporateActionLegCreate]) -> List[CorporateActionLegCreate]:
+        if not v:
+            raise ValueError("legs must not be empty")
+        return v
+
+
+class CorporateActionCreateRequest(BaseModel):
+    """Request body for POST /api/portfolio/corporate-actions."""
+    event_type: str                                 # CaEventType value
+    security_id: str
+    account_id: str = "_unassigned"
+    payment_date: str
+    ex_dividend_date: Optional[str] = None
+    notes: Optional[str] = None
+    legs: List[CorporateActionLegCreate]
+
+    @field_validator("event_type")
+    @classmethod
+    def valid_event_type(cls, v: str) -> str:
+        valid = {e.value for e in CaEventType}
+        if v not in valid:
+            raise ValueError(f"event_type must be one of {sorted(valid)}; got {v!r}")
+        return v
+
+    @field_validator("payment_date")
+    @classmethod
+    def valid_payment_date(cls, v: str) -> str:
+        from datetime import date
+        try:
+            date.fromisoformat(v)
+        except ValueError:
+            raise ValueError(f"payment_date must be YYYY-MM-DD, got {v!r}")
+        return v
+
+    @field_validator("legs")
+    @classmethod
+    def legs_nonempty(cls, v: List[CorporateActionLegCreate]) -> List[CorporateActionLegCreate]:
+        if not v:
+            raise ValueError("legs must not be empty")
+        return v

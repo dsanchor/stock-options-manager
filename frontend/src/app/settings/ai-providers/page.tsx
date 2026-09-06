@@ -3,7 +3,7 @@ import { apiFetch } from "@/lib/api";
 import type { AiProvidersConfig } from "@/types/aiProviders";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "AI Providers — Option Income Lab" };
+export const metadata = { title: "AI Providers — Portfolio Income Lab" };
 
 export default async function AiProvidersPage() {
   let data: AiProvidersConfig | null = null;

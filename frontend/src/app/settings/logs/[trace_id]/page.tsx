@@ -2,7 +2,7 @@ import { apiFetch } from "@/lib/api";
 import type { AgentTraceDetailResponse } from "@/types/agent-traces";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Agent Trace — Option Income Lab" };
+export const metadata = { title: "Agent Trace — Portfolio Income Lab" };
 
 function fmtDuration(d?: number | null): string {
   return d !== null && d !== undefined ? `${d.toFixed(2)}s` : "—";

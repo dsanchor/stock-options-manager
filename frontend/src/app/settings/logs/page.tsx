@@ -3,7 +3,7 @@ import { apiFetch } from "@/lib/api";
 import type { AgentTracesResponse } from "@/types/agent-traces";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Agent Logs — Option Income Lab" };
+export const metadata = { title: "Agent Logs — Portfolio Income Lab" };
 
 export default async function AgentLogsPage() {
   let data: AgentTracesResponse | null = null;

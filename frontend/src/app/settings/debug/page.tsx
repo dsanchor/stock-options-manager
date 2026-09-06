@@ -4,7 +4,7 @@ import { apiFetch } from "@/lib/api";
 import type { SettingsDebug, SettingsRuntime } from "@/types/settings";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Debug — Option Income Lab" };
+export const metadata = { title: "Debug — Portfolio Income Lab" };
 
 export default async function SettingsDebugPage() {
   let data: SettingsDebug | null = null;

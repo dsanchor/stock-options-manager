@@ -122,6 +122,15 @@ export interface RecentMovement {
   trade_date: string;
   quantity?: string | null;
   gross_eur?: string | null;
+  // Extended fields for Stocks tab (added 2026-09-06)
+  fees_eur?: string | null;
+  net_eur?: string | null;
+  currency?: string | null;
+  account_id?: string | null;
+  sales_type?: string | null;          // SELL only: ACCIONES | DERECHOS
+  correction_status?: string | null;   // ACTIVE | SUPERSEDED | VOIDED
+  import_source?: string | null;
+  // NOTE: DIVIDEND withholding fields pending Danny's contract amendment
 }
 
 export interface PortfolioSection {

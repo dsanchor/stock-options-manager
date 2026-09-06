@@ -8,7 +8,8 @@ import SymbolPlansTable from "@/components/SymbolPlansTable";
 import RtChart from "@/components/RtChart";
 import TradingViewSymbolInfo from "@/components/TradingViewSymbolInfo";
 import PortfolioHoldingsCard from "@/components/PortfolioHoldingsCard";
-import SymbolMovementsTable from "@/components/SymbolMovementsTable";
+import DetailSection from "@/components/DetailSection";
+import StockTransactionsTable from "@/components/StockTransactionsTable";
 import SymbolDisambiguation from "@/components/SymbolDisambiguation";
 import type { SymbolDetail, SymbolDisambiguationResult } from "@/types/symbol-detail";
 import type { Plan as PlanRow } from "@/types/plans";
@@ -80,23 +81,17 @@ export default async function SymbolDetailPage({
   const symbolState = d.symbol_state ?? null;
 
   const hasPortfolio = d.portfolio != null;
-  const isHistoricalOrZero =
-    symbolState === "portfolio_historical" ||
-    (hasPortfolio && parseFloat(d.portfolio!.current_shares) === 0);
   const hasAgentContent =
     symbolState === "watchlist_only" ||
     symbolState === "watchlist_and_portfolio" ||
     symbolState == null; // legacy — show if state unknown
 
-  // Canonical security badge
-  const securityBadge = d.security_id
-    ? d.security_id
-    : d.exchange
-    ? `${d.exchange}:${d.symbol}`
-    : d.symbol;
+  const hasOptions = hasAgentContent || positions.length > 0 || activities.length > 0;
 
   return (
     <div className="space-y-6">
+      {/* ── Shared Header ─────────────────────────────────────────────── */}
+
       {/* Canonical identity badge */}
       {d.security && (
         <div className="flex flex-wrap items-center gap-2 text-xs text-text-muted">
@@ -115,7 +110,6 @@ export default async function SymbolDetailPage({
               <span>{d.security.listing_currency}</span>
             </>
           )}
-          {/* Membership badge */}
           {symbolState && (
             <span className={`inline-block rounded-[var(--radius-pill)] border px-2 py-0.5 ${membershipBadgeClass(symbolState)}`}>
               {membershipBadgeLabel(symbolState)}
@@ -141,43 +135,33 @@ export default async function SymbolDetailPage({
       <TradingViewSymbolInfo symbol={d.symbol} exchange={d.exchange} />
       <RtChart symbol={d.symbol} exchange={d.exchange} />
 
-      {/* Summary */}
-      <SymbolSummary
-        symbol={symbol}
-        enrichment={enr}
-        summary={d.summary}
-        totalShares={d.total_shares}
-      />
+      {/* ── Options Section ────────────────────────────────────────────── */}
+      {hasOptions && (
+        <DetailSection title="Options">
+          <SymbolSummary
+            symbol={symbol}
+            enrichment={enr}
+            summary={d.summary}
+            totalShares={d.total_shares}
+          />
+          <PositionsTable symbol={symbol} positions={positions} />
+          <AddPositionForm symbol={symbol} />
+          {(hasAgentContent || activities.length > 0) && (
+            <RecentActivities activities={activities} agentTypes={d.agent_types ?? []} />
+          )}
+        </DetailSection>
+      )}
 
-      {/* Portfolio Holdings — shown for all portfolio states */}
+      {/* ── Stocks Section ─────────────────────────────────────────────── */}
       {hasPortfolio && (
-        <PortfolioHoldingsCard portfolio={d.portfolio!} symbolState={symbolState} />
+        <DetailSection title="Stocks">
+          <PortfolioHoldingsCard portfolio={d.portfolio!} symbolState={symbolState} />
+          <StockTransactionsTable securityId={d.security?.security_id ?? d.security_id ?? symbol} />
+        </DetailSection>
       )}
 
-      {/* Recent Movements — shown for all portfolio states */}
-      {hasPortfolio && d.portfolio!.recent_movements && (
-        <SymbolMovementsTable
-          movements={d.portfolio!.recent_movements}
-          movementCount={d.portfolio!.movement_count}
-          securityId={d.security_id}
-        />
-      )}
-
-      {/* Options Positions — hidden for portfolio-only/historical unless agents enabled */}
-      {(hasAgentContent || positions.length > 0) && (
-        <PositionsTable symbol={symbol} positions={positions} />
-      )}
-
-      {/* Add position */}
-      <AddPositionForm symbol={symbol} />
-
-      {/* Plans */}
+      {/* ── Plans (always visible) ─────────────────────────────────────── */}
       <SymbolPlansTable plans={plans as unknown as PlanRow[]} />
-
-      {/* Recent agent activity — hidden for portfolio-only states without active agents */}
-      {(hasAgentContent || activities.length > 0) && (
-        <RecentActivities activities={activities} agentTypes={d.agent_types ?? []} />
-      )}
     </div>
   );
 }

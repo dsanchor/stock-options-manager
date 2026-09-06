@@ -577,3 +577,181 @@ class TestSalesParserSalesType:
         for row in rows:
             actual = {w["type"] for w in row["warnings"]}
             assert not (actual & sales_type_warning_kinds)
+
+
+# ===========================================================================
+# Amendment G — Bilingual CSV headers and English type aliases
+# ===========================================================================
+
+
+class TestPurchasesParserBilingual:
+    """G-9/G-10/G-15: English headers and bilingual purchases parser."""
+
+    _ENGLISH_CSV = (
+        "Year\tCompany\tPurchase Date\tPrice per share\tShares\tTotal\tFees\n"
+        "2024\tApple Inc.\t15/03/2024\t175,50\t10\t1.755,00\t9,95\n"
+    )
+    _MIXED_CSV = (
+        "Año\tEmpresa\tFecha compra\tPrecio\tShares\tTotal\tComisión\n"
+        "2024\tApple Inc.\t15/03/2024\t175,50\t10\t1.755,00\t9,95\n"
+    )
+
+    def test_english_headers_parse_ok(self):
+        rows = parse_purchases(_encode(self._ENGLISH_CSV))
+        assert len(rows) == 1
+        assert rows[0]["quantity"] == Decimal("10")
+        assert rows[0]["purchase_date"] == "2024-03-15"
+
+    def test_mixed_spanish_english_headers(self):
+        """Spanish accents optional; mixed column names parse OK."""
+        rows = parse_purchases(_encode(self._MIXED_CSV))
+        assert rows[0]["price_per_share"] == Decimal("175.5")
+
+    def test_spanish_headers_still_work(self):
+        """Regression: original Spanish-only files unchanged (G-15)."""
+        csv = (
+            "Año\tEmpresa\tFecha compra\tValor compra\tAcciones\tTotal (€)\tComisión\n"
+            "2024\tMicrosoft Corp\t10/01/2024\t320,00\t5\t1.600,00\t7,95\n"
+        )
+        rows = parse_purchases(_encode(csv))
+        assert rows[0]["cost_basis_status"] == "COMPLETE"
+        assert rows[0]["year"] == 2024
+
+    def test_unrecognized_header_raises(self):
+        csv = (
+            "Año\tEmpresa\tFecha compra\tUnknownCol\tAcciones\tTotal (€)\tComisión\n"
+            "2024\tApple\t10/01/2024\t100\t5\t500\t5\n"
+        )
+        with pytest.raises(ValueError, match="unrecognized header"):
+            parse_purchases(_encode(csv))
+
+    def test_english_fees_alias(self):
+        csv = (
+            "Year\tCompany\tBuy Date\tUnit Price\tQuantity\tTrade Value\tFees\n"
+            "2024\tApple Inc.\t15/03/2024\t175,50\t10\t1.755,00\t9,95\n"
+        )
+        rows = parse_purchases(_encode(csv))
+        assert rows[0]["commission"] == Decimal("9.95")
+
+
+class TestSalesParserBilingual:
+    """G-9/G-12/G-13/G-14: English headers, English type values, bilingual sales parser."""
+
+    def test_english_6col_headers(self):
+        """6-column CSV with English headers (G-9 partial)."""
+        csv = (
+            "Year\tCompany\tSale Date\tShares\tCommission\tTotal Proceeds\n"
+            "2024\tApple Inc.\t20/06/2024\t10\t7,50\t1.820,00\n"
+        )
+        rows = parse_sales(_encode(csv))
+        assert len(rows) == 1
+        assert rows[0]["sales_type"] == "ACCIONES"
+        assert rows[0]["total_proceeds"] == Decimal("1820.00")
+
+    def test_english_7a_headers_with_type_alias(self):
+        """7A variant with English 'Type' header and 'Stocks' value (G-9/G-12)."""
+        csv = (
+            "Year\tCompany\tSale Date\tType\tShares\tFees\tProceeds\n"
+            "2024\tApple Inc.\t20/06/2024\tStocks\t10\t7,50\t1.820,00\n"
+        )
+        rows = parse_sales(_encode(csv))
+        assert rows[0]["sales_type"] == "ACCIONES"
+
+    def test_stocks_alias_maps_to_acciones(self):
+        """'Stocks' type value → ACCIONES (G-12)."""
+        csv = (
+            "Año\tEmpresa\tFecha venta\tTipo\tAcciones\tComisión\tTotal Venta\n"
+            "2024\tApple Inc.\t20/06/2024\tStocks\t10\t7,50\t1.820,00\n"
+        )
+        rows = parse_sales(_encode(csv))
+        assert rows[0]["sales_type"] == "ACCIONES"
+
+    def test_shares_alias_maps_to_acciones(self):
+        """'Shares' type value → ACCIONES (G-12)."""
+        csv = (
+            "Año\tEmpresa\tFecha venta\tTipo\tAcciones\tComisión\tTotal Venta\n"
+            "2024\tApple Inc.\t20/06/2024\tShares\t10\t7,50\t1.820,00\n"
+        )
+        rows = parse_sales(_encode(csv))
+        assert rows[0]["sales_type"] == "ACCIONES"
+
+    def test_rights_alias_maps_to_derechos(self):
+        """'Rights' type value → DERECHOS (G-12)."""
+        csv = (
+            "Año\tEmpresa\tFecha venta\tTipo\tAcciones\tComisión\tTotal Venta\n"
+            "2024\tApple Inc.\t20/06/2024\tRights\t0\t2,00\t500,00\n"
+        )
+        rows = parse_sales(_encode(csv))
+        assert rows[0]["sales_type"] == "DERECHOS"
+
+    def test_invalid_nonempty_type_raises(self):
+        """Non-empty unrecognized type value raises ValueError (G-13)."""
+        csv = (
+            "Año\tEmpresa\tFecha venta\tTipo\tAcciones\tComisión\tTotal Venta\n"
+            "2024\tApple Inc.\t20/06/2024\tOPCIONES\t10\t7,50\t1.820,00\n"
+        )
+        with pytest.raises(ValueError, match="Invalid Tipo"):
+            parse_sales(_encode(csv))
+
+    def test_empty_type_defaults_acciones(self):
+        """Empty type cell defaults to ACCIONES (G-14, legacy backward compat)."""
+        csv = (
+            "Año\tEmpresa\tFecha venta\tTipo\tAcciones\tComisión\tTotal Venta\n"
+            "2024\tApple Inc.\t20/06/2024\t\t10\t7,50\t1.820,00\n"
+        )
+        rows = parse_sales(_encode(csv))
+        assert rows[0]["sales_type"] == "ACCIONES"
+
+    def test_spanish_6col_regression(self):
+        """Spanish-only 6-column files still work (G-15)."""
+        csv = (
+            "Año\tEmpresa\tFecha venta\tAcciones\tComisión\tTotal Venta\n"
+            "2024\tApple Inc.\t20/06/2024\t10\t7,50\t1.820,00\n"
+        )
+        rows = parse_sales(_encode(csv))
+        assert rows[0]["sales_type"] == "ACCIONES"
+
+
+class TestDividendsParserBilingual:
+    """G-11/G-15: English headers for dividends parser."""
+
+    _ENGLISH_CSV = (
+        "Year\tCompany\tPayment Date\tGross Amount\tNet Amount\t"
+        "Rights Amount\tSource Withholding\tDestination Withholding\n"
+        "2024\tUnilever PLC\t28/03/2024\t225,50\t170,38\t0,00\t23,68\t31,44\n"
+    )
+
+    def test_english_headers_parse_ok(self):
+        """G-11: English headers accepted."""
+        rows = parse_dividends(_encode(self._ENGLISH_CSV))
+        assert len(rows) == 1
+        assert rows[0]["payment_date"] == "2024-03-28"
+        assert rows[0]["gross"] == Decimal("225.50")
+        assert rows[0]["wht_source"] == Decimal("23.68")
+
+    def test_wht_dest_alias(self):
+        csv = (
+            "Year\tCompany\tDate\tGross\tNet\tScrip Amount\tWHT Source\tWHT Dest\n"
+            "2024\tUnilever PLC\t28/03/2024\t225,50\t170,38\t0,00\t23,68\t31,44\n"
+        )
+        rows = parse_dividends(_encode(csv))
+        assert rows[0]["wht_destination"] == Decimal("31.44")
+
+    def test_spanish_headers_regression(self):
+        """G-15: Original Spanish-only files parse identically."""
+        csv = (
+            "Año\tEmpresa\tFecha de cobro\tImporte Bruto\tImporte Neto\t"
+            "Importe en Derechos\tRetención Origen\tRetención Destino\n"
+            "2024\tUnilever PLC\t28/03/2024\t225,50\t170,38\t0,00\t23,68\t31,44\n"
+        )
+        rows = parse_dividends(_encode(csv))
+        assert rows[0]["gross"] == Decimal("225.50")
+
+    def test_unrecognized_header_raises(self):
+        csv = (
+            "Year\tCompany\tPayment Date\tGross Amount\tNet Amount\t"
+            "Rights Amount\tSource Withholding\tBadColumn\n"
+            "2024\tUnilever PLC\t28/03/2024\t225,50\t170,38\t0,00\t23,68\t31,44\n"
+        )
+        with pytest.raises(ValueError, match="unrecognized header"):
+            parse_dividends(_encode(csv))

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { FileUp, Plus, RefreshCw } from "lucide-react";
 import { getMovements, deleteMovement, listAccounts } from "@/lib/portfolio-api";
 import type { MovementsResponse, LedgerMovement, TxnType, WarningType } from "@/types/portfolio";
+import { SALES_TYPE_LABELS } from "@/types/portfolio";
 import type { BrokerAccount } from "@/types/portfolio";
 import type { MovementsFilter } from "@/lib/portfolio-api";
 import MovementDetailDialog from "./MovementDetailDialog";
@@ -192,9 +193,9 @@ export default function PortfolioMovementsTable() {
         <input
           value={securityId}
           onChange={(e) => setSecurityId(e.target.value)}
-          placeholder="Security ID"
+          placeholder="Symbol"
           className={`${inputCls} w-36`}
-          aria-label="Filter by security ID"
+          aria-label="Filter by symbol"
         />
         <input
           type="date"
@@ -276,7 +277,7 @@ export default function PortfolioMovementsTable() {
             <table className="w-full table-modern text-sm">
               <thead>
                 <tr className="border-b border-border bg-bg-card/80">
-                  {["Type", "Security", "Date", "Qty", "Gross (€)", "Net (€)", "Account", ""].map(
+                  {["Type", "Symbol", "Date", "Qty", "Gross (€)", "Net (€)", "Account", ""].map(
                     (h, i) => (
                       <th
                         key={i}
@@ -385,9 +386,9 @@ function MovementRow({
           >
             {m.txn_type}
           </span>
-          {m.txn_type === "SELL" && m.is_rights_sale && (
+          {m.txn_type === "SELL" && m.sales_type === "DERECHOS" && (
             <span className="ml-1 rounded-full px-1.5 py-0.5 text-xs bg-accent-orange/15 text-accent-orange">
-              Derechos
+              {SALES_TYPE_LABELS.DERECHOS}
             </span>
           )}
         </td>

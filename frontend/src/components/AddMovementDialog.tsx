@@ -4,7 +4,9 @@ import { useEffect, useState, useCallback } from "react";
 import { X, RefreshCw } from "lucide-react";
 import { createMovement, createTransfer, getFxRate, listAccounts, listSecurities } from "@/lib/portfolio-api";
 import type { BrokerAccount, ManualMovementRequest, TransferRequest } from "@/types/portfolio";
+import { SALES_TYPE_LABELS } from "@/types/portfolio";
 import type { SecurityMaster } from "@/types/portfolio";
+import CorporateActionForm from "@/components/CorporateActionForm";
 
 const inputCls =
   "w-full rounded-[var(--radius)] border border-border bg-bg-input px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-accent-blue focus:outline-none";
@@ -15,8 +17,8 @@ type UiMovementType = "BUY" | "SELL" | "DIVIDEND" | "TRANSFER";
 
 const TXN_TYPES: Array<{ value: UiMovementType; label: string; description: string }> = [
   { value: "BUY", label: "Buy", description: "Purchase shares or other securities" },
-  { value: "SELL", label: "Sell", description: "Sell shares — choose ACCIONES or DERECHOS" },
-  { value: "DIVIDEND", label: "Dividend", description: "Cash dividend received" },
+  { value: "SELL", label: "Sell", description: "Sell shares — choose Stocks or Rights" },
+  { value: "DIVIDEND", label: "Dividend / Corp. Action", description: "Cash dividend, scrip dividend, or rights issue" },
   { value: "TRANSFER", label: "Transfer", description: "Move shares between accounts" },
 ];
 
@@ -118,9 +120,9 @@ function SecuritySelect({
 }) {
   return (
     <div>
-      <label className={labelCls}>Security *</label>
+      <label className={labelCls}>Symbol *</label>
       <select value={value} onChange={(e) => onChange(e.target.value)} className={inputCls} required>
-        <option value="">— Select security —</option>
+        <option value="">— Select symbol —</option>
         {securities.map((s) => (
           <option key={s.security_id} value={s.security_id}>
             {s.ticker} — {s.company_name}
@@ -146,13 +148,45 @@ interface BuyFormState {
   trade_date: string;
   quantity: string;
   price_per_share: string;
-  total_cost: string;
+  trade_value: string;   // gross amount (quantity × unit price, before fees)
   currency: string;
   fees: string;
   notes: string;
 }
 
 function BuyForm({ form, onChange, accounts, securities }: BuyFormProps) {
+  // Amendment G: live computation
+  const qty = parseFloat(form.quantity) || 0;
+  const price = parseFloat(form.price_per_share) || 0;
+  const tradeVal = parseFloat(form.trade_value) || 0;
+  const fees = parseFloat(form.fees) || 0;
+
+  const computedTV = qty > 0 && price > 0 ? qty * price : null;
+  const mismatch =
+    computedTV !== null && tradeVal > 0 && Math.abs(computedTV - tradeVal) > 0.01;
+  const totalCostAllIn = tradeVal > 0 ? tradeVal + fees : null;
+  const costPerShare = qty > 0 && totalCostAllIn != null ? totalCostAllIn / qty : null;
+
+  function handleQtyChange(val: string) {
+    const q = parseFloat(val) || 0;
+    const p = parseFloat(form.price_per_share) || 0;
+    if (q > 0 && p > 0 && form.trade_value === "") {
+      onChange({ quantity: val, trade_value: (q * p).toFixed(4) });
+    } else {
+      onChange({ quantity: val });
+    }
+  }
+
+  function handlePriceChange(val: string) {
+    const q = parseFloat(form.quantity) || 0;
+    const p = parseFloat(val) || 0;
+    if (q > 0 && p > 0 && form.trade_value === "") {
+      onChange({ price_per_share: val, trade_value: (q * p).toFixed(4) });
+    } else {
+      onChange({ price_per_share: val });
+    }
+  }
+
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <div className="sm:col-span-2">
@@ -165,25 +199,49 @@ function BuyForm({ form, onChange, accounts, securities }: BuyFormProps) {
       </div>
       <div>
         <label className={labelCls}>Quantity *</label>
-        <input type="number" step="any" min="0" value={form.quantity} onChange={(e) => onChange({ quantity: e.target.value })} placeholder="Shares" className={inputCls} required />
+        <input type="number" step="any" min="0" value={form.quantity} onChange={(e) => handleQtyChange(e.target.value)} placeholder="Shares" className={inputCls} required />
       </div>
       <div>
-        <label className={labelCls}>Price per share</label>
-        <input type="number" step="any" min="0" value={form.price_per_share} onChange={(e) => onChange({ price_per_share: e.target.value })} placeholder="0.00 (zero for corporate actions)" className={inputCls} />
+        <label className={labelCls}>Price per share (without fees)</label>
+        <input type="number" step="any" min="0" value={form.price_per_share} onChange={(e) => handlePriceChange(e.target.value)} placeholder="0.00 (optional)" className={inputCls} />
       </div>
       <div>
-        <label className={labelCls}>Total cost</label>
-        <input type="number" step="any" min="0" value={form.total_cost} onChange={(e) => onChange({ total_cost: e.target.value })} placeholder="0.00" className={inputCls} />
+        <label className={labelCls}>Trade value (gross) *</label>
+        <input type="number" step="any" min="0" value={form.trade_value} onChange={(e) => onChange({ trade_value: e.target.value })} placeholder="0.00" className={inputCls} required />
+        {mismatch && (
+          <p className="mt-1 text-xs text-accent-orange">
+            ⚠ Qty × price ({computedTV?.toFixed(2)}) differs from trade value ({tradeVal.toFixed(2)}) by more than €0.01.
+          </p>
+        )}
       </div>
       <div>
         <label className={labelCls}>Currency</label>
         <input type="text" value={form.currency} onChange={(e) => onChange({ currency: e.target.value.toUpperCase() })} maxLength={3} placeholder="EUR" className={inputCls} />
       </div>
-      <FxHelper currency={form.currency} date={form.trade_date} onRate={(rate) => onChange({ price_per_share: rate })} />
+      <FxHelper currency={form.currency} date={form.trade_date} onRate={() => {}} />
       <div>
         <label className={labelCls}>Fees</label>
         <input type="number" step="any" min="0" value={form.fees} onChange={(e) => onChange({ fees: e.target.value })} placeholder="0.00" className={inputCls} />
       </div>
+      {/* Computed summary */}
+      {totalCostAllIn != null && (
+        <div className="sm:col-span-2 rounded-[var(--radius)] border border-border bg-bg-hover/50 px-3 py-2 text-xs text-text-muted space-y-1">
+          <div className="flex justify-between">
+            <span>Total cost (trade + fees)</span>
+            <span className="font-mono font-medium text-text">
+              {form.currency} {totalCostAllIn.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+            </span>
+          </div>
+          {costPerShare != null && (
+            <div className="flex justify-between">
+              <span>All-in cost per share</span>
+              <span className="font-mono text-text">
+                {form.currency} {costPerShare.toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 6 })}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
       <div className="sm:col-span-2">
         <label className={labelCls}>Notes</label>
         <textarea value={form.notes} onChange={(e) => onChange({ notes: e.target.value })} rows={2} className={`${inputCls} resize-none`} />
@@ -201,7 +259,7 @@ interface SellFormState {
   quantity: string;
   sales_type: "ACCIONES" | "DERECHOS";
   price_per_share: string;
-  total_proceeds: string;
+  trade_value: string;   // gross proceeds (before fees); was total_proceeds
   currency: string;
   fees: string;
   notes: string;
@@ -215,6 +273,13 @@ interface SellFormProps {
 }
 
 function SellForm({ form, onChange, accounts, securities }: SellFormProps) {
+  // Amendment G: live computed net proceeds preview
+  const tradeVal = parseFloat(form.trade_value) || 0;
+  const fees = parseFloat(form.fees) || 0;
+  const qty = parseFloat(form.quantity) || 0;
+  const netProceeds = tradeVal > 0 ? tradeVal - fees : null;
+  const proceedsPerShare = qty > 0 && netProceeds != null ? netProceeds / qty : null;
+
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -228,7 +293,7 @@ function SellForm({ form, onChange, accounts, securities }: SellFormProps) {
         </div>
       </div>
 
-      {/* Sale type */}
+      {/* Sale type — Amendment G: English labels via SALES_TYPE_LABELS */}
       <div>
         <label className={labelCls}>Sale type *</label>
         <div className="flex gap-3">
@@ -242,14 +307,14 @@ function SellForm({ form, onChange, accounts, securities }: SellFormProps) {
                 onChange={() => onChange({ sales_type: t })}
                 className="accent-accent-blue"
               />
-              <span className="text-sm text-text">{t}</span>
+              <span className="text-sm text-text">{SALES_TYPE_LABELS[t]}</span>
             </label>
           ))}
         </div>
         {form.sales_type === "DERECHOS" && (
           <div className="mt-2 rounded-[var(--radius)] border border-accent-blue/20 bg-accent-blue/5 px-3 py-2 text-xs text-text-muted">
-            ℹ <strong className="text-text">Rights (Derechos) sale:</strong> proceeds are recorded but{" "}
-            <strong className="text-text">share quantity is NOT reduced</strong>. Rights entitlements are separate from ordinary share ownership and do not affect your holdings count.
+            ℹ <strong className="text-text">Rights sale:</strong> proceeds are recorded but{" "}
+            <strong className="text-text">share quantity is NOT reduced</strong>. Rights entitlements are separate from ordinary share ownership.
           </div>
         )}
       </div>
@@ -269,12 +334,12 @@ function SellForm({ form, onChange, accounts, securities }: SellFormProps) {
           />
         </div>
         <div>
-          <label className={labelCls}>Price per share</label>
-          <input type="number" step="any" min="0" value={form.price_per_share} onChange={(e) => onChange({ price_per_share: e.target.value })} placeholder="0.00" className={inputCls} />
+          <label className={labelCls}>Price per share (without fees)</label>
+          <input type="number" step="any" min="0" value={form.price_per_share} onChange={(e) => onChange({ price_per_share: e.target.value })} placeholder="0.00 (optional)" className={inputCls} />
         </div>
         <div>
-          <label className={labelCls}>Total proceeds *</label>
-          <input type="number" step="any" min="0" value={form.total_proceeds} onChange={(e) => onChange({ total_proceeds: e.target.value })} placeholder="0.00" className={inputCls} required />
+          <label className={labelCls}>Trade value (gross proceeds) *</label>
+          <input type="number" step="any" min="0" value={form.trade_value} onChange={(e) => onChange({ trade_value: e.target.value })} placeholder="0.00" className={inputCls} required />
         </div>
         <div>
           <label className={labelCls}>Currency</label>
@@ -285,80 +350,29 @@ function SellForm({ form, onChange, accounts, securities }: SellFormProps) {
           <label className={labelCls}>Fees</label>
           <input type="number" step="any" min="0" value={form.fees} onChange={(e) => onChange({ fees: e.target.value })} placeholder="0.00" className={inputCls} />
         </div>
+        {/* Computed net proceeds preview */}
+        {netProceeds != null && (
+          <div className="sm:col-span-2 rounded-[var(--radius)] border border-border bg-bg-hover/50 px-3 py-2 text-xs text-text-muted space-y-1">
+            <div className="flex justify-between">
+              <span>Net proceeds (after fees)</span>
+              <span className="font-mono font-medium text-text">
+                {form.currency} {netProceeds.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+              </span>
+            </div>
+            {proceedsPerShare != null && (
+              <div className="flex justify-between">
+                <span>Net per share</span>
+                <span className="font-mono text-text">
+                  {form.currency} {proceedsPerShare.toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 6 })}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
         <div className="sm:col-span-2">
           <label className={labelCls}>Notes</label>
           <textarea value={form.notes} onChange={(e) => onChange({ notes: e.target.value })} rows={2} className={`${inputCls} resize-none`} />
         </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── DIVIDEND Form ────────────────────────────────────────────────────────────
-
-interface DividendFormState {
-  security_id: string;
-  account_id: string;
-  trade_date: string;
-  gross_amount: string;
-  currency: string;
-  wht_source_country: string;
-  wht_source_rate: string;
-  wht_source_amount: string;
-  wht_dest_country: string;
-  wht_dest_amount: string;
-  notes: string;
-}
-
-interface DividendFormProps {
-  form: DividendFormState;
-  onChange: (f: Partial<DividendFormState>) => void;
-  accounts: BrokerAccount[];
-  securities: SecurityMaster[];
-}
-
-function DividendForm({ form, onChange, accounts, securities }: DividendFormProps) {
-  return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      <div className="sm:col-span-2">
-        <SecuritySelect value={form.security_id} onChange={(v) => onChange({ security_id: v })} securities={securities} />
-      </div>
-      <AccountSelect value={form.account_id} onChange={(v) => onChange({ account_id: v })} accounts={accounts} label="Account" />
-      <div>
-        <label className={labelCls}>Payment date *</label>
-        <input type="date" value={form.trade_date} onChange={(e) => onChange({ trade_date: e.target.value })} className={inputCls} required />
-      </div>
-      <div>
-        <label className={labelCls}>Gross amount *</label>
-        <input type="number" step="any" min="0" value={form.gross_amount} onChange={(e) => onChange({ gross_amount: e.target.value })} placeholder="0.00" className={inputCls} required />
-      </div>
-      <div>
-        <label className={labelCls}>Currency</label>
-        <input type="text" value={form.currency} onChange={(e) => onChange({ currency: e.target.value.toUpperCase() })} maxLength={3} placeholder="EUR" className={inputCls} />
-      </div>
-      <FxHelper currency={form.currency} date={form.trade_date} onRate={() => {}} />
-
-      <div className="sm:col-span-2">
-        <div className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">Withholding (optional)</div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div>
-            <label className={labelCls}>Source country</label>
-            <input type="text" value={form.wht_source_country} onChange={(e) => onChange({ wht_source_country: e.target.value.toUpperCase() })} maxLength={2} placeholder="US" className={inputCls} />
-          </div>
-          <div>
-            <label className={labelCls}>WHT rate %</label>
-            <input type="number" step="any" min="0" max="100" value={form.wht_source_rate} onChange={(e) => onChange({ wht_source_rate: e.target.value })} placeholder="15.00" className={inputCls} />
-          </div>
-          <div>
-            <label className={labelCls}>WHT amount (€)</label>
-            <input type="number" step="any" min="0" value={form.wht_source_amount} onChange={(e) => onChange({ wht_source_amount: e.target.value })} placeholder="0.00" className={inputCls} />
-          </div>
-        </div>
-      </div>
-
-      <div className="sm:col-span-2">
-        <label className={labelCls}>Notes</label>
-        <textarea value={form.notes} onChange={(e) => onChange({ notes: e.target.value })} rows={2} className={`${inputCls} resize-none`} />
       </div>
     </div>
   );
@@ -461,19 +475,14 @@ export default function AddMovementDialog({ onClose, onCreated }: AddMovementDia
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
-  // Form states
+  // Form states (BUY / SELL / TRANSFER — DIVIDEND handled by CorporateActionForm)
   const [buyForm, setBuyForm] = useState<BuyFormState>({
     security_id: "", account_id: "_unassigned", trade_date: "", quantity: "",
-    price_per_share: "", total_cost: "", currency: "EUR", fees: "", notes: "",
+    price_per_share: "", trade_value: "", currency: "EUR", fees: "", notes: "",
   });
   const [sellForm, setSellForm] = useState<SellFormState>({
     security_id: "", account_id: "_unassigned", trade_date: "", quantity: "",
-    sales_type: "ACCIONES", price_per_share: "", total_proceeds: "", currency: "EUR", fees: "", notes: "",
-  });
-  const [dividendForm, setDividendForm] = useState<DividendFormState>({
-    security_id: "", account_id: "_unassigned", trade_date: "", gross_amount: "", currency: "EUR",
-    wht_source_country: "", wht_source_rate: "", wht_source_amount: "",
-    wht_dest_country: "", wht_dest_amount: "", notes: "",
+    sales_type: "ACCIONES", price_per_share: "", trade_value: "", currency: "EUR", fees: "", notes: "",
   });
   const [transferForm, setTransferForm] = useState<TransferFormState>({
     security_id: "", source_account_id: "_unassigned", dest_account_id: "_unassigned",
@@ -507,7 +516,6 @@ export default function AddMovementDialog({ onClose, onCreated }: AddMovementDia
     try {
       const currency = txnType === "BUY" ? (buyForm.currency || "EUR")
         : txnType === "SELL" ? (sellForm.currency || "EUR")
-        : txnType === "DIVIDEND" ? (dividendForm.currency || "EUR")
         : "EUR";
 
       // Helper to build AmountInput — eur_amount = amount when currency is already EUR
@@ -528,8 +536,8 @@ export default function AddMovementDialog({ onClose, onCreated }: AddMovementDia
       }
 
       if (txnType === "BUY") {
-        if (!buyForm.security_id || !buyForm.trade_date || !buyForm.quantity || !buyForm.total_cost) {
-          setError("Security, date, quantity, and total cost are required.");
+        if (!buyForm.security_id || !buyForm.trade_date || !buyForm.quantity || !buyForm.trade_value) {
+          setError("Symbol, date, quantity, and trade value are required.");
           return;
         }
         const req: ManualMovementRequest = {
@@ -538,19 +546,19 @@ export default function AddMovementDialog({ onClose, onCreated }: AddMovementDia
           account_id: buyForm.account_id || "_unassigned",
           trade_date: buyForm.trade_date,
           quantity: buyForm.quantity,
-          gross: makeGross(buyForm.total_cost, currency),
+          gross: makeGross(buyForm.trade_value, currency),
           fees: buyForm.fees ? makeFeesInput(buyForm.fees, currency) : undefined,
           notes: buyForm.notes || undefined,
         };
         await createMovement(req);
 
       } else if (txnType === "SELL") {
-        if (!sellForm.security_id || !sellForm.trade_date || !sellForm.total_proceeds) {
-          setError("Security, date, and total proceeds are required.");
+        if (!sellForm.security_id || !sellForm.trade_date || !sellForm.trade_value) {
+          setError("Symbol, date, and trade value are required.");
           return;
         }
         if (sellForm.sales_type === "ACCIONES" && !sellForm.quantity) {
-          setError("Quantity is required for ACCIONES sales.");
+          setError("Quantity is required for Stocks sales.");
           return;
         }
         const req: ManualMovementRequest = {
@@ -560,40 +568,16 @@ export default function AddMovementDialog({ onClose, onCreated }: AddMovementDia
           trade_date: sellForm.trade_date,
           quantity: sellForm.quantity || undefined,
           sales_type: sellForm.sales_type,
-          gross: makeGross(sellForm.total_proceeds, currency),
+          gross: makeGross(sellForm.trade_value, currency),
           fees: sellForm.fees ? makeFeesInput(sellForm.fees, currency) : undefined,
           notes: sellForm.notes || undefined,
-        };
-        await createMovement(req);
-
-      } else if (txnType === "DIVIDEND") {
-        if (!dividendForm.security_id || !dividendForm.trade_date || !dividendForm.gross_amount) {
-          setError("Security, date, and gross amount are required.");
-          return;
-        }
-        const req: ManualMovementRequest = {
-          txn_type: "DIVIDEND",
-          security_id: dividendForm.security_id,
-          account_id: dividendForm.account_id || "_unassigned",
-          trade_date: dividendForm.trade_date,
-          gross: makeGross(dividendForm.gross_amount, currency),
-          withholding: (dividendForm.wht_source_country || dividendForm.wht_source_amount)
-            ? {
-                source: {
-                  country: dividendForm.wht_source_country || undefined,
-                  rate_pct: dividendForm.wht_source_rate || undefined,
-                  amount_eur: dividendForm.wht_source_amount || undefined,
-                },
-              }
-            : undefined,
-          notes: dividendForm.notes || undefined,
         };
         await createMovement(req);
 
       } else {
         // TRANSFER — uses POST /api/portfolio/transfers, not /movements
         if (!transferForm.security_id || !transferForm.trade_date || !transferForm.quantity) {
-          setError("Security, date, and quantity are required.");
+          setError("Symbol, date, and quantity are required.");
           return;
         }
         if (transferForm.source_account_id === transferForm.dest_account_id) {
@@ -698,7 +682,14 @@ export default function AddMovementDialog({ onClose, onCreated }: AddMovementDia
               </div>
             </div>
           ) : loadingResources ? (
-            <div className="text-sm text-text-muted">Loading securities and accounts…</div>
+            <div className="text-sm text-text-muted">Loading symbols and accounts…</div>
+          ) : txnType === "DIVIDEND" ? (
+            /* Corporate action / dividend wizard — manages its own form and submit */
+            <CorporateActionForm
+              accounts={accounts}
+              securities={securities}
+              onSuccess={() => setSuccess(true)}
+            />
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
               {txnType === "BUY" && (
@@ -706,9 +697,6 @@ export default function AddMovementDialog({ onClose, onCreated }: AddMovementDia
               )}
               {txnType === "SELL" && (
                 <SellForm form={sellForm} onChange={(f) => setSellForm((s) => ({ ...s, ...f }))} accounts={accounts} securities={securities} />
-              )}
-              {txnType === "DIVIDEND" && (
-                <DividendForm form={dividendForm} onChange={(f) => setDividendForm((s) => ({ ...s, ...f }))} accounts={accounts} securities={securities} />
               )}
               {txnType === "TRANSFER" && (
                 <TransferForm form={transferForm} onChange={(f) => setTransferForm((s) => ({ ...s, ...f }))} accounts={accounts} securities={securities} />

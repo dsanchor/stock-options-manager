@@ -5,7 +5,10 @@ Covers:
 - POST /api/portfolio/movements/batch-reassign — batch reassignment
 - Account scoping: source_account_id required
 - Response contracts for both
-- DEFECT TEST: batch-reassign is NOT atomic (skips failures) — marked xfail pending fix
+- Authoritative override: batch reason is optional; omitted/empty/whitespace all default to
+  the internal audit string "Batch account reassignment" and are stored verbatim on the doc.
+  Individual reassignment still requires a non-blank reason (400 otherwise).
+- DEFECT TEST: batch-reassign is NOT atomic (skips failures) — pending fix
 
 No preview endpoint exists in the current implementation.
 """
@@ -298,19 +301,170 @@ class TestBatchReassignment:
         assert resp.status_code == 400
         assert resp.json()["error"] == "validation_error"
 
-    def test_batch_missing_reason_400(self, client):
-        c, _ = client
+_BATCH_DEFAULT_REASON = "Batch account reassignment"
+
+
+def _find_new_doc(fake, dest_acct, orig_id):
+    """Return the reassigned doc in dest_acct that points at orig_id."""
+    return next(
+        (
+            v for v in fake.portfolio_container._store.values()
+            if v.get("account_id") == dest_acct
+            and v.get("reassigned_from", {}).get("movement_id") == orig_id
+        ),
+        None,
+    )
+
+
+class TestBatchReasonOptional:
+    """Authoritative override: batch reason is optional; standard audit reason stored."""
+
+    def test_batch_missing_reason_returns_200(self, client):
+        """Omitting reason key entirely must not raise a 400."""
+        c, fake = client
+        _seed(fake, "mvt_noreason_01", account_id=SRC_ACCT)
         resp = c.post("/api/portfolio/movements/batch-reassign", json={
+            "source_account_id": SRC_ACCT,
+            "dest_account_id": DST_ACCT,
+        })
+        assert resp.status_code == 200
+
+    def test_batch_missing_reason_stores_default_audit_reason(self, client):
+        """When reason is absent the server records the default audit reason."""
+        c, fake = client
+        _seed(fake, "mvt_noreason_02", account_id=SRC_ACCT)
+        c.post("/api/portfolio/movements/batch-reassign", json={
+            "source_account_id": SRC_ACCT,
+            "dest_account_id": DST_ACCT,
+        })
+        new_doc = _find_new_doc(fake, DST_ACCT, "mvt_noreason_02")
+        assert new_doc is not None, "Reassigned doc must exist in dest account"
+        assert new_doc["reassignment_reason"] == _BATCH_DEFAULT_REASON, (
+            f"Expected '{_BATCH_DEFAULT_REASON}', got {new_doc['reassignment_reason']!r}"
+        )
+
+    def test_batch_empty_string_reason_returns_200(self, client):
+        """reason='' (empty string) must not raise a 400."""
+        c, fake = client
+        _seed(fake, "mvt_empty_01", account_id=SRC_ACCT)
+        resp = c.post("/api/portfolio/movements/batch-reassign", json={
+            "source_account_id": SRC_ACCT,
+            "dest_account_id": DST_ACCT,
+            "reason": "",
+        })
+        assert resp.status_code == 200
+
+    def test_batch_empty_string_reason_stores_default(self, client):
+        """reason='' stored as the standard audit reason, not blank."""
+        c, fake = client
+        _seed(fake, "mvt_empty_02", account_id=SRC_ACCT)
+        c.post("/api/portfolio/movements/batch-reassign", json={
+            "source_account_id": SRC_ACCT,
+            "dest_account_id": DST_ACCT,
+            "reason": "",
+        })
+        new_doc = _find_new_doc(fake, DST_ACCT, "mvt_empty_02")
+        assert new_doc is not None
+        assert new_doc["reassignment_reason"] == _BATCH_DEFAULT_REASON
+
+    def test_batch_whitespace_reason_returns_200(self, client):
+        """reason='   ' (whitespace-only) must not raise a 400."""
+        c, fake = client
+        _seed(fake, "mvt_ws_01", account_id=SRC_ACCT)
+        resp = c.post("/api/portfolio/movements/batch-reassign", json={
+            "source_account_id": SRC_ACCT,
+            "dest_account_id": DST_ACCT,
+            "reason": "   ",
+        })
+        assert resp.status_code == 200
+
+    def test_batch_whitespace_reason_stores_default(self, client):
+        """Whitespace-only reason stripped to empty → stored as default audit reason."""
+        c, fake = client
+        _seed(fake, "mvt_ws_02", account_id=SRC_ACCT)
+        c.post("/api/portfolio/movements/batch-reassign", json={
+            "source_account_id": SRC_ACCT,
+            "dest_account_id": DST_ACCT,
+            "reason": "   ",
+        })
+        new_doc = _find_new_doc(fake, DST_ACCT, "mvt_ws_02")
+        assert new_doc is not None
+        assert new_doc["reassignment_reason"] == _BATCH_DEFAULT_REASON
+
+    def test_batch_null_reason_returns_200(self, client):
+        """reason=null treated as omitted — must not raise a 400."""
+        c, fake = client
+        _seed(fake, "mvt_null_01", account_id=SRC_ACCT)
+        resp = c.post("/api/portfolio/movements/batch-reassign", json={
+            "source_account_id": SRC_ACCT,
+            "dest_account_id": DST_ACCT,
+            "reason": None,
+        })
+        assert resp.status_code == 200
+
+    def test_batch_null_reason_stores_default(self, client):
+        """reason=null is treated as absent — stored as the standard audit reason."""
+        c, fake = client
+        _seed(fake, "mvt_null_02", account_id=SRC_ACCT)
+        c.post("/api/portfolio/movements/batch-reassign", json={
+            "source_account_id": SRC_ACCT,
+            "dest_account_id": DST_ACCT,
+            "reason": None,
+        })
+        new_doc = _find_new_doc(fake, DST_ACCT, "mvt_null_02")
+        assert new_doc is not None
+        assert new_doc["reassignment_reason"] == _BATCH_DEFAULT_REASON
+
+    def test_explicit_reason_stored_verbatim(self, client):
+        """An explicitly supplied reason must be stored unchanged, not overwritten."""
+        c, fake = client
+        _seed(fake, "mvt_expl_01", account_id=SRC_ACCT)
+        c.post("/api/portfolio/movements/batch-reassign", json={
+            "source_account_id": SRC_ACCT,
+            "dest_account_id": DST_ACCT,
+            "reason": "Correcting broker import error",
+        })
+        new_doc = _find_new_doc(fake, DST_ACCT, "mvt_expl_01")
+        assert new_doc is not None
+        assert new_doc["reassignment_reason"] == "Correcting broker import error"
+
+    def test_individual_reassign_blank_reason_still_400(self, client):
+        """Individual reassignment must still reject a blank/missing reason."""
+        c, fake = client
+        _seed(fake, "mvt_ind_blank", account_id=SRC_ACCT)
+        resp = c.post("/api/portfolio/movements/mvt_ind_blank/reassign", json={
             "source_account_id": SRC_ACCT,
             "dest_account_id": DST_ACCT,
         })
         assert resp.status_code == 400
         assert resp.json()["error"] == "validation_error"
 
+    def test_individual_reassign_empty_string_reason_still_400(self, client):
+        """Individual reassignment with reason='' must also reject."""
+        c, fake = client
+        _seed(fake, "mvt_ind_empty", account_id=SRC_ACCT)
+        resp = c.post("/api/portfolio/movements/mvt_ind_empty/reassign", json={
+            "source_account_id": SRC_ACCT,
+            "dest_account_id": DST_ACCT,
+            "reason": "",
+        })
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "validation_error"
 
-# ===========================================================================
-# Batch atomicity — fail-fast + compensating rollback
-# ===========================================================================
+    def test_individual_reassign_whitespace_reason_still_400(self, client):
+        """Individual reassignment with reason='  ' must also reject."""
+        c, fake = client
+        _seed(fake, "mvt_ind_ws", account_id=SRC_ACCT)
+        resp = c.post("/api/portfolio/movements/mvt_ind_ws/reassign", json={
+            "source_account_id": SRC_ACCT,
+            "dest_account_id": DST_ACCT,
+            "reason": "  ",
+        })
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "validation_error"
+
+
+
 
 class TestBatchAtomicityDefect:
     def test_batch_is_atomic_on_failure(self, client):

@@ -4,7 +4,7 @@ import type { Plan } from "@/types/plans";
 import type { SymbolsOverview } from "@/types/symbols";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Action Plans — Option Income Lab" };
+export const metadata = { title: "Action Plans — Portfolio Income Lab" };
 
 export default async function PlansPage() {
   let plans: Plan[] = [];

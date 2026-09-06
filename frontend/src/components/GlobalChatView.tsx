@@ -117,7 +117,7 @@ export default function GlobalChatView() {
         role: "assistant",
         ephemeral: true,
         content:
-          "Hello! I'm your Option Income Lab advisor. I have access to your selected agents " +
+          "Hello! I'm your Portfolio Income Lab advisor. I have access to your selected agents " +
           `(${selectedAgents.map((a) => a.label).join(", ")}), covering all of your open positions and tracked follow-ups, ` +
           `with up to ${activitiesLimit} recent activities each. ` +
           (includeSymbolData

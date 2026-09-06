@@ -10,7 +10,7 @@ export async function generateMetadata({
   params: Promise<{ activityId: string }>;
 }) {
   const { activityId } = await params;
-  return { title: `Discuss Activity ${activityId} — Option Income Lab` };
+  return { title: `Discuss Activity ${activityId} — Portfolio Income Lab` };
 }
 
 export default async function ActivityChatPage({

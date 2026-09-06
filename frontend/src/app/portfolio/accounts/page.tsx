@@ -1,6 +1,6 @@
 import AccountsView from "@/components/AccountsView";
 
-export const metadata = { title: "Accounts — Option Income Lab" };
+export const metadata = { title: "Accounts — Portfolio Income Lab" };
 
 export default function AccountsPage() {
   return (

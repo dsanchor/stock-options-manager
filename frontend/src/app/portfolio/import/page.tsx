@@ -1,6 +1,6 @@
 import ImportChat from "@/components/ImportChat";
 
-export const metadata = { title: "Import — Option Income Lab" };
+export const metadata = { title: "Import — Portfolio Income Lab" };
 
 export default function ImportPage() {
   return (
