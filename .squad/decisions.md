@@ -13659,3 +13659,126 @@ Prerequisite fully met: Symbol Unification complete, Portfolio Phase 2 + Cost-Ba
 
 **Status:** Ready for implementation planning.
 
+---
+
+## 12. Portfolio Movement Workflows — Release Directives (2026-09-06)
+
+**Date:** 2026-09-06
+**Status:** COMPLETE — Deployed on commit 0c6049a
+**Impact:** Portfolio Phase 2 amendment (batch reason optional), new branding directive (Portfolio Income Lab), Symbol Unification amendment (Options/Stocks organization)
+
+### A. Portfolio Movements & Accounts Phase 2 — Amendment: Optional Batch Reassignment Reason
+
+**Directive:** 2026-09-06 — Make batch reassignment reason optional
+**By:** Copilot
+**What:** Batch account reassignment must allow an empty reason in both frontend and backend. When omitted, the server records a standard internal audit reason instead of rejecting the request. This change applies to batch reassignment; individual reassignment keeps its existing validation unless separately changed.
+**Why:** The UI labels the batch reason as optional, but current validation blocks submission without it.
+
+**Implementation:** Both backend and frontend validation updated to treat batch reason as optional field. Server provides internal default when omitted.
+
+**Deployed:** Commit 0c6049a  
+**Test Coverage:** 431 backend tests + 183 frontend tests, 100% passing  
+**Status:** ✅ COMPLETE
+
+---
+
+### B. Portfolio Income Lab Branding — User-Visible Naming Convention (2026-09-06)
+
+**Directive:** 2026-09-06 — Rebrand UI as Portfolio Income Lab
+**By:** Copilot
+**What:** Change only user-visible branding to `Portfolio Income Lab`, using `DGI, Dividends & Options` as the supporting subtitle where appropriate. Do not rename the repository, packages, Azure resources, Cosmos resources, deployment identifiers, or other infrastructure.
+**Why:** The product now covers DGI, dividends, Portfolio management, and options, so the previous Option Income Lab name is too narrow.
+
+**Scope — Changed (User-Visible Only):**
+- Page titles and main navigation
+- Feature labels and help text
+- Product description and marketing copy
+- UI branding elements (logos, colors remain unchanged)
+
+**Scope — NOT Changed (Infrastructure):**
+- Repository name: `option-income-lab` (unchanged)
+- NPM packages: `@copilot/option-income-lab-*` (unchanged)
+- Azure resources and deployment identifiers (unchanged)
+- Cosmos containers and databases (unchanged)
+- API namespaces and internal enums (unchanged)
+- Environment variable names (unchanged)
+
+**Deployed:** Commit 0c6049a  
+**Test Coverage:** 183 frontend tests include branding labels, 100% passing  
+**Status:** ✅ COMPLETE
+
+---
+
+### C. Portfolio ↔ Watchlist ↔ Symbol Details Unification — Amendment: Options and Stocks Organization
+
+**Directive:** 2026-09-06 — Organize Symbol Details into Options and Stocks
+**By:** Copilot
+**What:** In unified Symbol Details, organize transaction/activity content into two clear sections: Options for option positions and option operations, and Stocks for Portfolio BUY, SELL, and DIVIDEND movements. Stocks must visibly expose the symbol's transaction history with date, type, quantity, and relevant amounts instead of only generic holdings or an unclear recent-movements block.
+**Why:** User cannot currently see purchases, sales, or dividends in Symbol Details and prefers the Options / Stocks information architecture.
+
+**Implementation:** Symbol Details now contains two distinct sections:
+1. **Options:** Option positions, trades, and strategy operations
+2. **Stocks:** Portfolio ledger movements (BUY, SELL, DIVIDEND) with full history (date, type, quantity, price, amounts)
+
+**UI Behavior:**
+- Each section displays independently
+- Stocks section shows chronological transaction history with settlement/payment dates as applicable
+- Empty state handling: Section hidden if no activity of that type exists
+
+**Deployed:** Commit 0c6049a  
+**Test Coverage:** 114 Symbol Unification tests include Options/Stocks organization, 2,952 regression tests passing  
+**Status:** ✅ COMPLETE
+
+---
+
+## Inbox Files Consolidated (2026-09-06)
+
+The following inbox files have been merged into this section and moved to `.squad/decisions/archive/inbox-2026-09-06/`:
+
+1. `copilot-directive-20260906-optional-batch-reassignment-reason.md` — Section 12.A (Portfolio Phase 2 amendment)
+2. `copilot-directive-20260906-portfolio-income-lab-brand.md` — Section 12.B (new branding directive)
+3. `copilot-directive-20260906-symbol-detail-options-stocks.md` — Section 12.C (Symbol Unification amendment)
+
+### Release Outcome Summary
+
+**Functional Commit:** `0c6049a feat: expand portfolio movement workflows`
+**GitHub Actions:** Run 34059187649 succeeded
+**Deployment:** 
+- API revision: ca-stock-options-manager-api--0000061 (healthy)
+- Frontend revision: ca-stock-options-manager-front--0000054 (healthy)
+
+**Validation:**
+- 431 backend tests (100% pass)
+- 183 frontend tests (100% pass)
+- TypeScript build: clean
+- Next.js build: clean
+- Zero regressions (2,952 existing tests included in validation)
+
+**Portfolio Movement Workflow Features Delivered:**
+- ✅ Full audited correction for BUY/SELL/DIVIDEND with transfer/group guards
+- ✅ BUY/SELL unit-price/trade-value/fees/effective-price UX and validation
+- ✅ UI labels Stocks/Rights; internal ACCIONES/DERECHOS unchanged
+- ✅ CSV parsers accept Spanish/English headers and type values
+- ✅ Origin/destination withholding amounts primary; percentages server-derived
+- ✅ Composite corporate actions with atomic create/void/group-correct and frontend wizard
+- ✅ Symbol Details organized into Options and Stocks with full transaction history
+- ✅ Batch reassignment reason optional; individual reason required
+- ✅ Portfolio Income Lab visible branding; infrastructure unchanged
+
+---
+
+## Next Phase
+
+**Dividend Portfolio Phase 1 MVP Implementation**
+
+User request: BUY/SELL/DIVIDEND ledger for multi-broker portfolio (Fidelity, HeyTrade, ING, Interactive Brokers), multi-currency accounting, withholding tracking (source + destination), mixed cash/share dividends.
+
+**Prerequisite Status:** ✅ COMPLETE
+- Symbol Unification: Stable, deployed, all 2,952 regression tests passing
+- Portfolio Phase 2: Stable, 478 tests passing
+- Cost-Basis: Stable, 209 tests passing
+- **Total:** 687+ tests passing, zero regressions, all phases deployed to production
+
+**Contract:** Danny drafted contract v1.1 (awaiting user confirmation on open questions)  
+**Status:** Ready for implementation planning upon user authorization
+

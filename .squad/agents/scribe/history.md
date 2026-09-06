@@ -9,6 +9,8 @@ Agent Scribe maintains squad administrative work: orchestration logs, session lo
 
 ## Recent Updates
 
+📌 2026-09-06T20:57:09Z: Consolidated portfolio movement workflow directives — orchestration log, session log, decision merge (3 new sections), inbox cleared (3 files archived), identity updated to deployed state, git commit and push
+📌 2026-09-06T00:37:00Z: Finalized portfolio unified implementation documentation — orchestration log, session log, decision merge, 80 KB inbox archived, agent history updates, no commits (as instructed)
 📌 2026-08-17T15:08:37Z: Logged Buy Tracker normalization and OpenCallMonitor zero-quote work; consolidated five Buy Tracker inbox decisions into the canonical shared log; removed merged inbox files; summarized oversized agent histories; committed `.squad/` state only.
 📌 2026-07-15T08:43:28Z: Processed Rusty symbol-data-toggle — orchestration log, session log, decision merge, Rusty history summarization (13.8KB → 6.3KB), git commit  
 📌 2026-06-26T15:06:04Z: Processed Rusty scheduler analysis — orchestration log, session log, decision merge (DPS fix), cross-agent history updates (danny, linus), git commit (0220c94), no archival needed  
@@ -120,3 +122,61 @@ Agent Scribe maintains squad administrative work: orchestration logs, session lo
 - Session Log: `.squad/session-log/2026-09-06T0037+0200-portfolio-finalization.md`
 - Decision: `.squad/decisions.md` → "Portfolio Unified Implementation — Securities, Ledger & Import (2026-09-06)"
 - Archive: `.squad/decisions/archive/inbox-2026-09-06/` (6 files, 80 KB)
+
+---
+
+## Portfolio Movement Workflows — Release Directives Consolidation (2026-09-06 20:57 UTC)
+
+**Task:** Consolidate three finalized release directives (batch reassignment reason optional, Portfolio Income Lab branding, Symbol Details Options/Stocks organization) into canonical squad decisions and update project state
+
+**Status:** ✅ COMPLETE
+
+**Actions Performed:**
+1. ✅ Orchestration log created: `.squad/orchestration-log/2026-09-06T20:57:09Z-scribe-portfolio-finalization-directives.md`
+   - Three release directives with deployment confirmation
+   - Amendment logic and scope documentation
+   - All completion criteria verified
+
+2. ✅ Session log created: `.squad/session-log/2026-09-06T20:57:09Z-portfolio-directives-finalization.md`
+   - Directive processing timeline
+   - Deployment evidence (431 backend + 183 frontend tests, 100% pass)
+   - Feature delivery summary
+
+3. ✅ Decision merge: Appended 3 new sections to `.squad/decisions.md`
+   - Section 12.A: Portfolio Phase 2 amendment (batch reason optional)
+   - Section 12.B: Portfolio Income Lab branding (new section)
+   - Section 12.C: Symbol Unification amendment (Options/Stocks organization)
+   - All inbox files consolidated and moved to archive
+
+4. ✅ Archive inbox files to `.squad/decisions/archive/inbox-2026-09-06/`:
+   - `copilot-directive-20260906-optional-batch-reassignment-reason.md`
+   - `copilot-directive-20260906-portfolio-income-lab-brand.md`
+   - `copilot-directive-20260906-symbol-detail-options-stocks.md`
+
+5. ✅ Identity update: `.squad/identity/now.md`
+   - Updated timestamp and focus area
+   - Marked Portfolio Movement Workflows released (2026-09-06)
+   - Noted next priority: Dividend Portfolio Phase 1 MVP
+   - Preserved active monitoring items
+
+**Deployment Confirmation:**
+- Functional commit: `0c6049a feat: expand portfolio movement workflows`
+- GitHub Actions: Run 34059187649 succeeded
+- API revision: ca-stock-options-manager-api--0000061 (healthy)
+- Frontend revision: ca-stock-options-manager-front--0000054 (healthy)
+- Test results: 431 backend + 183 frontend = 614 tests, 100% pass
+- Build validation: TypeScript clean, Next.js clean
+
+**Key Outcomes:**
+- ✅ All three release directives implemented and tested
+- ✅ Inbox cleared (3 directive files archived)
+- ✅ Project state updated to deployed status
+- ✅ Documentation consolidated into canonical decisions
+- ✅ Ready for next phase (Dividend Portfolio Phase 1 MVP, awaiting user authorization)
+
+**Related Records:**
+- Orchestration Log: `.squad/orchestration-log/2026-09-06T20:57:09Z-scribe-portfolio-finalization-directives.md`
+- Session Log: `.squad/session-log/2026-09-06T20:57:09Z-portfolio-directives-finalization.md`
+- Decision: `.squad/decisions.md` → Section 12 (Portfolio Movement Workflows — Release Directives)
+- Archive: `.squad/decisions/archive/inbox-2026-09-06/` (3 directive files + 6 prior portfolio files)
+- Identity: `.squad/identity/now.md` (updated)

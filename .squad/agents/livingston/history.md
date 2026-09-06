@@ -1636,3 +1636,233 @@ Written to `.squad/decisions/inbox/livingston-symbol-unification-api-contract.md
 - Ledger authoritative principle maintained (enrollment failures never roll back ledger)
 - Read-repair safety verified (existing configs never overwritten)
 - Portfolio/Watchlist mutual exclusivity enforced (API + UI)
+
+---
+
+## 2026-09-06 — Full Movement Correction API hardening (Danny contract §Part B/C/D)
+
+**Task:** Implement complete audited correction of BUY, SELL, and DIVIDEND movements per Danny's frozen contract (`danny-zero-filter-full-correction-contract.md`). Transfer correction guard. Full field-matrix validation. Net recomputation server-side source of truth.
+
+**Root analysis:** The existing `correct_movement()` had:
+1. No transfer blocking — TRANSFER_OUT/TRANSFER_IN could be "corrected" (breaking the pair invariant)
+2. No type-specific field restrictions (BUY accepting withholding, SELL accepting cost_basis_status, etc.)
+3. No structural validation of gross/fees/fx/withholding sub-fields
+4. No explicit withholding structure enforcement (§D.2)
+5. No enum validation for sales_type / cost_basis_status / fx.rate_source
+6. Nullable override via key-presence check absent — `quantity: null` and `withholding: null` sent by client were silently ignored (value-is-not-None check)
+7. No explicit net trigger distinction — `in` operator used on raw dict (already correct for key-presence, but clearing withholding via null wasn't triggering recompute)
+
+**Changes made:**
+
+**`backend/src/portfolio/cosmos_portfolio.py`:**
+- Added module-level `_validate_correction_fields(txn_type, correction_data)` — validates all supplied correction fields against type-specific applicability and structural rules. Raises `ValueError` with explicit detail message. No broad catches.
+- Hardened `correct_movement()`:
+  - Immediately blocks TRANSFER_OUT / TRANSFER_IN with `ValueError("transfer_not_correctable: ...")`
+  - Calls `_validate_correction_fields()` after note validation
+  - Replaced single-loop `overridable` with two-tier override: `_NONNULL_OVERRIDABLE` (skips None) + `_NULLABLE_OVERRIDABLE` (applies even when None — so explicit `null` from JSON clears the field). Nullable fields: `withholding`, `quantity`.
+  - Net recompute trigger uses set intersection on `correction_data` keys (not value check) — catches explicit `withholding: null` correctly.
+
+**`backend/web/portfolio_routes.py`:**
+- Added `transfer_not_correctable` → HTTP 405 branch in `correct_movement` error handler (existing `already_superseded` → 409 preserved; generic validation_error → 400 unchanged).
+
+**`backend/tests/test_portfolio_phase2_corrections.py`:**
+- Extended with 28 new tests covering C-1 through C-15 (contract §F.1):
+  - `TestFullCorrectionFieldMatrix` (13 tests): gross+fees override with net recompute, cost_basis_status toggle, SELL withholding source, sales_type change, DIVIDEND withholding destination null↔value lifecycle, FX override, DIVIDEND quantity null preservation and null→value
+  - `TestFullCorrectionValidation` (13 tests): withholding structure, sales_type enum, type-applicability (BUY+withholding, SELL+cost_basis_status, DIVIDEND+sales_type), FX rate ≤0, FX invalid rate_source, gross missing eur_amount, negative quantity, null quantity on BUY, TRANSFER → 405
+  - `TestCorrectionImportSourceProvenence` (2 tests): replacement always `manual`, original preserves `csv_import`
+
+**Arithmetic rules (server owns net):**
+```
+net_eur = gross_eur - fees_eur - wht_source_eur - wht_dest_eur
+```
+Where:
+- `wht_dest_eur = 0` when `withholding.destination` is `null` (not captured)
+- `wht_dest_eur = 0` when `withholding.destination.amount_eur = "0"` (confirmed zero)
+- Non-provided gross/fees/withholding taken from original doc before recompute
+
+**Withholding null-vs-zero distinction (CRITICAL for Rusty):**
+- `"destination": null` → not captured (⚠️ Pending UI) — `wht_dest = 0`
+- `"destination": {"amount_eur": "0", ...}` → confirmed zero — `wht_dest = 0`
+- `"destination": {"amount_eur": "57", ...}` → withheld — `wht_dest = 57`
+
+**Immutability enforced:**
+- `account_id`, `security_id`, `txn_type` cannot be changed via correction (not in overridable lists)
+- `account_id` change: use `POST /movements/{id}/reassign`
+- Transfer correction: void pair, recreate
+
+**Backward-compatibility:** All 21 pre-existing correction tests continue to pass unchanged.
+
+**Test results:**
+- `test_portfolio_phase2_corrections.py`: 49/49 passed
+- All portfolio suites (phase2, accounts, fx, legacy_compat, manual_movements, reassignment, transfers, holdings, endpoints, parsers, import_service, summary_cost_basis): 659/659 passed
+- Zero regressions
+
+**Files modified:**
+- `backend/src/portfolio/cosmos_portfolio.py` — `_validate_correction_fields` function + `correct_movement` hardening
+- `backend/web/portfolio_routes.py` — `transfer_not_correctable` → 405 route handler
+- `backend/tests/test_portfolio_phase2_corrections.py` — 28 new tests (C-1 through C-15 + provenance)
+
+**Files created:**
+- `.squad/decisions/inbox/livingston-full-correction-api-contract.md` — API contract for Rusty
+
+---
+
+## 2026-09-06 — PAUSE: DIVIDEND correction/creation pending Danny's contract amendment
+
+**Directive received (2026-09-06T20:51):** Do not finalize DIVIDEND correction or creation assumptions until Danny's in-flight amendment lands.
+
+**What the amendment will address:**
+1. **Withholding direction:** `amount_eur` is user-entered; `rate_pct` is auto-calculated by server, not stored as input. Reverses the current assumption that the client provides both.
+2. **DIVIDEND composite model:** A DIVIDEND may be a linked composite corporate action with distinct legs: residual cash, partial rights sale, shares from remaining rights, optional investor cash top-up to round whole shares. Multiple movements; DO NOT flatten into one; do not fabricate quantity/cost.
+3. Correction of composite DIVIDEND movements (all linked legs or just the cash leg?) TBD in amendment.
+
+**Scope of pause:**
+- DIVIDEND-specific correction fields: `withholding`, `quantity` null semantics, `gross`/`fees`/`fx` (all ⚠️ pending)
+- DIVIDEND creation (new endpoint or extended `ManualMovementCreate`) — do not extend until amendment
+- Composite corporate action schema — do not design until amendment
+
+**What remains safe and DONE:**
+- BUY correction (all fields): ✅ hardened, tested, backward-compatible
+- SELL correction (all fields including `sales_type`, `withholding`): ✅ hardened, tested
+- Transfer guard (TRANSFER_OUT/IN → 405): ✅ complete
+- Generic validation (FX, gross structure, fees structure, enums): ✅ complete and applies to all types
+- Audit chain (supersession, `corrects_movement_id`, `superseded_by`): ✅ unchanged
+
+**What was flagged in existing code:**
+- `test_portfolio_phase2_corrections.py` — C-5 through C-7, C-10, C-12, C-13 have a `# ⚠️ PENDING AMENDMENT` banner; tests still pass against current code but must be revised when amendment lands
+- `TestFullCorrectionValidation` docstring warns about C-14a/b DIVIDEND withholding assumption
+- `.squad/decisions/inbox/livingston-full-correction-api-contract.md` — DIVIDEND column in field matrix marked ⚠️ pending; top-of-file amendment banner added for Rusty
+
+**Action on amendment arrival:** Re-read amendment → determine composite model → revise `create_manual_movement` or add composite action endpoint → update correction to handle composite → revise C-5 through C-13 tests → update Rusty contract DIVIDEND section.
+
+---
+
+## 2026-09-06 — Symbol Detail stocks history investigation + backend fixes
+
+**Task:** Investigate why Symbol Details does not visibly show BUY/SELL/DIVIDEND operations. Fix backend and frontend non-DIVIDEND parts. Write Rusty spec for Options/Stocks tabs.
+
+**Root causes found (4):**
+
+1. **Bug B1 — `movement_count` always = len ≤ 5 (both `_compute_symbol_detail` code paths)**  
+   `get_movements` returns `(items, total_count)`; the total was discarded with `_`. `movement_count` was set to `len(recent_movements)` which equals the fetch limit. The "showing N of M" badge in `SymbolMovementsTable` never triggered, and users had no signal that more movements existed.
+
+2. **Bug B2 — Movements gated on `holding is not None`**  
+   Both code paths (portfolio_only + main) fetched movements inside `if holding:`. A fully-exited security (0 shares, no active holding returned by `compute_holdings()`) had `portfolio_field = None`, so `hasPortfolio = false` and `SymbolMovementsTable` was never rendered.
+
+3. **Bug B3 — `_map_recent_movement` too sparse**  
+   Only returned: `txn_type`, `trade_date`, `quantity`, `gross_eur`. Missing: `fees_eur`, `net_eur`, `currency`, `account_id`, `sales_type`, `correction_status`, `import_source`. Not enough for a Stocks history tab.
+
+4. **Bug B4 — No Options/Stocks tabs at all (frontend)**  
+   `PortfolioHoldingsCard` + `SymbolMovementsTable` + `PositionsTable` + activities + plans all stacked vertically with no tab delineation. Primary reason the user sees no clear stock history. Rusty's domain.
+
+**Backend fixes implemented (safe, non-DIVIDEND):**
+
+- `backend/web/app.py`:
+  - `_map_recent_movement`: added `fees_eur`, `net_eur`, `currency`, `account_id`, `sales_type`, `correction_status`, `import_source`
+  - Both `_compute_symbol_detail` paths: decoupled movements fetch from `if holding:`, use real `total_count`, limit 5→10
+  - Historical/exited securities (no active holding but movements exist) now get a minimal `portfolio_field` with `current_shares: "0"` so `hasPortfolio = true` and `SymbolMovementsTable` renders
+
+- `frontend/src/types/symbol-detail.ts`:
+  - `RecentMovement` extended with 7 new optional fields (`fees_eur`, `net_eur`, `currency`, `account_id`, `sales_type`, `correction_status`, `import_source`)
+
+- `frontend/src/components/SymbolMovementsTable.tsx`:
+  - Added "Net (EUR)" column, "Gross (EUR)" column (was "Amount")
+  - SELL: shows "Sell · Rights" / "Sell · Shares" sub-label
+  - Section heading changed to "Stock Movements"
+  - `tsc --noEmit` exits 0
+
+**Frontend tab work (Rusty's):**  
+Written to `.squad/decisions/inbox/livingston-symbol-detail-stocks-tab-findings.md`:
+- Tab architecture (Options / Stocks), default tab logic, visibility rules per `symbol_state`
+- Tab state: session-only `useState`, default to `options` for watchlist symbols, `stocks` for portfolio-only
+- Recommended component: `SymbolDetailTabs.tsx`
+- Stocks tab order: `SymbolMovementsTable` first, then `PortfolioHoldingsCard`
+- Options tab: existing positions + plans + activities (no behavior change)
+- DIVIDEND-specific tab features (withholding, composite legs) deferred to amendment
+
+**Tests:** 153/153 across corrections + endpoints + holdings — zero regressions.
+
+---
+
+### 2026-09-06 — Amendments G, H, I implemented
+
+Full implementation of Danny's Amendments G, H, I per the frozen contract.
+
+#### Amendment G — Bilingual CSV parsers
+
+**Files modified:**
+- `backend/src/portfolio/parsers/purchases.py`: replaced positional exact-match header validation with `_PURCHASES_HEADER_ALIASES` dict (position → set of acceptable normalized strings). Added `unicodedata` import at module top. `_normalize_header` now collapses internal whitespace.
+- `backend/src/portfolio/parsers/sales.py`: same alias approach. Added `_TIPO_ALIASES` for variant detection (accepts "type", "sale type" as well as "tipo"). Added `_SALES_TYPE_ALIASES` for English type values (Stocks/Shares→ACCIONES, Rights→DERECHOS). `_normalize_sales_type()` now rejects non-empty unrecognized values (previously only recognized Spanish).
+- `backend/src/portfolio/parsers/dividends.py`: same alias approach for all 8 columns.
+
+**Tests added:** `TestPurchasesParserBilingual`, `TestSalesParserBilingual`, `TestDividendsParserBilingual` in `test_portfolio_parsers.py` (+17 tests, total 96/96).
+
+**Frontend concern:** `SALES_TYPE_LABELS` constant (`ACCIONES→"Stocks"`, `DERECHOS→"Rights"`) is Rusty's domain. See updated Rusty contract.
+
+#### Amendment H — WHT Rate Derivation + Corporate-Action Groups
+
+**WHT rate derivation (server-authoritative):**
+- Added `_derive_wht_rate_pct(amount_eur, gross_eur)` and `_apply_wht_rate_derivation(wht, gross_eur)` module-level helpers in `cosmos_portfolio.py`.
+- `create_manual_movement()`: applies `_apply_wht_rate_derivation` before upsert. Client-sent `rate_pct` overwritten server-side.
+- `correct_movement()`: after net recompute, if withholding is in replacement, derives `rate_pct` from corrected amounts.
+- Formula: `rate_pct = (amount_eur / gross_eur) × 100`, rounded to 2dp. Returns "0" when gross_eur is zero.
+
+**Corporate-action group models (`models.py`):**
+- `CaLegType` enum: `CASH_DIVIDEND`, `RIGHTS_SOLD`, `SHARE_ACQUISITION`, `CASH_TOP_UP`
+- `CaEventType` enum: `CASH_DIVIDEND`, `DIVIDEND_WITH_SCRIP`, `SCRIP_DIVIDEND`, `RIGHTS_ISSUE`
+- `CorporateActionLegCreate` Pydantic model (per-leg fields)
+- `CorporateActionCreateRequest` Pydantic model (group request)
+- Added optional `ca_group_id`, `ca_leg_type`, `ca_event_type`, `ca_group_seq` to `ManualMovementCreate`
+
+**Corporate-action service (`cosmos_portfolio.py`):**
+- `_CA_LEG_TXN_TYPE` mapping: `CASH_DIVIDEND→DIVIDEND`, `RIGHTS_SOLD→SELL`, `SHARE_ACQUISITION→BUY`, `CASH_TOP_UP→BUY`
+- `_CA_REQUIRED_LEGS` mapping per event type
+- `create_corporate_action(request)`: validates required legs, generates `ca_group_id = f"cag_{uuid4().hex}"`, maps each leg to `ledger_txn` with correct `txn_type`/`sales_type`/`cost_basis_status`, stores all-or-nothing (validation before any write). Applies WHT rate derivation per leg.
+- `void_corporate_action_group(ca_group_id, account_id, reason)`: queries active legs by `ca_group_id`, voids all atomically (sequential replace_item). Raises `ValueError("no_active_legs: ...")` when nothing found.
+- `conftest_portfolio_p2.py`: Added `ca_group_id` filter support to `FakePortfolioContainer.query_items`.
+
+**New routes (`portfolio_routes.py`):**
+- `POST /api/portfolio/corporate-actions`: calls `svc.create_corporate_action(body)`, returns 201
+- `POST /api/portfolio/corporate-actions/{ca_group_id}/void`: calls `svc.void_corporate_action_group()`, `no_active_legs` → 404
+
+**Tests added:** `test_portfolio_corporate_actions.py` — 26 tests covering H-T1 through H-T10, WHT derivation H-W1 through H-W3, standalone movement regression H-21.
+
+#### Amendment I — Symbol Detail stacked sections
+
+**Backend:** No changes needed. Existing `GET /api/portfolio/movements?security_id=...` suffices for `StockTransactionsTable`.
+
+**Contract update:** `livingston-symbol-detail-stocks-tab-findings.md` updated — tabs spec replaced with stacked `DetailSection` components per Amendment I §I.2.2. `SymbolMovementsTable` deprecated; `StockTransactionsTable` is the new component.
+
+**Tests: 274/274 portfolio-domain tests pass (0 regressions).**
+
+---
+
+## Session: Atomic Group Correction (2026-09-06 continued)
+
+**Task:** Implement `POST /api/portfolio/corporate-actions/{ca_group_id}/correct`
+
+### Implementation
+
+1. **`cosmos_portfolio.py`** — Added `_CA_FINANCIAL_FIELDS` frozenset constant; added financial-field guard in `correct_movement()` (after TRANSFER guard); added `correct_corporate_action_group()` with two-phase write+supersede and compensation rollback on failure.
+
+2. **`models.py`** — Added `CorporateActionCorrectRequest` Pydantic model with validators for `correction_note` (nonempty), `event_type` (valid enum), `legs` (nonempty).
+
+3. **`portfolio_routes.py`** — Added `POST /api/portfolio/corporate-actions/{ca_group_id}/correct` route with error-code mapping: 404 for `no_active_legs`, 409 for `integrity_error`, 400 for `ca_group_correction_failed` and all validation errors.
+
+4. **`test_portfolio_corporate_actions.py`** — Updated H-T7 tests to reflect new guard semantics (non-financial corrections only); added H-T11 through H-T18 (group correction tests) + H-G1 through H-G3 (guard tests).
+
+### Key decisions
+
+- All legs share same `account_id` (enforced at create time) so compensation operates within single partition — cross-partition atomicity not needed but compensation loop implemented for future safety.
+- `security_id` and `payment_date` inferred from original legs when omitted in correction request.
+- `rate_pct` always server-derived in group correction (same as create and individual correction).
+- Old H-T7 "replacement inherits ca_group_id after financial correction" tests replaced — that behavior is now guard-blocked; H-G1 explicitly tests the guard.
+
+### Test results
+
+- `test_portfolio_corporate_actions.py`: **40/40** (was 26)
+- `test_portfolio_phase2_corrections.py`: **49/49** (unchanged)
+- `test_portfolio_phase2_reassignment.py`: **23/23** (unchanged)
+- `test_portfolio_parsers.py`: **96/96** (unchanged)
+- Full portfolio suite (excluding unrelated yfinance): **216 passed, 1 xfailed**
+

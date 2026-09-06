@@ -1598,3 +1598,85 @@ Identical: `h-full` on Reveal, animated entrance, tone-based coloring, tooltip v
 
 **Durable pattern learned:** Symbol Unification demonstrates safe idempotent cross-container synchronization without transactional guarantees. The pattern (ledger authoritative + best-effort secondary write + read-repair recovery) works at scale for N≤3 accounts. Provides template for future Portfolio expansions.
 
+---
+
+📌 2026-09-06T20:37:00+02:00: **Contract drafted: Portfolio zero-share filter + full movement correction**
+
+**Context:** User requested two features: (1) Symbols page Portfolio section should hide zero-share rows by default, matching PortfolioHoldingsTable pattern; (2) Correction dialog should allow modifying ALL financial fields (gross, fees, withholding, FX, cost_basis_status, sales_type) — not just date/quantity.
+
+**Key design decisions made:**
+1. **Zero-share filter:** Exact-zero hidden, negatives visible, nulls visible. Watchlist NEVER filtered. Count badge reflects filtered count. Session-only `useState(true)` — matches Holdings table pattern. No backend changes.
+2. **Full correction field matrix:** Type-adaptive form. BUY exposes gross/fees/fx/cost_basis_status. SELL adds sales_type + optional withholding. DIVIDEND exposes full withholding (source + destination) with 3-state null/zero/value control. Transfer corrections blocked (void+recreate).
+3. **Withholding null vs zero:** 3-state radio in correction form. "Not captured" sends null, "Zero" sends `{amount_eur: "0"}`, "Value" sends full object. Critical for Phase 4 fiscal export.
+4. **Net recomputation:** Server-side only. Client never sends `net`. Backend `correct_movement()` already handles this via existing override-and-recompute logic.
+5. **No backend route changes:** `MovementCorrectionRequest` already accepts all fields. Only minor validation hardening for withholding structure.
+6. **No migration:** Additive UI changes only.
+
+**Output:** `.squad/decisions/inbox/danny-zero-filter-full-correction-contract.md`
+**Ownership:** Livingston (backend tests C-1→C-15), Rusty (frontend form + filter), Basher (E2E E-1→E-6).
+
+---
+
+📌 2026-09-06T20:43:00+02:00: **Amendment G: BUY/SELL clarity, English labels, bilingual CSV import**
+
+**Context:** User requirements for manual BUY/SELL UX showing qty×price=trade_value, "without fees"/"with fees" labels, English sale-type labels (Stocks/Rights), bilingual CSV headers.
+
+**Key decisions:**
+1. `gross` = trade value (qty × price). Total cost BUY = gross + fees. Net SELL = gross − fees − wht. No backend formula changes.
+2. Unit price is UI-only; server only sees gross. Cross-validation: |qty×price − gross| ≤ 0.01 tolerance.
+3. Keep ACCIONES/DERECHOS internal enum; `SALES_TYPE_LABELS` frontend constant maps to Stocks/Rights.
+4. Bilingual header aliases for all 3 parsers. Type aliases: Stocks/Shares→ACCIONES, Rights→DERECHOS. Non-empty invalid → error.
+
+**Output:** Amendment G (§G.1–G.6) appended to contract. 18 acceptance criteria (G-1→G-18).
+
+---
+
+📌 2026-09-06T20:47:00+02:00: **Amendment H: WHT derivation + composite corporate-action events**
+
+**Context:** User wants WHT rate auto-derived from amount, and creation support for composite dividend events (cash + scrip + rights sold + cash top-up).
+
+**Key architectural decision — Phase H-α vs H-β:**
+- `ca_event`/`ca_leg` model from decisions.md §2.1 is designed but NOT implemented (3–4 sprint effort).
+- Phase H-α (IN SCOPE): linked `ledger_txn` documents with `ca_group_id`, reusing existing infrastructure. Each leg maps to standard txn_type processed by existing holdings_service.
+- Phase H-β (DEFERRED): full ca_event/ca_leg migration with proper parent documents.
+- Migration path: ca_group_id serves as stable bridge between phases.
+
+**Holdings compatibility verified:** CASH_DIVIDEND→DIVIDEND, RIGHTS_SOLD→SELL+DERECHOS, SHARE_ACQUISITION→BUY, CASH_TOP_UP→BUY(qty=0,INCOMPLETE). All use existing code paths.
+
+**Critical design choice:** CASH_TOP_UP with qty=0 + INCOMPLETE adds zero shares AND zero pool cost (INCOMPLETE path skips pool). Preserves Danny consolidation invariant: "top-up cash must not be conflated with cost basis."
+
+**Output:** Amendment H (§H.1–H.6) appended to contract. 22 acceptance criteria (H-1→H-22).
+**New API:** `POST /api/portfolio/corporate-actions`, `POST /api/portfolio/corporate-actions/{ca_group_id}/void`.
+**Ownership:** Livingston (models, cosmos_portfolio, routes, tests), Rusty (multi-leg wizard, WHT derivation, group display), Basher (group lifecycle E2E).
+
+---
+
+📌 2026-09-06T20:52:00+02:00: **Amendment I: Symbol Detail — Options / Stocks section reorganization**
+
+**Context:** User requires Symbol Detail to organize content into "Options" (option positions + agent activities) and "Stocks" (portfolio holdings + full BUY/SELL/DIVIDEND transaction history) sections. Current page interleaves these domains with a minimal "Recent Movements" block.
+
+**Key decisions:**
+1. **Stacked collapsible sections (not tabs)** — matches existing scrollable-stacked page convention. Both sections visible simultaneously. User owns both options and stocks.
+2. **New `StockTransactionsTable`** replaces `SymbolMovementsTable` — full columns (date, type+subtype, qty, gross, fees, WHT, net), pagination (20/page), type-filter pills, row-click to detail. Fees/WHT columns auto-hidden when all zero.
+3. **No backend changes** — calls existing `GET /api/portfolio/movements?security_id=...` with full `LedgerMovement` shape.
+4. **`DetailSection` reusable container** — collapsible section with title, badge, chevron toggle.
+5. **Section visibility:** Options shown when agent content or positions exist. Stocks shown when portfolio exists. Plans remains independent below both.
+
+**Output:** Amendment I (§I.1–I.7) appended to contract. 19 acceptance criteria (I-1→I-19).
+**Ownership:** Rusty (frontend: page restructure, DetailSection, StockTransactionsTable). No backend work.
+
+### 2026-09-06 — Final gate review: full movement/corporate-action/UI release
+
+**Scope reviewed:** 46 files changed (+4166 −434 lines). Contracts: Parts A–F + Amendments G/H/I + batch-reason/branding/symbol-detail directives + Livingston API contract + Rusty investigation findings.
+
+**Evidence verified:**
+- Backend: 421 tests passed (0 fail, 0 skip) — corrections C1–C15, parsers, bilingual, CA groups, holdings effects, group correction, symbol-detail stocks tab, reassignment.
+- Frontend: `tsc --noEmit` clean. Node built-in test runner: 183 tests passed (0 fail) — filterPortfolioRows, salesTypeLabels, filterMovementsByType, symbolDetailVisibility, validateTradeValueMatch, caGroupIndicator, caWizardRequestShape.
+
+**Scope gate (12 items):** All 12 items PASS. Zero-filter exact semantics, full BUY/SELL/DIVIDEND corrections with WHT/fees/FX, transfer protection, grouped CA leg financial-field guard, manual BUY/SELL qty×price semantics with 0.01 tolerance, UI labels Stocks/Rights via SALES_TYPE_LABELS, bilingual CSV headers+values, WHT rate server-derived, composite CA create/void/correct with atomicity, Symbol Details stacked sections with StockTransactionsTable, batch reason optional with stable default, Portfolio Income Lab branding without infrastructure renames, no test-helper leaks into production, no unrelated regressions.
+
+**Advisory notes (non-blocking):**
+1. `models.py` L568–598: `CorporateActionCreateRequest` class declaration missing — its body is stacked inside `CorporateActionCorrectRequest`. NOT runtime-blocking (neither model is instantiated in routes/tests; routes parse raw dicts). Fix: add `class CorporateActionCreateRequest(BaseModel):` before L568.
+2. `purchases.py` L37: duplicate `"comision"` in set literal — cosmetic, Python set deduplicates.
+
+**Verdict: APPROVED** — no high-confidence blockers found.

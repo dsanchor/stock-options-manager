@@ -28,7 +28,184 @@
 
 ## Recent Learnings
 
-### 2026-09-06 — Portfolio Phase 2 Regression Suite — Livingston Contract Reconciliation
+### 2026-09-06 — Reconciliation: Amendments G/H/I + Optional Batch Reason (Livingston final contract)
+
+**Scope:** Reconciled all Basher test files against Livingston's final contract and Symbol Detail findings. No production code changed.
+
+**Contract deltas confirmed:**
+- **G**: `SALES_TYPE_LABELS` already in `portfolio.ts` (`ACCIONES→"Stocks"`, `DERECHOS→"Rights"`). `getSalesTypeLabel()` helper added.
+- **H**: `LedgerMovement` in `portfolio.ts` already has `ca_group_id/ca_leg_type/ca_event_type/ca_group_seq`. `_clean()` in portfolio_routes passes all `ca_*` fields through verbatim. `isCaGroupMovement()` helper added.
+- **I (stacked sections)**: Architecture confirmed — `Options` + `Stocks` are stacked collapsible sections (not tabs). `shouldShowOptionsSection`/`shouldShowStocksSection` helpers match. `StockTransactionsTable` uses `GET /api/portfolio/movements?security_id=...` directly (full `LedgerMovement`, not `_map_recent_movement`).
+- **Bug fixes (all backend-DONE)**: Bug 2 (real `movement_count`), Bug 3 (movements outside `if holding:`), Bug 4 (`_map_recent_movement` 13 fields) — all verified by existing passing tests.
+- **Batch reason**: `null` JSON → `str(None)` = `"None"` stored (not default) — confirmed xfail defect.
+
+**Terminology confirmed (no violations found):**
+- User-facing: `Symbol` (symbol_state, symbolDetailVisibility helpers, StockTransactionsTable)
+- Internal: `security_id`, `security_master`, `seed_security()` — these are data-model names, correct
+- No tests expose internal "security" names in user-facing assertion messages
+
+**New files created:**
+- `frontend/src/lib/salesTypeLabels.ts` — `getSalesTypeLabel()` + re-exports `SALES_TYPE_LABELS`
+- `frontend/tests/salesTypeLabels.test.mjs` — 20 tests: constant values, helper, exhaustive coverage
+- `frontend/src/lib/caGroupIndicator.ts` — `isCaGroupMovement()`, `getCaLegTypeLabel()`, `CA_LEG_TYPE_LABELS`
+- `frontend/tests/caGroupIndicator.test.mjs` — 22 tests: group indicator, leg type labels, coverage
+
+**Updated files:**
+- `backend/tests/test_symbol_detail_stocks_tab.py` — added §7: `TestMovementsEndpointForStocksTable` (8 tests) + `TestMovementsEndpointCaGroupFields` (7 tests) = 15 new tests
+
+**Final counts:**
+- Frontend: 125/125 pass (all 6 test files)
+- Backend: 202 pass, 14 skipped (DIVIDEND), 1 xfailed (null-reason), 0 fail (all Basher files)
+
+**Key learnings for future sessions:**
+- `GET /api/portfolio/movements` uses `_clean(doc)` which strips only Cosmos system keys — all `ca_*` fields pass through unchanged
+- `_map_recent_movement()` is for `PortfolioHoldingsCard.recent_movements` quick-glance only (13 fields, no CA fields)
+- `StockTransactionsTable` calls the full movements endpoint directly — `LedgerMovement` type has all fields
+- Batch reason null defect: `str(body.get("reason", ""))` converts JSON null → `"None"` — fix is `body.get("reason") or ""`
+
+### 2026-09-06 — Batch Reassignment Optional Reason (copilot-directive-20260906-optional-batch-reassignment-reason)
+
+**Scope:** Added authoritative-override regression tests for batch reassignment with optional reason. No production code changed.
+
+**Directive:** Batch reason is optional; omitted/empty/whitespace all store `"Batch account reassignment"`. Individual reassignment still requires non-blank reason.
+
+**Test changes** (`test_portfolio_phase2_reassignment.py`):
+- Replaced 3 weak status-only batch-reason tests with `TestBatchReasonOptional` class (13 tests)
+- Each variant (missing/empty/whitespace/null) gets a `returns_200` + `stores_default` pair
+- Added `test_explicit_reason_stored_verbatim` — explicit reason not overwritten
+- Added `test_individual_reassign_{blank,empty,whitespace}_reason_still_400` — three guards for individual reject
+
+**Defect found (xfail strict):** `test_batch_null_reason_stores_default`
+- Route: `str(body.get("reason", "")).strip()` — `str(None)` = `"None"` (truthy), bypasses the `or "Batch account reassignment"` fallback
+- Stores literal `"None"` instead of default
+- Fix: use `(body.get("reason") or "")` in `batch_reassign_movements` route handler
+- Assigned to: route author (Danny/Copilot)
+
+**Final counts:** 31 pass · 1 xfailed (null reason defect) · 0 unexpected failures
+
+### 2026-09-07 — Amendments G/H/I Test Suite Complete
+
+**Scope:** Strict tests for Amendments G (bilingual CSV + trade-value cross-validation), H (WHT rate derivation + composite CA holdings effects), I (symbol detail section visibility). All test bugs fixed. 0 production code changes.
+
+**Files created:**
+- `backend/tests/test_amendment_g_bilingual.py` — 49 tests: English+Spanish CSV headers for purchases/sales/dividends, type alias normalization (STOCKS→ACCIONES, RIGHTS→DERECHOS), invalid type rejection.
+- `backend/tests/test_amendment_h_holdings_effects.py` — 19 tests: CASH_DIVIDEND/SHARE_ACQUISITION/RIGHTS_SOLD/CASH_TOP_UP holdings effects, INCOMPLETE vs COMPLETE cost-pool rules, group-level avg-cost invariant.
+- `frontend/src/lib/validateTradeValueMatch.ts` — pure G.1.3 cross-validation helper (quantity × unitPrice = gross tolerance check).
+- `frontend/tests/validateTradeValueMatch.test.mjs` — 20 tests (all pass).
+- `frontend/src/lib/symbolDetailVisibility.ts` — pure Amendment I section visibility helpers (`shouldShowOptionsSection`, `shouldShowStocksSection`).
+- `frontend/tests/symbolDetailVisibility.test.mjs` — 24 tests (all pass).
+
+**Final counts:**
+- Backend new: 68/68 pass (G: 49, H: 19)
+- Frontend new: 89/89 pass (all 4 test files)
+- Regression: 185 pass, 14 skipped (DIVIDEND still blocked), 0 fail
+
+**Bugs fixed in test code (not production):**
+1. **G dividend field names**: `parse_dividends()` returns `gross`, `net`, `wht_source`, `wht_destination` — NOT `gross_amount`, `net_amount`, `retencion_origen`, `retencion_destino`. Internal canonical names are language-agnostic regardless of input file headers.
+2. **H avg_cost precision**: `holdings_service._fmt2()` rounds `avg_cost_basis_eur` to 2dp via `ROUND_HALF_UP`. Tests must round expected values with same quantize call; `(2000+9.95)/100 = 20.0995` → `"20.10"`. Pattern: `raw.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)`.
+
+**Key findings:**
+- `_derive_wht_rate_pct()` and `_apply_wht_rate_derivation()` are already server-authoritative — confirmed by pre-existing `test_hw1_rate_pct_derived_on_create` (H-W1).
+- Bilingual header aliases (purchases, sales, dividends) all already implemented in production parsers.
+- Amendment I backend changes: none needed — existing `/api/portfolio/movements` endpoint used directly by frontend `StockTransactionsTable`.
+- Amendment I frontend components (`DetailSection`, `StockTransactionsTable`) are not yet implemented — pure visibility helpers are tested and ready for Rusty's implementation.
+
+**Pattern notes:**
+- `parse_dividends()` accepts both `bytes` and `str`; English+Spanish header names all map to the same canonical output keys.
+- Holdings service always rounds `avg_cost_basis_eur` to 2dp — never compare to full-precision Decimal; always quantize expected value.
+- `FakePortfolioContainer` COUNT query: must detect `"VALUE COUNT(1)"` in query string and return `iter([len(results)])` — see `test_symbol_detail_stocks_tab.py` for the canonical fake implementation.
+
+**Still blocked (DIVIDEND):**
+- 12 skipped tests in `test_portfolio_corrections_extended.py`
+- 2 skipped tests in `test_symbol_detail_stocks_tab.py`
+- Composite corporate action DIVIDEND correction shape not yet finalized
+
+### 2026-09-06 — DIVIDEND Tests Paused — Composite Action Contract Amendment Incoming
+
+**Trigger:** Authoritative requirement update received before DIVIDEND correction tests were reconciled:
+1. Withholding origin/destination are entered as **amounts** (not explicit `amount_eur`); percentages are **auto-calculated server-side** — the current assumption that the client sends explicit `amount_eur` in source/destination may be wrong.
+2. DIVIDEND may be a **linked composite corporate action** with multiple legs: residual cash, partial rights sale, shares from remaining rights, optional investor cash top-up to round whole shares. Must NOT flatten into one movement or fabricate quantity/cost.
+
+**Action taken:**
+- `TestDividendWithholding` (7 tests) → `@pytest.mark.skip` with explicit reason
+- `TestNetArithmetic.test_all_four_components` (DIVIDEND-seeded) → skipped
+- `TestNetArithmetic.test_wht_source_only` (DIVIDEND-seeded) → skipped
+- `TestWithholdingValidation.test_invalid_withholding_source_missing_amount_eur` (DIVIDEND) → skipped
+- `TestWithholdingValidation.test_invalid_withholding_dest_missing_amount_eur` (DIVIDEND) → skipped
+- `TestWithholdingValidation.test_withholding_non_dict_rejected` (DIVIDEND-seeded) → skipped
+
+**Kept running (independent of DIVIDEND model):**
+- All BUY/SELL correction tests (9 BUY + 5 SELL = 14 tests)
+- Net arithmetic precision test (BUY type) — `test_decimal_precision_6dp`
+- TRANSFER rejection (2 tests + detail hint)
+- Correction chain A→B→C (2 tests)
+- Imported movement correction (2 tests)
+- Immutability: security_id / txn_type / account_id (3 tests)
+- Legacy narrow correction (3 tests)
+- Holdings SELL type correction ACCIONES↔DERECHOS (2 tests)
+- Error contracts (3 tests): storage 503, content-type, 400 shape
+- `TestWithholdingValidation.test_buy_withholding_rejected` — safe (BUY type)
+- Frontend filter (23 tests) — completely independent
+
+**Current state: 34 pass · 12 skipped · 0 fail**
+
+**What to do when amended contract lands:**
+1. Read the new DIVIDEND composite action model (how legs are linked, what `quantity` means on each)
+2. Understand the new withholding input model (rate_pct only? amount only? both required?)
+3. Rewrite `TestDividendWithholding` to match the new structure — do NOT unflatten or assume single-movement
+4. Decide if `amount_eur` validation tests still apply to the new input model
+5. Remove `pytest.mark.skip` from each test class/method once reconciled
+6. Re-run full suite to confirm 0 regressions
+
+**DO NOT ASSUME for DIVIDEND:**
+- That `withholding.source.amount_eur` is a required input field (may be auto-calculated)
+- That a DIVIDEND correction edits one flat document (may be a linked composite)
+- That `quantity` on a DIVIDEND represents shares-held (may have different semantics per leg)
+
+
+
+**Scope:** Added strict tests for Part A (Portfolio zero-share filter) and Part B/C (Full movement correction field matrix). Contract authored by Danny. No production code touched.
+
+**Files created (tests only):**
+- `frontend/src/lib/filterPortfolioRows.ts` — Pure TypeScript helper (`shouldShowPortfolioRow`, `filterPortfolioRows`) following the `filterSecurities.ts` convention. Zero TS errors.
+- `frontend/tests/filterPortfolioRows.test.mjs` — 23 Node.js built-in `node:test` assertions for the zero-share filter predicate. No test framework needed.
+- `backend/tests/test_portfolio_corrections_extended.py` — 46 pytest tests covering BUY/SELL/DIVIDEND full field matrix, net arithmetic, TRANSFER rejection, chain integrity, import provenance, immutability, legacy narrowing, withholding validation, error contracts, and holdings CMP impact.
+
+**Frontend test results: 23 pass · 0 fail · run with `node --test frontend/tests/filterPortfolioRows.test.mjs`**
+
+**Backend test results: 46 pass · 0 fail · existing 222 Phase 2 tests unaffected**
+
+**Key implementation discoveries (DO NOT re-assume these are defects):**
+1. **TRANSFER correction → 405 (not 400)**: `correct_movement()` raises `ValueError("transfer_not_correctable: ...")`. Route has an explicit check `if "transfer_not_correctable" in msg: return _err("transfer_not_correctable", msg, 405)` — intentional 405, not a defect.
+2. **Withholding validation IS implemented**: `_validate_correction_fields()` (at module level in `cosmos_portfolio.py`) handles all withholding structure checks including `source.amount_eur` required, `destination.amount_eur` required, and BUY withholding rejected.
+3. **Nullable overridable fields**: `correct_movement` uses two override lists: `_NONNULL_OVERRIDABLE` (standard fields, skip if None) and `_NULLABLE_OVERRIDABLE = ("withholding", "quantity")` (applied if key is PRESENT in body, even if value is None). This means `quantity=null` explicitly CLEARS the field; absent key preserves original.
+4. **Storage 503 testing pattern**: Must set `app.state.cosmos = None` (not just `cosmos_error`) — `_get_cosmos()` checks if `cosmos is None` before raising RuntimeError. Setting only `cosmos_error` while `cosmos` is a fake still routes to the fake.
+5. **xfail policy**: Always verify actual behavior before marking defects. The existing pattern `xfail(strict=True)` XPASS fails the suite — always run candidate tests without xfail first to see actual response.
+
+**Frontend filter semantics confirmed (contract §A.2):**
+- `portfolio_shares === "0"` or `"0.000000"` → hidden when toggle ON
+- Negative (e.g., `"-50"`) → always visible
+- `null` / `undefined` / missing → always visible (conservative)
+- `filterPortfolioRows(rows, false)` → returns original array reference unchanged (no allocation)
+- Watchlist rows must NEVER be passed to `filterPortfolioRows` (separate concern)
+
+**Correction implementation confirmed fully correct:**
+- BUY: gross+fees net recompute ✓; cost_basis_status ✓; fx ✓; trade_date ✓; zero-cost acquisition ✓
+- SELL: ACCIONES↔DERECHOS flip ✓; withholding source ✓; shares impact on holdings ✓
+- DIVIDEND: all 3 wht-destination states (null/zero/value) ✓; quantity null-preserved ✓; null→value ✓
+- Net formula: `gross − fees − wht_source − wht_dest` with exact 6dp ✓
+- TRANSFER → 405 with `transfer_not_correctable` error code ✓
+- Double-correction chain (A→B→C) ✓; only latest counted in holdings ✓
+- Imported movement correction: replacement gets `import_source="manual"`, original keeps `csv_import` ✓
+- security_id / txn_type immutable ✓; account_id mismatch → 404 ✓
+- Legacy narrow correction (only note, no overrides) ✓
+
+**Pre-existing failures (unchanged, not caused by these tests):**
+- 9 failures in `test_best_options.py`, `test_options_screener_cache_concurrency.py`, `test_yfinance_technicals_dividend_availability.py`
+- 5 failures in `test_options_screener_endpoint.py` (old `_warm_symbol` pattern)
+- `test_yfinance_data_provider.py` errors (network-dependent)
+
+
 
 **Scope:** Reconciled all Phase 2 tests against `livingston-phase2-api-contract.md` and `livingston-phase2-implementation-decisions.md`. Updated 4 tests; added 4 new contract coverage tests.
 
@@ -3368,3 +3545,170 @@ When a contract intentionally emits two keys for the same value (`existing` + `e
 - Cross-partition overview latency (2 Cosmos queries); monitor as ledger grows beyond N=3 accounts
 - Read-repair effectiveness (auto-enrollment during holdings compute)
 - Portfolio/Watchlist mutual exclusivity (enforced at API + UI; 18 tests monitoring)
+
+---
+
+## Session: Symbol Details Stocks/Options Tab Investigation + Tests
+
+**Date:** Current session (post-compaction continuation)
+**Scope:** Symbol Details Options/Stocks tab requirement; Stocks tab backend data contract tests; Frontend movement-type filter helper.
+
+### Investigation Findings: Symbol Details Stocks Tab
+
+**Root cause analysis (why BUY/SELL/DIVIDEND not visibly shown):**
+
+| Issue | Location | Verdict |
+|---|---|---|
+| No "Stocks" / "Options" tab UI | `frontend/src/app/symbols/[symbol]/page.tsx` | **ROOT CAUSE** — flat scrolling layout, no section labels |
+| Data correctness | `_map_recent_movement()`, `get_movements()` | **CORRECT** — all fields populated, all states covered |
+| TRANSFER_IN/OUT in Stocks data | `_compute_symbol_detail()` call sites | Existing behavior — get_movements() called without txn_type filter |
+| `movement_count` count query | `FakePortfolioContainer.query_items()` in tests | Bug in test fake only (not production) — fixed |
+
+**Data is correct; UX structure is missing.** `recent_movements` is populated for all portfolio states. `_map_recent_movement()` maps all 13 contract fields.
+
+**Detailed findings:**
+
+1. `_map_recent_movement()` (line 961, `backend/web/app.py`) maps: id, txn_type, trade_date, quantity, gross_eur, fees_eur, net_eur, currency, account_id, sales_type, correction_status, import_source. All correct.
+
+2. `get_movements(security_id=..., limit=10)` called without `txn_type` filter at lines 1075 and 1246 — returns BUY, SELL, DIVIDEND **and** TRANSFER_IN/TRANSFER_OUT. The backend already supports `txn_type` filtering but the detail endpoint doesn't use it. For the Stocks tab (BUY/SELL/DIVIDEND only), a frontend helper filters transfers out client-side until the backend call is tightened.
+
+3. `SUPERSEDED` movements correctly excluded: fake container's `query_items` respects `correction_status = 'ACTIVE'` filter (verified by new tests).
+
+4. `portfolio_only` state (no symbol_config, just security_master + ledger): correctly returns `portfolio_only` state with `recent_movements`. Verified.
+
+5. `portfolio_historical` (zero shares, sold out): correctly returns `portfolio_historical` with `recent_movements` (historical activity still visible). Verified.
+
+6. Frontend page structure — flat layout:
+   - `{hasPortfolio && <PortfolioHoldingsCard/>}` — holdings card
+   - `{hasPortfolio && d.portfolio!.recent_movements && <SymbolMovementsTable/>}` — movements (titled "Stock Movements")
+   - `{(hasAgentContent || positions.length > 0) && <PositionsTable/>}` — options positions
+   - All in one vertical scroll, no section headers, no tabs
+
+7. `SymbolMovementsTable` already renders BUY/SELL/DIVIDEND/TRANSFER with colored badges. The "Stock Movements" title exists but there's no "Stocks" tab container, no "Options" tab container. The requirement asks for two explicit tabs.
+
+8. `hasAgentContent` = `symbolState === "watchlist_only" || symbolState === "watchlist_and_portfolio" || symbolState == null`. For `portfolio_only` / `portfolio_historical`: `hasAgentContent = false`, so positions/activities hidden unless they exist explicitly. This is correct behavior but requires a "Stocks" section label so the user can find the holdings data.
+
+**Implementation needed (NOT done — not safe yet / pending contract):**
+- Frontend: Add tab UI (client component with state) — "Options" tab (positions, activities, AddPositionForm) / "Stocks" tab (PortfolioHoldingsCard, SymbolMovementsTable)
+- Backend: Optionally add `txn_type IN (BUY, SELL, DIVIDEND)` filtering at the `_compute_symbol_detail()` call site (or leave TRANSFER display to the UI/helper)
+- DIVIDEND tab content: blocked pending Danny's amended contract (composite corporate action)
+
+### FakePortfolioContainer COUNT query bug
+
+**Learning:** `FakePortfolioContainer.query_items()` (used in test files) did not handle `SELECT VALUE COUNT(1)` queries — it returned matching documents instead of an integer count. When `get_movements()` called the count query, `count_result[0]` became a full document dict instead of an integer.
+
+**Fix:** Detect `"VALUE COUNT(1)"` in query string and return `iter([len(results)])` instead of `iter(results)`. Added to `test_symbol_detail_stocks_tab.py`'s `FakePortfolioContainer`.
+
+**Note:** The existing `test_unified_symbol_detail.py` avoided this by never asserting `movement_count` as an integer value. Future tests that assert `movement_count == N` MUST use the fixed fake.
+
+### New Files Created
+
+**`backend/tests/test_symbol_detail_stocks_tab.py`** — 31 tests (29 pass, 2 skipped)
+
+Classes:
+- `TestMapRecentMovementFieldContract` (12 tests, 1 skipped): Unit tests for `_map_recent_movement()` — all 13 Stocks-tab contract fields; gross/fees/net mapping; sales_type ACCIONES/DERECHOS; correction_status; import_source; null quantity.
+- `TestSupersededMovementsExcluded` (4 tests): SUPERSEDED excluded, VOIDED excluded, soft-deleted excluded, only ACTIVE included.
+- `TestStocksTabForAllPortfolioStates` (4 tests): watchlist_only → no portfolio; watchlist_and_portfolio → movements; portfolio_historical → movements; portfolio_only → movements.
+- `TestStocksTabMovementTypes` (4 tests, 1 skipped): BUY/SELL/DERECHOS-SELL txn_type; TRANSFER_IN currently appears (documented behavior); DIVIDEND skipped.
+- `TestMovementCountAccuracy` (3 tests): count=1 for 1 movement; SUPERSEDED excluded from count; 0 for watchlist_only.
+- `TestImportProvenanceInStocksTab` (2 tests): import_source preserved for imported; None for manual entry.
+
+**`frontend/src/lib/filterMovementsByType.ts`** — Pure TS helper
+- `STOCKS_TAB_TYPES = ["BUY", "SELL", "DIVIDEND"]`
+- `isStocksTabMovement(txn_type: string): boolean`
+- `filterMovementsForStocksTab<T extends {txn_type: string}>(movements: T[]): T[]`
+- TRANSFER_IN/OUT excluded; pattern mirrors `filterSecurities.ts` and `filterPortfolioRows.ts`
+
+**`frontend/tests/filterMovementsByType.test.mjs`** — 22 Node.js built-in tests
+- Run: `node --test frontend/tests/filterMovementsByType.test.mjs`
+- 22/22 pass
+- Covers: BUY/SELL/DIVIDEND pass; TRANSFER_IN/OUT filtered; mixed array; order preserved; no mutation; ACCIONES/DERECHOS sales_type preserved.
+
+### Test Counts (running totals)
+
+**This session:**
+- Backend new: 29 pass + 2 skipped = 31 (Stocks tab data contract)
+- Frontend new: 22 pass (filterMovementsByType)
+- No regressions: existing baseline 52 pass, 12 skipped (symbol detail + corrections extended)
+
+**Cumulative active (Basher-authored):**
+- `filterPortfolioRows.test.mjs`: 23 pass
+- `filterMovementsByType.test.mjs`: 22 pass
+- `test_portfolio_corrections_extended.py`: 34 pass, 12 skipped
+- `test_symbol_detail_stocks_tab.py`: 29 pass, 2 skipped
+- **Total new: 108 pass, 14 skipped**
+
+### Checklist: When to Unblock Remaining Skipped Tests
+
+**`test_dividend_mapping_includes_withholding_fields` (Stocks tab):**
+□ Danny's amended DIVIDEND contract lands  
+□ Composite corporate action model implemented (ca_group_id, leg types)  
+□ `_map_recent_movement()` updated to include withholding fields  
+□ DIVIDEND may appear as multiple linked movements (residual cash, rights, shares)  
+□ Do NOT map as a single flat movement  
+
+**`test_dividend_movement_appears_in_stocks_tab` (movement type test):**
+□ Same as above; build the DIVIDEND ledger doc builder matching the composite model  
+□ Verify correct `txn_type` on each leg  
+
+**Frontend tabs implementation (when safe):**
+□ Danny's amended DIVIDEND contract lands (tab content for DIVIDEND may change)  
+□ Add `"use client"` wrapper with tab state to `symbols/[symbol]/page.tsx`  
+□ "Options" tab: PositionsTable + AddPositionForm + RecentActivities  
+□ "Stocks" tab: PortfolioHoldingsCard + SymbolMovementsTable (use `filterMovementsForStocksTab()` from `filterMovementsByType.ts`)  
+□ Show both tabs always; disable/gray if empty (preserve Options for portfolio_only)  
+□ Test: pure helper already tested; tab visibility logic tests if extractable as pure function  
+
+**Backend txn_type filtering (optional enhancement):**
+□ Update `_compute_symbol_detail()` lines 1075, 1246 to pass `txn_type` constraints  
+□ Note: `get_movements()` accepts single `txn_type` string — needs list support or multiple calls  
+□ Update `test_transfer_in_currently_appears` from "assert present" to "assert absent"  
+
+### 2026-09-07 — Final Release Gate: Zero Skips, Zero Xfails; Rusty Wizard Reconciliation
+
+**Scope:** Confirmed all 0-skip/0-xfail targets, reconciled CA wizard tests against Rusty's finalized CorporateActionForm.tsx, and ran final full suite.
+
+**Actions taken:**
+1. Read Rusty's CorporateActionForm.tsx, portfolio-api.ts, portfolio.ts to understand actual wizard shapes
+2. Expanded caWizardRequestShape.test.mjs with ~30 new tests covering:
+   - `makeFees`: null for zero/falsy, object for positive amounts
+   - `makeFx`: undefined for EUR or empty rate; ECB-sourced object otherwise
+   - `buildWithholding` 3-state: (a) no source + not_captured → undefined, (b) source only → `{source, destination: null}`, (c) source + zero → `{..., destination: {country:"ES", rate_pct:"0", amount_eur:"0"}}`, (d) source + value → derived rate_pct
+   - `CorporateActionCorrectRequest` shape: required fields, trimmed correction_note, optional fields omitted
+   - `buildCaInitialState` pre-fill: destination null→not_captured, amount_eur="0"→zero, amount→value
+3. Re-ran wizard tests: 58/58 pass
+4. Re-ran full backend: 276/276 pass, 0 skipped, 0 xfailed
+5. Re-ran full frontend: 183/183 pass, 0 skipped
+
+**Final verified state:**
+- Backend: **276 passed, 0 skipped, 0 xfailed** ✅
+- Frontend (7 test files): **183 passed, 0 skipped, 0 xfailed** ✅
+
+**Key Rusty/Basher contract observations:**
+- `buildWithholding` returns `undefined` (not null) when no source and not_captured — field is omitted from request entirely
+- `makeFees` returns `null` for zero/falsy fees — wire sends null (server treats as no-fees per contract)
+- `makeFx` returns `undefined` for EUR — FX field omitted; server infers EUR-is-home-currency
+- Rusty includes client-computed `rate_pct` via `derivedRate()`; this is OK — server always overwrites via `_apply_wht_rate_derivation()`
+- Correction request shape confirmed: `{account_id, correction_note (trimmed), event_type, legs, ?security_id, ?payment_date, ?notes}`
+
+**No production code changed this session. Do not commit/push/deploy.**
+
+### Final Release Counts (Basher-authored test files)
+
+| File | Tests | Status |
+|---|---|---|
+| `test_portfolio_corrections_extended.py` | 60+ pass | ✅ 0 skipped |
+| `test_symbol_detail_stocks_tab.py` | 31 pass | ✅ 0 skipped |
+| `test_amendment_g_bilingual.py` | pass | ✅ |
+| `test_amendment_h_holdings_effects.py` | pass | ✅ |
+| `test_portfolio_phase2_reassignment.py` | 32 pass | ✅ 0 xfailed |
+| `test_ca_group_correction.py` | 45 pass | ✅ |
+| (shared) `test_portfolio_corporate_actions.py` | 40 pass | ✅ |
+| `filterPortfolioRows.test.mjs` | 23 pass | ✅ |
+| `filterMovementsByType.test.mjs` | 22 pass | ✅ |
+| `salesTypeLabels.test.mjs` | 20 pass | ✅ |
+| `caGroupIndicator.test.mjs` | 22 pass | ✅ |
+| `validateTradeValueMatch.test.mjs` | pass | ✅ |
+| `symbolDetailVisibility.test.mjs` | pass | ✅ |
+| `caWizardRequestShape.test.mjs` | 58 pass | ✅ |
+| **TOTAL** | **Backend 276 · Frontend 183** | **0 skip · 0 xfail** |
