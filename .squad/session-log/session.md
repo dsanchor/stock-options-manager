@@ -23,3 +23,28 @@ Committed fix to render DPS Insights structured markdown without horizontal scro
 ## 2026-09-06T15:38Z — Danny: Corrección → FIFO en lugar de CMP
 
 **Cambio:** Usuario pidió FIFO para el precio medio. Contrato actualizado: método FIFO (First In, First Out) con cola de lotes `(remaining_qty, cost_per_share)` en lugar de media ponderada móvil. avg_cost_basis_eur = media ponderada de lotes FIFO restantes (no promedio histórico). Test S4 y S12 recalculados con FIFO. Añadido S16 (tres compras cruzando lotes).
+
+## 2026-09-06T14:08:45Z — Portfolio CMP Cost-Basis Consolidation & Final Approval (Scribe)
+
+**Status:** ✅ APPROVED & RELEASED
+
+**Summary:** Portfolio CMP cost-basis implementation, Movements toolbar, rights sales, and import safety guard completed and deployed on commit `ff087c3`. All 14 review requirements satisfied; 209 tests pass (130 cost-basis + 79 holdings/corrections). API and frontend revisions deployed and healthy.
+
+**Key Results:**
+- CMP algorithm: per-security pool with chronological determinism (trade_date + id sort)
+- New summary fields: remaining_cost_basis_eur, cost_basis_sold_eur, total_purchase_outflow_eur, total_sale_proceeds_eur, realized_result_eur, has_incomplete_cost_basis
+- DERECHOS sales: proceed-only, no pool impact
+- Voided-movement import guard: prevents silent data corruption on re-import
+- UI: StatCard + Reveal matching Economics/Dashboard pattern; non-fiscal disclaimers on all tooltips
+- Backward compatibility: aliases (total_purchases_eur, total_sales_eur, total_invested_eur) unchanged; only current_invested_eur semantics changed (intentional)
+
+**Approvals:**
+- Danny (14-requirement review): APPROVED, zero blockers
+- Rusty (UI pattern gate): APPROVED, StatCard pattern matches
+- Linus (safety guard): APPROVED for inclusion
+- Basher (acceptance testing): 209/209 tests PASS
+
+**Deployment:** Commit `ff087c3 fix: report remaining portfolio cost basis` on sha-ff087c3; API + frontend healthy.
+
+**Next:** Symbol Details ↔ Portfolio unification (deferred); prerequisites met (Phase 2 + Cost-Basis stable, 687 tests passing).
+
