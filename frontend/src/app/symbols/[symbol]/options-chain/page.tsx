@@ -2,6 +2,7 @@
 
 import { use, useEffect, useState } from "react";
 import type { OptionBucket, OptionContract, OptionsChainResponse } from "@/types/options-chain";
+import { decodeSymbolParam } from "@/lib/symbolEncoding";
 
 function fmtDate(d: string): string {
   const s = String(d);
@@ -96,7 +97,8 @@ export default function OptionsChainPage({
 }: {
   params: Promise<{ symbol: string }>;
 }) {
-  const { symbol } = use(params);
+  const { symbol: _rawSymbol } = use(params);
+  const symbol = decodeSymbolParam(_rawSymbol);
   const [data, setData] = useState<OptionsChainResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

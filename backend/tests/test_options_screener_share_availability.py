@@ -1028,7 +1028,10 @@ class TestBestOptionsNoSharesHeldUnchanged:
                 self.symbols: dict = {}
 
             def get_symbol(self, sym: str):
-                return self.symbols.get(sym)
+                doc = self.symbols.get(sym)
+                if doc is not None and "exchange" not in doc:
+                    doc = {**doc, "exchange": "XNAS"}
+                return doc
 
             def get_next_earnings_date(self, sym: str):
                 return None

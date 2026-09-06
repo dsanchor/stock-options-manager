@@ -21,17 +21,38 @@ export interface SymbolRow {
   put_exposure: number;
   call_exposure: number;
   watchlist?: SymbolWatchlistFlags;
-  // Symbol Unification rev 3 — new fields (optional: populated by backend once deployed)
+  // Symbol Unification rev 3 — backfill fields
   list_section?: SymbolListSection;
   security_id?: string | null;
   portfolio_shares?: string | null;
   portfolio_avg_cost_eur?: string | null;
   portfolio_invested_eur?: string | null;
+  // Unified Watchlist (Livingston contract)
+  portfolio_dividends_eur?: string | null;
+  portfolio_realized_eur?: string | null;
+  row_source?: "portfolio" | "watchlist" | "both";
+  is_auto_enrolled?: boolean;
+  us_options_eligible?: boolean;
+}
+
+export interface PortfolioSummary {
+  // Livingston field names (shipped backend)
+  total_investment_eur?: number | null;
+  net_gains_eur?: number | null;
+  total_dividends_eur?: number | null;
+  has_incomplete_cost_basis?: boolean;
+  calls_exposure_eur?: number | null;
+  puts_committed_eur?: number | null;
+  // Danny field names (contract aliases — accept both)
+  remaining_cost_basis_eur?: string | null;
+  realized_result_eur?: string | null;
 }
 
 export interface SymbolsOverview {
+  // Livingston unified flat list (primary surface)
+  symbols?: SymbolRow[];
+  // Legacy sectioned arrays — kept for backward compat until migration confirmed
   rows?: SymbolRow[];
-  // Symbol Unification rev 3 — sectioned rows
   portfolio_rows?: SymbolRow[];
   watchlist_rows?: SymbolRow[];
   symbol_count?: number;
@@ -39,6 +60,7 @@ export interface SymbolsOverview {
   watchlist_count?: number;
   total_call_exposure?: number;
   total_put_exposure?: number;
+  portfolio_summary?: PortfolioSummary;
   last_update_ts?: string;
   error?: string;
 }

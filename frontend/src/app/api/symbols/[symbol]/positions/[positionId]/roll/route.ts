@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 import { API_BASE_URL } from "@/lib/api";
+import { decodeSymbolParam } from "@/lib/symbolEncoding";
 
 /** BFF proxy: manually roll a position. Mirrors POST /api/symbols/{symbol}/positions/{positionId}/roll. */
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ symbol: string; positionId: string }> },
 ) {
-  const { symbol, positionId } = await params;
+  const { symbol: _rawSym, positionId } = await params;
+  const symbol = decodeSymbolParam(_rawSym);
   try {
     const body = await req.text();
     const res = await fetch(

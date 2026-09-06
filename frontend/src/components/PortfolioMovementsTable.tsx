@@ -2,14 +2,17 @@
 
 import { useState, useCallback, useEffect } from "react";
 import Link from "next/link";
-import { FileUp, Plus, RefreshCw } from "lucide-react";
+import { FileUp, Plus } from "lucide-react";
 import { getMovements, deleteMovement, listAccounts } from "@/lib/portfolio-api";
+import { getDefaultMovementsDateRange } from "@/lib/dateHelpers";
 import type { MovementsResponse, LedgerMovement, TxnType, WarningType } from "@/types/portfolio";
 import { SALES_TYPE_LABELS } from "@/types/portfolio";
 import type { BrokerAccount } from "@/types/portfolio";
 import type { MovementsFilter } from "@/lib/portfolio-api";
 import MovementDetailDialog from "./MovementDetailDialog";
 import AddMovementDialog from "./AddMovementDialog";
+import AccountBadge from "./AccountBadge";
+import { formatAccountLabel } from "@/lib/accountDisplay";
 
 const TXN_BADGE: Record<TxnType, string> = {
   BUY: "bg-accent-green/15 text-accent-green",
@@ -28,10 +31,6 @@ const WARNING_SHORT: Record<WarningType, string> = {
   ACCIONES_ZERO_QUANTITY: "Share sale, zero quantity",
   INVALID_SALES_TYPE: "Invalid sale type",
 };
-
-function accountDisplay(id: string): string {
-  return !id || id === "_unassigned" ? "Sin asignar" : id;
-}
 
 const PAGE_SIZE = 50;
 
@@ -56,12 +55,12 @@ export default function PortfolioMovementsTable() {
   const [selectedMovement, setSelectedMovement] = useState<LedgerMovement | null>(null);
   const [showAddMovement, setShowAddMovement] = useState(false);
 
-  // Filters
+  // Filters — date defaults to today back 3 calendar months
   const [accountFilter, setAccountFilter] = useState("");
   const [txnType, setTxnType] = useState("");
   const [securityId, setSecurityId] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [dateFrom, setDateFrom] = useState(() => getDefaultMovementsDateRange().from);
+  const [dateTo, setDateTo] = useState(() => getDefaultMovementsDateRange().to);
 
   const buildFilter = useCallback((): MovementsFilter => ({
     account_id: accountFilter || undefined,
@@ -99,7 +98,11 @@ export default function PortfolioMovementsTable() {
   }, []);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
-  useEffect(() => { load(0, {}); loadAccounts(); }, []);
+  useEffect(() => {
+    const { from, to } = getDefaultMovementsDateRange();
+    load(0, { date_from: from, date_to: to });
+    loadAccounts();
+  }, []);
 
   function applyFilter() {
     setOffset(0);
@@ -107,13 +110,14 @@ export default function PortfolioMovementsTable() {
   }
 
   function resetFilter() {
+    const { from, to } = getDefaultMovementsDateRange();
     setAccountFilter("");
     setTxnType("");
     setSecurityId("");
-    setDateFrom("");
-    setDateTo("");
+    setDateFrom(from);
+    setDateTo(to);
     setOffset(0);
-    load(0, {});
+    load(0, { date_from: from, date_to: to });
   }
 
   async function handleDelete(id: string, accountId?: string) {
@@ -134,16 +138,6 @@ export default function PortfolioMovementsTable() {
     <div className="space-y-5">
       {/* Action row — outside the filter card */}
       <div className="flex flex-wrap items-center justify-end gap-2">
-        <button
-          type="button"
-          onClick={() => load(offset, buildFilter())}
-          disabled={loading}
-          aria-label="Refresh movements"
-          className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-border px-3 py-1.5 text-sm text-text-muted hover:bg-bg-hover disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <RefreshCw size={14} className={`shrink-0 ${loading ? "animate-spin" : ""}`} aria-hidden />
-          Refresh
-        </button>
         <button
           type="button"
           onClick={() => setShowAddMovement(true)}
@@ -173,7 +167,7 @@ export default function PortfolioMovementsTable() {
           <option value="">All accounts</option>
           <option value="_unassigned">Sin asignar</option>
           {accounts.map((a) => (
-            <option key={a.account_id} value={a.account_id}>{a.name}</option>
+            <option key={a.account_id} value={a.account_id}>{formatAccountLabel(a)}</option>
           ))}
         </select>
 
@@ -248,11 +242,11 @@ export default function PortfolioMovementsTable() {
           <div className="text-3xl">📋</div>
           <div className="text-sm font-medium text-text">No movements found</div>
           <div className="text-xs text-text-muted">
-            {offset > 0 || txnType || securityId || accountFilter
-              ? "Try adjusting the filters."
+            {offset > 0 || txnType || securityId || accountFilter || dateFrom || dateTo
+              ? "Try adjusting the filters or date range."
               : "Import a CSV or add a movement to start your ledger."}
           </div>
-          {!txnType && !securityId && !accountFilter && (
+          {!txnType && !securityId && !accountFilter && !dateFrom && !dateTo && (
             <div className="flex items-center justify-center gap-3">
               <button
                 type="button"
@@ -296,6 +290,7 @@ export default function PortfolioMovementsTable() {
                   <MovementRow
                     key={m.id}
                     movement={m}
+                    accounts={accounts}
                     onDelete={handleDelete}
                     onSelect={() => setSelectedMovement(m)}
                   />
@@ -344,6 +339,7 @@ export default function PortfolioMovementsTable() {
       {selectedMovement && (
         <MovementDetailDialog
           movement={selectedMovement}
+          accounts={accounts}
           onClose={() => setSelectedMovement(null)}
           onRefresh={() => { setSelectedMovement(null); load(offset, buildFilter()); }}
         />
@@ -362,10 +358,12 @@ export default function PortfolioMovementsTable() {
 
 function MovementRow({
   movement: m,
+  accounts,
   onDelete,
   onSelect,
 }: {
   movement: LedgerMovement;
+  accounts: BrokerAccount[];
   onDelete: (id: string, accountId?: string) => void;
   onSelect: () => void;
 }) {
@@ -408,7 +406,7 @@ function MovementRow({
         <td className="px-4 py-2 text-right font-mono text-text">
           €{Number(m.net.eur_amount).toLocaleString("es-ES", { minimumFractionDigits: 2 })}
         </td>
-        <td className="px-4 py-2 text-text-muted text-sm">{accountDisplay(m.account_id)}</td>
+        <td className="px-4 py-2"><AccountBadge accountId={m.account_id} accounts={accounts} /></td>
         <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-2 justify-end">
             {showWarningIcon && (

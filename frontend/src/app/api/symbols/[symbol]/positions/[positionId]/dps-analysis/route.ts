@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { API_BASE_URL } from "@/lib/api";
+import { decodeSymbolParam } from "@/lib/symbolEncoding";
 
 /** BFF proxy: run DPS analysis.
  *  Mirrors POST /api/symbols/{symbol}/positions/{positionId}/dps-analysis. */
@@ -7,7 +8,8 @@ export async function POST(
   _req: Request,
   { params }: { params: Promise<{ symbol: string; positionId: string }> },
 ) {
-  const { symbol, positionId } = await params;
+  const { symbol: _rawSym, positionId } = await params;
+  const symbol = decodeSymbolParam(_rawSym);
   try {
     const res = await fetch(
       `${API_BASE_URL}/api/symbols/${encodeURIComponent(symbol)}/positions/${encodeURIComponent(positionId)}/dps-analysis`,

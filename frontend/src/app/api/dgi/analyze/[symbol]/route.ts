@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { API_BASE_URL } from "@/lib/api";
+import { decodeSymbolParam } from "@/lib/symbolEncoding";
 
 /**
  * BFF proxy: DGI single-symbol analysis. Mirrors GET /api/dgi/analyze/{symbol}
@@ -10,7 +11,8 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ symbol: string }> },
 ) {
-  const { symbol } = await params;
+  const { symbol: _rawSymbol } = await params;
+  const symbol = decodeSymbolParam(_rawSymbol);
   try {
     const res = await fetch(
       `${API_BASE_URL}/api/dgi/analyze/${encodeURIComponent(symbol)}`,

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { API_BASE_URL } from "@/lib/api";
+import { decodeSymbolParam } from "@/lib/symbolEncoding";
 
 /**
  * BFF proxy: data-fetch preview for a symbol. Mirrors
@@ -9,7 +10,8 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ symbol: string }> },
 ) {
-  const { symbol } = await params;
+  const { symbol: _rawSym } = await params;
+  const symbol = decodeSymbolParam(_rawSym);
   try {
     const res = await fetch(
       `${API_BASE_URL}/api/symbols/${encodeURIComponent(symbol)}/fetch-preview`,

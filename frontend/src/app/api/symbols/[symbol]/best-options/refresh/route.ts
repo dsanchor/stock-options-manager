@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { apiFetch } from "@/lib/api";
+import { decodeSymbolParam } from "@/lib/symbolEncoding";
 
 /**
  * BFF POST proxy for targeted Best Options refresh: browser → this Next route →
@@ -11,7 +12,8 @@ export async function POST(
   _req: Request,
   { params }: { params: Promise<{ symbol: string }> },
 ) {
-  const { symbol } = await params;
+  const { symbol: _rawSym } = await params;
+  const symbol = decodeSymbolParam(_rawSym);
   try {
     const data = await apiFetch<unknown>(
       `/api/symbols/${encodeURIComponent(symbol)}/best-options/refresh`,

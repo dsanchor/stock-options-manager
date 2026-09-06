@@ -91,6 +91,7 @@ def fake_cosmos():
     # Default symbol with position
     cosmos.symbols["AAPL"] = {
         "symbol": "AAPL",
+        "exchange": "XNAS",
         "positions": [
             {
                 "position_id": "pos_123",

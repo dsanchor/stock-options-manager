@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { API_BASE_URL } from "@/lib/api";
+import { decodeSymbolParam } from "@/lib/symbolEncoding";
 
 /** BFF proxy: pause watchlist until earnings. Mirrors POST /api/symbols/{symbol}/pause. */
 export async function POST(
@@ -17,7 +18,8 @@ export async function DELETE(
   return proxy(await params, "DELETE");
 }
 
-async function proxy({ symbol }: { symbol: string }, method: "POST" | "DELETE") {
+async function proxy({ symbol: _rawSym }: { symbol: string }, method: "POST" | "DELETE") {
+  const symbol = decodeSymbolParam(_rawSym);
   try {
     const res = await fetch(
       `${API_BASE_URL}/api/symbols/${encodeURIComponent(symbol)}/pause`,

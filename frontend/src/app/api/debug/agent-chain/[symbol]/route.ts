@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { API_BASE_URL } from "@/lib/api";
+import { decodeSymbolParam } from "@/lib/symbolEncoding";
 
 /**
  * BFF proxy: agent-chain pipeline viewer. Mirrors
@@ -10,7 +11,8 @@ export async function GET(
   req: Request,
   { params }: { params: Promise<{ symbol: string }> },
 ) {
-  const { symbol } = await params;
+  const { symbol: _rawSymbol } = await params;
+  const symbol = decodeSymbolParam(_rawSymbol);
   const qs = new URL(req.url).search;
   try {
     const res = await fetch(

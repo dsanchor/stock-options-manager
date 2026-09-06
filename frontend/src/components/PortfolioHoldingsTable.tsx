@@ -8,6 +8,8 @@ import type { BrokerAccount } from "@/types/portfolio";
 import ReassignmentDialog from "./ReassignmentDialog";
 import StatCard from "@/components/StatCard";
 import Reveal from "@/components/Reveal";
+import AccountBadge from "@/components/AccountBadge";
+import { formatAccountLabel, getAccountLabel } from "@/lib/accountDisplay";
 
 const WARNING_SHORT: Record<WarningType, string> = {
   NEGATIVE_INVENTORY: "Negative inventory",
@@ -18,10 +20,6 @@ const WARNING_SHORT: Record<WarningType, string> = {
   ACCIONES_ZERO_QUANTITY: "Share sale, zero quantity",
   INVALID_SALES_TYPE: "Invalid sale type",
 };
-
-function accountDisplay(id: string): string {
-  return id === "_unassigned" ? "Sin asignar" : id;
-}
 
 function Skeleton() {
   return (
@@ -216,7 +214,7 @@ export default function PortfolioHoldingsTable() {
           <option value="">All accounts</option>
           <option value="_unassigned">Sin asignar</option>
           {accounts.map((a) => (
-            <option key={a.account_id} value={a.account_id}>{a.name}</option>
+            <option key={a.account_id} value={a.account_id}>{formatAccountLabel(a)}</option>
           ))}
         </select>
 
@@ -269,7 +267,7 @@ export default function PortfolioHoldingsTable() {
             <div className="flex items-center gap-2 border-b border-border/40 bg-bg-card/60 px-4 py-2 text-xs text-text-muted">
               <span>Showing {visibleHoldings.length} of {data.holdings.length} holdings</span>
               {accountFilter && (
-                <span>· Account: <strong>{accountFilter === "_unassigned" ? "Sin asignar" : accounts.find(a => a.account_id === accountFilter)?.name ?? accountFilter}</strong></span>
+                <span>· Account: <strong>{getAccountLabel(accountFilter, accounts)}</strong></span>
               )}
               <button
                 type="button"
@@ -301,7 +299,7 @@ export default function PortfolioHoldingsTable() {
             </thead>
             <tbody className="divide-y divide-border/40">
               {visibleHoldings.map((h) => (
-                <HoldingRow key={h.security_id} holding={h} />
+                <HoldingRow key={h.security_id} holding={h} accounts={accounts} />
               ))}
             </tbody>
           </table>
@@ -319,7 +317,7 @@ export default function PortfolioHoldingsTable() {
   );
 }
 
-function HoldingRow({ holding: h }: { holding: HoldingEntry }) {
+function HoldingRow({ holding: h, accounts }: { holding: HoldingEntry; accounts: BrokerAccount[] }) {
   const [showWarnings, setShowWarnings] = useState(false);
   const shares = parseFloat(h.total_shares);
   const isNegative = shares < 0;
@@ -348,12 +346,7 @@ function HoldingRow({ holding: h }: { holding: HoldingEntry }) {
         <td className="px-4 py-3">
           <div className="flex flex-wrap gap-1">
             {h.accounts.map((a) => (
-              <span
-                key={a}
-                className="rounded-full bg-bg-hover px-2 py-0.5 text-xs text-text-muted"
-              >
-                {accountDisplay(a)}
-              </span>
+              <AccountBadge key={a} accountId={a} accounts={accounts} />
             ))}
           </div>
         </td>

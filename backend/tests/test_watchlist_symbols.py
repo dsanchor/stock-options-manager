@@ -27,7 +27,7 @@ def _make_symbol_doc(symbol: str, total_shares: int = 0,
         "id": f"config_{symbol}",
         "symbol": symbol,
         "doc_type": "symbol_config",
-        "exchange": "NASDAQ",
+        "exchange": "XNAS",
         "display_name": symbol,
         "total_shares": total_shares,
         "watchlist": {

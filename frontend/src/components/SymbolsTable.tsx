@@ -11,15 +11,16 @@ import {
   matchesSymbolSuitability,
   type SymbolSuitabilityFilter,
 } from "@/lib/symbolSuitability";
+import { symbolHref } from "@/lib/symbolEncoding";
 import SymbolInfoModal from "@/components/SymbolInfoModal";
-import type { SymbolRow, SymbolListSection } from "@/types/symbols";
+import type { SymbolRow } from "@/types/symbols";
 
 function num(n: number | null | undefined, digits = 1): string {
   return typeof n === "number" && isFinite(n) ? n.toFixed(digits) : "—";
 }
-function eur(v: string | null | undefined): string {
-  if (!v) return "—";
-  const n = parseFloat(v);
+function eur(v: string | number | null | undefined): string {
+  if (v == null) return "—";
+  const n = typeof v === "number" ? v : parseFloat(v);
   if (!isFinite(n)) return "—";
   return new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(n);
 }
@@ -41,10 +42,32 @@ function Pill({ text, className }: { text: string; className: string }) {
   return <span className={`inline-block rounded-[var(--radius-pill)] border px-2 py-0.5 text-xs ${className}`}>{text}</span>;
 }
 
+/** Returns true for rows that originate from the portfolio (have ledger history). */
+function isPortfolioRow(r: SymbolRow): boolean {
+  if (r.row_source != null) return r.row_source !== "watchlist";
+  // Fallback for legacy responses: if portfolio_shares is present, treat as portfolio row
+  return r.portfolio_shares != null || r.list_section === "portfolio";
+}
+
+/**
+ * Returns true when a row should be hidden under the "hide historical zeros" toggle.
+ * Only hides auto-enrolled rows with exactly zero portfolio shares.
+ * Explicit watchlist rows (is_auto_enrolled = false) are always shown.
+ */
+function isHiddenZeroRow(r: SymbolRow): boolean {
+  if (r.portfolio_shares == null) return false;
+  const shares = parseFloat(r.portfolio_shares);
+  if (!isFinite(shares) || shares !== 0) return false;
+  // Only hide if backend confirms auto-enrolled; default to hiding if field is absent
+  // to match the legacy "hideZeroPortfolio" behavior.
+  return r.is_auto_enrolled !== false;
+}
+
 type SortKey =
   | "symbol" | "category" | "dgi_score" | "tech_timing" | "entry_tag"
   | "momentum" | "price" | "total_shares" | "in_calls" | "put_exposure"
-  | "portfolio_shares" | "portfolio_avg_cost_eur" | "portfolio_invested_eur";
+  | "portfolio_shares" | "portfolio_avg_cost_eur" | "portfolio_invested_eur"
+  | "portfolio_dividends_eur";
 
 const SUITABILITY_FILTERS: { key: SymbolSuitabilityFilter; label: string }[] = [
   { key: "all", label: "All" },
@@ -54,71 +77,41 @@ const SUITABILITY_FILTERS: { key: SymbolSuitabilityFilter; label: string }[] = [
   { key: "no_calls", label: "No Calls" },
 ];
 
-const BASE_COLUMNS: { key: SortKey; label: string; align?: "right"; num?: boolean }[] = [
+const COLUMNS: { key: SortKey; label: string; align?: "right" }[] = [
   { key: "symbol", label: "Symbol" },
   { key: "category", label: "Category" },
-  { key: "dgi_score", label: "DGI", align: "right", num: true },
-  { key: "tech_timing", label: "Tech", align: "right", num: true },
+  { key: "dgi_score", label: "DGI", align: "right" },
+  { key: "tech_timing", label: "Tech", align: "right" },
   { key: "entry_tag", label: "Entry" },
   { key: "momentum", label: "Momentum" },
-  { key: "price", label: "Price", align: "right", num: true },
-];
-
-const PORTFOLIO_EXTRA_COLUMNS: { key: SortKey; label: string; align?: "right"; num?: boolean }[] = [
+  { key: "price", label: "Price", align: "right" },
   { key: "portfolio_shares", label: "Shares", align: "right" },
   { key: "portfolio_avg_cost_eur", label: "Avg Cost", align: "right" },
   { key: "portfolio_invested_eur", label: "Invested", align: "right" },
+  { key: "portfolio_dividends_eur", label: "Dividends", align: "right" },
+  { key: "in_calls", label: "In Calls", align: "right" },
+  { key: "put_exposure", label: "Puts $", align: "right" },
 ];
 
-const WATCHLIST_EXTRA_COLUMNS: { key: SortKey; label: string; align?: "right"; num?: boolean }[] = [
-  { key: "total_shares", label: "Shares", align: "right", num: true },
-];
-
-const TAIL_COLUMNS: { key: SortKey; label: string; align?: "right"; num?: boolean }[] = [
-  { key: "in_calls", label: "In Calls", align: "right", num: true },
-  { key: "put_exposure", label: "Puts $", align: "right", num: true },
-];
-
-export default function SymbolsTable({
-  rows,
-  listSection,
-}: {
-  rows: SymbolRow[];
-  listSection?: SymbolListSection;
-}) {
+export default function SymbolsTable({ rows }: { rows: SymbolRow[] }) {
   const router = useRouter();
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<SortKey>("symbol");
   const [dir, setDir] = useState<"asc" | "desc">("asc");
   const [suitabilityFilter, setSuitabilityFilter] = useState<SymbolSuitabilityFilter>("all");
   const [modalSymbol, setModalSymbol] = useState<string | null>(null);
+  const [hideZero, setHideZero] = useState(true);
 
-  const isPortfolio = listSection === "portfolio";
-  const COLUMNS = [
-    ...BASE_COLUMNS,
-    ...(isPortfolio ? PORTFOLIO_EXTRA_COLUMNS : WATCHLIST_EXTRA_COLUMNS),
-    ...TAIL_COLUMNS,
-  ];
-
-  // Inline shares editing
+  // Inline shares editing (watchlist-only rows)
   const [editingShares, setEditingShares] = useState<string | null>(null);
   const [sharesInput, setSharesInput] = useState("");
   const [sharesSaving, setSharesSaving] = useState<string | null>(null);
   const [sharesError, setSharesError] = useState<string | null>(null);
   const [localShares, setLocalShares] = useState<Record<string, number>>({});
 
-  // Delete symbol — tracked as a Set so a second, unrelated concurrent
-  // delete never re-enables (or duplicates the DELETE for) a symbol whose
-  // own request is still in flight.
   const [deletingSymbols, setDeletingSymbols] = useState<Set<string>>(new Set());
   const [removedSymbols, setRemovedSymbols] = useState<Set<string>>(new Set());
 
-  // Once `rows` (from router.refresh()) confirms a symbol is truly gone,
-  // drop it from the optimistic-hide set during render — otherwise
-  // re-adding the same ticker later (without a full page reload) would
-  // stay stuck hidden. This mirrors React's documented "adjust state when
-  // a prop changes" pattern (compare-in-render), not a useEffect, so it
-  // never triggers an extra render pass.
   const [prevRows, setPrevRows] = useState(rows);
   if (rows !== prevRows) {
     setPrevRows(rows);
@@ -126,9 +119,7 @@ export default function SymbolsTable({
       const stillPresent = new Set(
         [...removedSymbols].filter((s) => rows.some((r) => r.symbol === s)),
       );
-      if (stillPresent.size !== removedSymbols.size) {
-        setRemovedSymbols(stillPresent);
-      }
+      if (stillPresent.size !== removedSymbols.size) setRemovedSymbols(stillPresent);
     }
   }
 
@@ -145,15 +136,9 @@ export default function SymbolsTable({
 
   const saveShares = useCallback(async (symbol: string, originalShares: number) => {
     const input = sharesInput.trim();
-    if (!/^\d+$/.test(input)) {
-      setSharesError("Shares must be a whole number of zero or greater.");
-      return;
-    }
+    if (!/^\d+$/.test(input)) { setSharesError("Shares must be a whole number."); return; }
     const val = Number(input);
-    if (!Number.isSafeInteger(val)) {
-      setSharesError("Shares must be a whole number of zero or greater.");
-      return;
-    }
+    if (!Number.isSafeInteger(val)) { setSharesError("Shares must be a whole number."); return; }
     setEditingShares(null);
     if (val === (localShares[symbol] ?? originalShares)) return;
     setSharesSaving(symbol);
@@ -169,18 +154,14 @@ export default function SymbolsTable({
       router.refresh();
     } catch (error) {
       setLocalShares((prev) => { const n = { ...prev }; delete n[symbol]; return n; });
-      setSharesError(
-        error instanceof Error
-          ? `Could not update shares for ${symbol}: ${error.message}`
-          : `Could not update shares for ${symbol}`,
-      );
+      setSharesError(error instanceof Error ? `Could not update ${symbol}: ${error.message}` : `Could not update ${symbol}`);
     } finally {
       setSharesSaving(null);
     }
   }, [sharesInput, localShares, router]);
 
   const deleteSymbol = useCallback(async (symbol: string) => {
-    if (deletingSymbols.has(symbol)) return; // already in flight — never duplicate the DELETE
+    if (deletingSymbols.has(symbol)) return;
     const confirmed = window.confirm(
       `Delete ${symbol} and all its data? This permanently removes ${symbol} and everything stored for it — positions, activity history, plans, forecasts, and analysis. This cannot be undone.`,
     );
@@ -193,42 +174,33 @@ export default function SymbolsTable({
       });
       const data = await res.json().catch(() => ({})) as { error?: string };
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      setRemovedSymbols((prev) => {
-        const next = new Set(prev);
-        next.add(symbol);
-        return next;
-      });
+      setRemovedSymbols((prev) => new Set(prev).add(symbol));
       router.refresh();
     } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? `Could not delete ${symbol}: ${error.message}`
-          : `Could not delete ${symbol}`,
-      );
+      toast.error(error instanceof Error ? `Could not delete ${symbol}: ${error.message}` : `Could not delete ${symbol}`);
     } finally {
-      setDeletingSymbols((prev) => {
-        const next = new Set(prev);
-        next.delete(symbol);
-        return next;
-      });
+      setDeletingSymbols((prev) => { const n = new Set(prev); n.delete(symbol); return n; });
     }
   }, [deletingSymbols, router]);
 
   const filtered = useMemo(() => {
     const query = q.trim().toUpperCase();
-    let out = rows.filter((r) => !removedSymbols.has(r.symbol));
+    let out = rows.filter((r) => {
+      if (removedSymbols.has(r.symbol)) return false;
+      if (hideZero && isHiddenZeroRow(r)) return false;
+      return true;
+    });
     if (query) {
       out = out.filter(
         (r) =>
           r.symbol?.toUpperCase().includes(query) ||
+          (r.display_name || "").toUpperCase().includes(query) ||
           (r.category || "").toUpperCase().includes(query) ||
           (r.entry_tag || "").toUpperCase().includes(query),
       );
     }
     if (suitabilityFilter !== "all") {
-      out = out.filter((r) =>
-        matchesSymbolSuitability(r.entry_tag, r.momentum, suitabilityFilter),
-      );
+      out = out.filter((r) => matchesSymbolSuitability(r.entry_tag, r.momentum, suitabilityFilter));
     }
     const sorted = [...out].sort((a, b) => {
       const av = a[sort] as unknown;
@@ -236,24 +208,147 @@ export default function SymbolsTable({
       let cmp: number;
       if (typeof av === "number" || typeof bv === "number") {
         cmp = (Number(av) || -Infinity) - (Number(bv) || -Infinity);
+      } else if (typeof av === "string" && typeof bv === "string" && !isNaN(parseFloat(av))) {
+        cmp = (parseFloat(av) || -Infinity) - (parseFloat(bv as string) || -Infinity);
       } else {
         cmp = String(av ?? "").localeCompare(String(bv ?? ""));
       }
       return dir === "asc" ? cmp : -cmp;
     });
     return sorted;
-  }, [rows, q, sort, dir, suitabilityFilter, removedSymbols]);
+  }, [rows, q, sort, dir, suitabilityFilter, removedSymbols, hideZero]);
+
+  // Count hidden zero-rows for toggle hint
+  const hiddenZeroCount = useMemo(
+    () => rows.filter((r) => !removedSymbols.has(r.symbol) && isHiddenZeroRow(r)).length,
+    [rows, removedSymbols],
+  );
 
   function toggleSort(key: SortKey) {
     if (sort === key) setDir((d) => (d === "asc" ? "desc" : "asc"));
-    else {
-      setSort(key);
-      setDir(key === "symbol" || key === "category" ? "asc" : "desc");
-    }
+    else { setSort(key); setDir(key === "symbol" || key === "category" ? "asc" : "desc"); }
+  }
+
+  const portfolioFiltered = filtered.filter(isPortfolioRow);
+  const watchlistFiltered = filtered.filter((r) => !isPortfolioRow(r));
+
+  // Row renderer closes over all component state — no prop threading needed
+  function renderRow(r: SymbolRow) {
+    const isPortfolio = isPortfolioRow(r);
+    const effectiveShares = localShares[r.symbol] ?? r.total_shares;
+    const portfolioSharesNum = parseFloat(r.portfolio_shares ?? "0") || 0;
+    const isZeroHistorical = isHiddenZeroRow(r);
+    const href = symbolHref(r.security_id ?? r.symbol);
+    const divNum = r.portfolio_dividends_eur != null ? parseFloat(r.portfolio_dividends_eur as string) : NaN;
+    const divClass = !isFinite(divNum) || divNum === 0
+      ? "text-text-muted"
+      : divNum > 0 ? "text-accent-green" : "text-accent-red";
+    return (
+      <tr
+        key={r.symbol}
+        onClick={() => setModalSymbol(r.security_id ?? r.symbol)}
+        className={`cursor-pointer border-b border-border/60 transition-colors last:border-0 hover:bg-bg-hover/50 ${isZeroHistorical ? "opacity-60" : ""}`}
+      >
+        <td className="px-4 py-3">
+          <Link
+            href={href}
+            onClick={(e) => e.stopPropagation()}
+            className="font-semibold text-text hover:text-accent-blue"
+          >
+            {r.symbol}
+          </Link>
+        </td>
+        <td className="px-4 py-3"><Pill text={r.category} className={categoryClass(r.category)} /></td>
+        <td className="px-4 py-3 text-right font-mono">{num(r.dgi_score)}</td>
+        <td className="px-4 py-3 text-right font-mono">{num(r.tech_timing)}</td>
+        <td className="px-4 py-3"><Pill text={r.entry_tag} className={entryClass(r.entry_tag)} /></td>
+        <td className="px-4 py-3"><Pill text={r.momentum} className={momentumClass(r.momentum)} /></td>
+        <td className="px-4 py-3 text-right font-mono">{r.price != null ? `$${num(r.price, 2)}` : "—"}</td>
+
+        {/* Shares — portfolio: read-only ledger value; watchlist-only: editable override */}
+        <td
+          className="px-4 py-3 text-right font-mono"
+          onClick={(e) => { if (!isPortfolio) e.stopPropagation(); }}
+        >
+          {isPortfolio ? (
+            r.portfolio_shares != null ? (
+              parseFloat(r.portfolio_shares) === 0
+                ? <span className="text-text-muted text-xs">0</span>
+                : portfolioShares(r.portfolio_shares)
+            ) : "—"
+          ) : (
+            editingShares === r.symbol ? (
+              <input
+                type="number" min="0" step="1" value={sharesInput}
+                onChange={(e) => setSharesInput(e.target.value)}
+                onBlur={() => saveShares(r.symbol, r.total_shares)}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
+                  if (e.key === "Escape") { e.preventDefault(); cancelEdit(); }
+                }}
+                className="w-20 rounded border border-accent-blue bg-bg-input px-2 py-0.5 text-right font-mono text-sm focus:outline-none"
+                autoFocus
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : sharesSaving === r.symbol ? (
+              <span className="text-text-muted">…</span>
+            ) : (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); startEdit(r.symbol, effectiveShares); }}
+                className="cursor-text hover:text-accent-blue hover:underline"
+                title="Click to edit shares"
+              >
+                {effectiveShares > 0 ? effectiveShares : <span className="text-text-muted">—</span>}
+              </button>
+            )
+          )}
+        </td>
+
+        <td className="px-4 py-3 text-right font-mono text-xs">{isPortfolio ? eur(r.portfolio_avg_cost_eur) : "—"}</td>
+        <td className="px-4 py-3 text-right font-mono text-xs">{isPortfolio ? eur(r.portfolio_invested_eur) : "—"}</td>
+        <td className={`px-4 py-3 text-right font-mono text-xs ${divClass}`}>
+          {isPortfolio ? eur(r.portfolio_dividends_eur) : "—"}
+        </td>
+
+        {/* In Calls */}
+        <td className="px-4 py-3 text-right font-mono">
+          {isPortfolio ? (
+            <span className={portfolioSharesNum > 0 && r.in_calls >= portfolioSharesNum ? "text-accent-orange" : ""}>
+              {r.in_calls > 0 ? r.in_calls : portfolioSharesNum >= 100 ? "0" : "—"}
+            </span>
+          ) : (
+            <span className={effectiveShares > 0 && r.in_calls >= effectiveShares ? "text-accent-orange" : ""}>
+              {r.in_calls > 0 ? r.in_calls : effectiveShares >= 100 ? "0" : "—"}
+            </span>
+          )}
+        </td>
+        <td className="px-4 py-3 text-right font-mono">{r.put_exposure > 0 ? `$${usd(r.put_exposure)}` : "—"}</td>
+        <td
+          className="px-4 py-3 text-right"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => deleteSymbol(r.symbol)}
+            disabled={deletingSymbols.has(r.symbol)}
+            aria-label={`Delete ${r.symbol} and all its data`}
+            title={isPortfolio
+              ? `Remove ${r.symbol} config (ledger data is preserved)`
+              : `Delete ${r.symbol} and all its data`}
+            className="inline-flex items-center justify-center rounded-[var(--radius-pill)] border border-accent-red/40 p-1.5 text-accent-red transition-colors hover:bg-accent-red/10 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-red/60"
+          >
+            <Trash2 size={14} className="shrink-0" aria-hidden />
+          </button>
+        </td>
+      </tr>
+    );
   }
 
   return (
     <div className="space-y-3">
+      {/* Search + filter bar */}
       <div className="flex flex-wrap items-center gap-3">
         <input
           value={q}
@@ -277,7 +372,22 @@ export default function SymbolsTable({
             </button>
           ))}
         </div>
-        <span className="ml-auto shrink-0 text-xs text-text-muted">{filtered.length} of {rows.length}</span>
+        <label className="flex items-center gap-1.5 cursor-pointer select-none text-xs text-text-muted hover:text-text">
+          <input
+            type="checkbox"
+            checked={hideZero}
+            onChange={(e) => setHideZero(e.target.checked)}
+            className="rounded border-border"
+            aria-label="Hide historical zero-share symbols"
+          />
+          Hide historical (0 shares)
+          {hiddenZeroCount > 0 && !hideZero && (
+            <span className="text-accent-orange">({hiddenZeroCount} shown)</span>
+          )}
+        </label>
+        <span className="ml-auto shrink-0 text-xs text-text-muted">
+          {portfolioFiltered.length} portfolio · {watchlistFiltered.length} watchlist
+        </span>
       </div>
 
       {sharesError && (
@@ -288,7 +398,7 @@ export default function SymbolsTable({
       )}
 
       <div className="surface table-modern overflow-x-auto">
-        <table className="w-full min-w-[860px] text-sm">
+        <table className="w-full min-w-[1040px] text-sm">
           <thead>
             <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-muted">
               {COLUMNS.map((c) => (
@@ -305,130 +415,35 @@ export default function SymbolsTable({
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 && (
+            {portfolioFiltered.length === 0 && watchlistFiltered.length === 0 && (
               <tr>
                 <td colSpan={COLUMNS.length + 1} className="px-4 py-8 text-center text-text-muted">
                   No symbols match.
                 </td>
               </tr>
             )}
-            {filtered.map((r) => {
-              const effectiveShares = localShares[r.symbol] ?? r.total_shares;
-              const portfolioSharesNum = parseFloat(r.portfolio_shares ?? "0") || 0;
-              // Canonical link: use security_id when available for MIC:TICKER route
-              const symbolHref = r.security_id
-                ? `/symbols/${encodeURIComponent(r.security_id)}`
-                : `/symbols/${r.symbol}`;
-              return (
-                <tr
-                key={r.symbol}
-                onClick={() => setModalSymbol(r.symbol)}
-                className="cursor-pointer border-b border-border/60 transition-colors last:border-0 hover:bg-bg-hover/50"
-              >
-                <td className="px-4 py-3">
-                  <Link
-                    href={symbolHref}
-                    onClick={(e) => e.stopPropagation()}
-                    className="font-semibold text-text hover:text-accent-blue"
-                  >
-                    {r.symbol}
-                  </Link>
-                </td>
-                <td className="px-4 py-3"><Pill text={r.category} className={categoryClass(r.category)} /></td>
-                <td className="px-4 py-3 text-right font-mono">{num(r.dgi_score)}</td>
-                <td className="px-4 py-3 text-right font-mono">{num(r.tech_timing)}</td>
-                <td className="px-4 py-3"><Pill text={r.entry_tag} className={entryClass(r.entry_tag)} /></td>
-                <td className="px-4 py-3"><Pill text={r.momentum} className={momentumClass(r.momentum)} /></td>
-                <td className="px-4 py-3 text-right font-mono">{r.price != null ? `$${num(r.price, 2)}` : "—"}</td>
-
-                {/* Section-specific columns */}
-                {isPortfolio ? (
-                  <>
-                    <td className="px-4 py-3 text-right font-mono">
-                      {r.portfolio_shares != null
-                        ? (parseFloat(r.portfolio_shares) === 0
-                          ? <span className="text-text-muted">0 (hist.)</span>
-                          : portfolioShares(r.portfolio_shares))
-                        : "—"}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono text-xs">{eur(r.portfolio_avg_cost_eur)}</td>
-                    <td className="px-4 py-3 text-right font-mono text-xs">{eur(r.portfolio_invested_eur)}</td>
-                  </>
-                ) : (
-                  <td
-                    className="px-4 py-3 text-right font-mono"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {editingShares === r.symbol ? (
-                      <input
-                        type="number"
-                        min="0"
-                        step="1"
-                        value={sharesInput}
-                        onChange={(e) => setSharesInput(e.target.value)}
-                        onBlur={() => saveShares(r.symbol, r.total_shares)}
-                        onKeyDown={(e) => {
-                          e.stopPropagation();
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            e.currentTarget.blur();
-                          }
-                          if (e.key === "Escape") {
-                            e.preventDefault();
-                            cancelEdit();
-                          }
-                        }}
-                        className="w-20 rounded border border-accent-blue bg-bg-input px-2 py-0.5 text-right font-mono text-sm focus:outline-none"
-                        autoFocus
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    ) : sharesSaving === r.symbol ? (
-                      <span className="text-text-muted">…</span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); startEdit(r.symbol, effectiveShares); }}
-                        className="cursor-text hover:text-accent-blue hover:underline"
-                        title="Click to edit shares"
-                      >
-                        {effectiveShares > 0 ? effectiveShares : <span className="text-text-muted">—</span>}
-                      </button>
-                    )}
-                  </td>
-                )}
-
-                <td className="px-4 py-3 text-right font-mono">
-                  {isPortfolio ? (
-                    <span className={portfolioSharesNum > 0 && r.in_calls >= portfolioSharesNum ? "text-accent-orange" : ""}>
-                      {r.in_calls > 0 ? r.in_calls : portfolioSharesNum >= 100 ? "0" : "—"}
-                    </span>
-                  ) : (
-                    <span className={effectiveShares > 0 && r.in_calls >= effectiveShares ? "text-accent-orange" : ""}>
-                      {r.in_calls > 0 ? r.in_calls : effectiveShares >= 100 ? "0" : "—"}
-                    </span>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-right font-mono">{r.put_exposure > 0 ? `$${usd(r.put_exposure)}` : "—"}</td>
+            {portfolioFiltered.length > 0 && (
+              <tr>
                 <td
-                  className="px-4 py-3 text-right"
-                  onClick={(e) => e.stopPropagation()}
+                  colSpan={COLUMNS.length + 1}
+                  className="border-b border-border/60 bg-bg-hover/40 px-4 py-1 text-[0.65rem] font-semibold uppercase tracking-widest text-text-muted select-none"
                 >
-                  <button
-                    type="button"
-                    onClick={() => deleteSymbol(r.symbol)}
-                    disabled={deletingSymbols.has(r.symbol)}
-                    aria-label={`Delete ${r.symbol} and all its data`}
-                    title={isPortfolio
-                      ? `Remove ${r.symbol} config (ledger data is preserved)`
-                      : `Delete ${r.symbol} and all its data`}
-                    className="inline-flex items-center justify-center rounded-[var(--radius-pill)] border border-accent-red/40 p-1.5 text-accent-red transition-colors hover:bg-accent-red/10 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-red/60"
-                  >
-                    <Trash2 size={14} className="shrink-0" aria-hidden />
-                  </button>
+                  Portfolio
                 </td>
               </tr>
-              );
-            })}
+            )}
+            {portfolioFiltered.map(renderRow)}
+            {watchlistFiltered.length > 0 && (
+              <tr>
+                <td
+                  colSpan={COLUMNS.length + 1}
+                  className="border-b border-border/60 bg-bg-hover/40 px-4 py-1 text-[0.65rem] font-semibold uppercase tracking-widest text-text-muted select-none"
+                >
+                  Watchlist
+                </td>
+              </tr>
+            )}
+            {watchlistFiltered.map(renderRow)}
           </tbody>
         </table>
       </div>

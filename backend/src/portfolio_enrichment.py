@@ -15,6 +15,7 @@ import time
 from datetime import datetime, timezone
 
 from src.dgi_screener import analyze_single_symbol
+from src.portfolio.provider_symbols import resolve_yfinance_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +33,20 @@ def _sanitize_for_cosmos(obj):
     return obj
 
 
-def enrich_symbol(symbol: str) -> dict | None:
+def enrich_symbol(symbol: str, yf_symbol: str | None = None) -> dict | None:
     """Run DGI analysis for a single symbol.
+
+    Args:
+        symbol: Canonical local ticker — used for storage keys and logging.
+        yf_symbol: Resolved Yahoo Finance symbol to fetch (e.g. "NESN.SW").
+            Defaults to ``symbol`` for backward compatibility with callers
+            that haven't resolved a provider symbol (e.g. the US-only DGI
+            screener universe).
 
     Returns enrichment dict ready to store, or None on failure.
     """
     try:
-        result = analyze_single_symbol(symbol)
+        result = analyze_single_symbol(symbol, yf_symbol=yf_symbol)
         if result.get("error"):
             logger.warning("Portfolio enrichment: %s — %s", symbol, result["error"])
             return None
@@ -76,6 +84,9 @@ async def run_portfolio_enrichment(cosmos) -> dict:
     success = 0
     errors = 0
 
+    from src.portfolio.cosmos_securities import CosmosSecuritiesService
+    securities_svc = CosmosSecuritiesService(cosmos.container)
+
     logger.info("Portfolio enrichment: starting for %d symbols", total)
 
     for sym_doc in symbols:
@@ -83,7 +94,33 @@ async def run_portfolio_enrichment(cosmos) -> dict:
         if not symbol:
             continue
 
-        enrichment = enrich_symbol(symbol)
+        exchange_mic = sym_doc.get("exchange") or ""
+        security_doc = None
+        security_id = sym_doc.get("security_id") or (
+            f"{exchange_mic}:{symbol}" if exchange_mic else ""
+        )
+        if security_id:
+            try:
+                security_doc = securities_svc.get_security(security_id)
+            except Exception as exc:
+                logger.warning(
+                    "Portfolio enrichment: %s — failed to load security_master (%s): %s",
+                    symbol, security_id, exc,
+                )
+
+        yf_symbol = resolve_yfinance_symbol(symbol, exchange_mic, security_doc)
+        if yf_symbol is None:
+            logger.warning(
+                "Portfolio enrichment: %s — no Yahoo symbol mapping for MIC=%s",
+                symbol, exchange_mic or "unknown",
+            )
+            errors += 1
+            continue
+        if yf_symbol != symbol:
+            logger.info("Portfolio enrichment: %s → %s (resolved Yahoo symbol)",
+                        symbol, yf_symbol)
+
+        enrichment = enrich_symbol(symbol, yf_symbol=yf_symbol)
         if enrichment is None:
             errors += 1
             continue

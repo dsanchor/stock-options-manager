@@ -560,23 +560,37 @@ async def delete_movement(
     movement_id: str,
     account_id: Optional[str] = Query(default=None),
 ):
-    """DELETE /api/portfolio/movements/{movement_id} — soft-delete a movement."""
+    """DELETE /api/portfolio/movements/{movement_id} — permanently delete a movement.
+
+    Removes the Cosmos document entirely regardless of correction_status.
+    Group legs (ca_group_id present) are rejected; use the group endpoint instead.
+
+    Query params:
+      account_id  — required partition key (defaults to _unassigned if omitted)
+
+    Responses:
+      200  {"deleted": true, "id": "..."}
+      404  not_found
+      400  group_leg_hard_delete_required
+    """
     if not account_id:
         account_id = "_unassigned"
 
     try:
         svc = _get_portfolio_svc(request)
-        updated = svc.soft_delete_movement(movement_id, account_id)
-        if updated is None:
-            return _err("not_found", f"Movement {movement_id} not found", 404)
-        return JSONResponse({
-            "id": updated.get("id"),
-            "deleted_at": updated.get("deleted_at"),
-        })
+        result = svc.delete_movement(movement_id, account_id)
+        return JSONResponse(result)
+    except LookupError as exc:
+        return _err("not_found", str(exc), 404)
     except StorageUnavailableError as exc:
         return _storage_503(str(exc))
     except RuntimeError as exc:
         return _storage_503(str(exc))
+    except ValueError as exc:
+        msg = str(exc)
+        if "group_leg_hard_delete_required" in msg:
+            return _err("group_leg_hard_delete_required", msg, 400)
+        return _err("validation_error", msg, 400)
     except Exception as exc:
         logger.exception("delete_movement failed")
         return _err("internal_error", str(exc), 500)
@@ -1637,4 +1651,44 @@ async def correct_corporate_action_group(request: Request, ca_group_id: str):
         return _err("validation_error", msg, 400)
     except Exception as exc:
         logger.exception("correct_corporate_action_group failed")
+        return _err("internal_error", str(exc), 500)
+
+
+@router.delete("/api/portfolio/corporate-actions/{ca_group_id}")
+async def delete_corporate_action_group(
+    request: Request,
+    ca_group_id: str,
+    account_id: Optional[str] = Query(default=None),
+):
+    """DELETE /api/portfolio/corporate-actions/{ca_group_id}
+
+    Permanently deletes ALL documents (any correction_status) belonging to the group.
+
+    Query params:
+      account_id — used as fallback partition key when a leg lacks one
+
+    Responses:
+      200  {"deleted_count": N, "ids": [...]}
+      404  not_found (no docs for this ca_group_id)
+    """
+    if not account_id:
+        account_id = "_unassigned"
+
+    try:
+        svc = _get_portfolio_svc(request)
+        result = svc.delete_corporate_action_group(ca_group_id, account_id)
+        return JSONResponse(result)
+    except LookupError as exc:
+        return _err("not_found", str(exc), 404)
+    except StorageUnavailableError as exc:
+        return _storage_503(str(exc))
+    except RuntimeError as exc:
+        return _storage_503(str(exc))
+    except ValueError as exc:
+        msg = str(exc)
+        if "no_legs_found" in msg:
+            return _err("not_found", msg, 404)
+        return _err("validation_error", msg, 400)
+    except Exception as exc:
+        logger.exception("delete_corporate_action_group failed")
         return _err("internal_error", str(exc), 500)

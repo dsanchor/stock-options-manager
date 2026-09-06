@@ -2,6 +2,7 @@ import DgiAnalysisView from "@/components/DgiAnalysisView";
 import DgiAnalyzeSearch from "@/components/DgiAnalyzeSearch";
 import { apiFetch } from "@/lib/api";
 import type { DgiAnalysis } from "@/types/dgi";
+import { decodeSymbolParam } from "@/lib/symbolEncoding";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +11,8 @@ export async function generateMetadata({
 }: {
   params: Promise<{ symbol: string }>;
 }) {
-  const { symbol } = await params;
+  const { symbol: _rawSymbol } = await params;
+  const symbol = decodeSymbolParam(_rawSymbol);
   return { title: `DGI Analysis — ${symbol.toUpperCase()} — Portfolio Income Lab` };
 }
 
@@ -19,7 +21,8 @@ export default async function DgiAnalyzePage({
 }: {
   params: Promise<{ symbol: string }>;
 }) {
-  const { symbol } = await params;
+  const { symbol: _rawSymbol } = await params;
+  const symbol = decodeSymbolParam(_rawSymbol);
   let data: DgiAnalysis | null = null;
   let error: string | null = null;
 

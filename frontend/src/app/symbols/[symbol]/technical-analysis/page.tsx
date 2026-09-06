@@ -1,4 +1,5 @@
 import AgentMarkdownView from "@/components/AgentMarkdownView";
+import { decodeSymbolParam } from "@/lib/symbolEncoding";
 
 export const dynamic = "force-dynamic";
 
@@ -7,7 +8,8 @@ export default async function TechnicalAnalysisPage({
 }: {
   params: Promise<{ symbol: string }>;
 }) {
-  const { symbol } = await params;
+  const { symbol: _rawSymbol } = await params;
+  const symbol = decodeSymbolParam(_rawSymbol);
   return (
     <AgentMarkdownView
       symbol={symbol}

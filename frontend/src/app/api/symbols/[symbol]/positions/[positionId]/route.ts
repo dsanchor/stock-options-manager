@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 import { API_BASE_URL } from "@/lib/api";
+import { decodeSymbolParam } from "@/lib/symbolEncoding";
 
 /** BFF proxy: delete a position. Mirrors DELETE /api/symbols/{symbol}/positions/{positionId}. */
 export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ symbol: string; positionId: string }> },
 ) {
-  const { symbol, positionId } = await params;
+  const { symbol: _rawSym, positionId } = await params;
+  const symbol = decodeSymbolParam(_rawSym);
   try {
     const res = await fetch(
       `${API_BASE_URL}/api/symbols/${encodeURIComponent(symbol)}/positions/${encodeURIComponent(positionId)}`,

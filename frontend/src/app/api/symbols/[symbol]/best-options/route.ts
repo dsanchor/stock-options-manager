@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { API_BASE_URL } from "@/lib/api";
+import { decodeSymbolParam } from "@/lib/symbolEncoding";
 
 /**
  * BFF proxy for the deterministic Best Options screen: browser → this Next route →
@@ -13,7 +14,8 @@ export async function GET(
   req: Request,
   { params }: { params: Promise<{ symbol: string }> },
 ) {
-  const { symbol } = await params;
+  const { symbol: _rawSym } = await params;
+  const symbol = decodeSymbolParam(_rawSym);
   const { searchParams } = new URL(req.url);
   const qs = searchParams.toString();
   try {

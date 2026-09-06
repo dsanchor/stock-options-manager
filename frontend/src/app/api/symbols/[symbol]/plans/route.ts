@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { API_BASE_URL } from "@/lib/api";
+import { decodeSymbolParam } from "@/lib/symbolEncoding";
 
 /**
  * BFF proxy: create a plan. Mirrors POST /api/symbols/{symbol}/plans.
@@ -9,7 +10,8 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ symbol: string }> },
 ) {
-  const { symbol } = await params;
+  const { symbol: _rawSym } = await params;
+  const symbol = decodeSymbolParam(_rawSym);
   try {
     const body = await req.text();
     const res = await fetch(

@@ -82,10 +82,7 @@ export default function SymbolSummary({
   return (
     <>
       <section className="surface overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-3">
-          <h2 className="text-base font-semibold">Summary</h2>
-        </div>
-        <div className="overflow-x-auto border-t border-border">
+        <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-muted">

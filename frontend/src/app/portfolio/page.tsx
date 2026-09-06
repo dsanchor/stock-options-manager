@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-/** Portfolio root → redirect to Holdings view. */
+/** /portfolio → unified Symbols page (HTTP 308) */
 export default function PortfolioPage() {
-  redirect("/portfolio/holdings");
+  redirect("/symbols");
 }

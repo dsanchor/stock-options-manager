@@ -57,6 +57,12 @@ class FakePortfolioContainer:
         self._store[item] = dict(body)
         return dict(body)
 
+    def delete_item(self, item=None, partition_key=None, **kw):
+        if item is None:
+            item = kw.get("item")
+        if item in self._store:
+            del self._store[item]
+
     def query_items(self, query="", parameters=None, enable_cross_partition_query=True, partition_key=None):
         param_map = {p["name"]: p["value"] for p in (parameters or [])}
         results = list(self._store.values())
@@ -335,7 +341,8 @@ class TestLegacyHoldingsAndMovements:
         assert resp.status_code == 200
         data = resp.json()
         assert data["id"] == "txn__unassigned_legacy"
-        assert "deleted_at" in data
+        assert data.get("deleted") is True
+        assert "txn__unassigned_legacy" not in fake.portfolio_container._store
 
     def test_movements_pagination_still_works(self, client):
         c, _ = client

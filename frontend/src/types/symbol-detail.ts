@@ -180,5 +180,7 @@ export interface SymbolDetail {
   security?: SecurityMasterInfo | null;
   portfolio?: PortfolioSection | null;
   symbol_state?: SymbolState | null;
+  // Unified Watchlist — backend-resolved eligibility flag (Amendment J)
+  us_options_eligible?: boolean | null;
   error?: string;
 }

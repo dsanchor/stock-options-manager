@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { History, RefreshCw, X } from "lucide-react";
 import { correctMovement, getFxRate } from "@/lib/portfolio-api";
 import type {
+  BrokerAccount,
   CostBasisStatus,
   FxRateSource,
   LedgerMovement,
@@ -11,6 +12,7 @@ import type {
   WithholdingLegInput,
 } from "@/types/portfolio";
 import { SALES_TYPE_LABELS } from "@/types/portfolio";
+import { getAccountLabel } from "@/lib/accountDisplay";
 
 const inputCls =
   "w-full rounded-[var(--radius)] border border-border bg-bg-input px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-accent-blue focus:outline-none";
@@ -234,12 +236,14 @@ function WithholdingDestSection({
 
 export interface MovementCorrectionDialogProps {
   movement: LedgerMovement;
+  accounts?: BrokerAccount[];
   onClose: () => void;
   onCorrected: () => void;
 }
 
 export default function MovementCorrectionDialog({
   movement: m,
+  accounts = [],
   onClose,
   onCorrected,
 }: MovementCorrectionDialogProps) {
@@ -582,7 +586,7 @@ export default function MovementCorrectionDialog({
               <span className="text-text-muted">Type:</span>
               <span className="font-mono text-text">{m.txn_type}</span>
               <span className="text-text-muted hidden sm:block">Account:</span>
-              <span className="font-mono text-text col-span-2 sm:col-span-1 hidden sm:block truncate">{m.account_id}</span>
+              <span className="font-mono text-text col-span-2 sm:col-span-1 hidden sm:block truncate">{getAccountLabel(m.account_id, accounts)}</span>
               <span className="text-text-muted">Symbol:</span>
               <span className="font-mono text-text">
                 {m.ticker} ({m.security_id})

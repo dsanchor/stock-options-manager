@@ -45,6 +45,64 @@ def suggest_yfinance_symbol(ticker: str, exchange_mic: str) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
+# Yahoo symbol resolution contract (danny-yahoo-symbol-resolution-contract.md)
+# ---------------------------------------------------------------------------
+
+# Legacy free-text exchange labels pre-dating the security_master/MIC rollout.
+# The pre-unification `/api/symbols` add flow (DGI-screener-sourced, always
+# US) stores these display names — never a MIC code — in `exchange`. They
+# are unambiguous (always a US bare ticker, exactly like XNYS/XNAS), so they
+# are treated as bare-ticker equivalents here rather than failing closed.
+# This is NOT a second suffix table: the resolved suffix is always empty.
+_LEGACY_US_EXCHANGE_ALIASES = frozenset({"NYSE", "NASDAQ", "AMEX"})
+
+
+def resolve_yfinance_symbol(
+    ticker: str,
+    exchange_mic: Optional[str],
+    security_master_doc: Optional[dict] = None,
+) -> Optional[str]:
+    """Resolve the Yahoo Finance symbol to fetch for a portfolio ticker.
+
+    Single resolution point for the enrichment path (and any other caller
+    that needs to talk to Yahoo for a non-US-screener symbol). Reuses
+    ``MIC_TO_YFINANCE_SUFFIX``/``suggest_yfinance_symbol`` — no second
+    suffix table.
+
+    Precedence (highest wins):
+      1. ``security_master_doc["provider_symbols"]["yfinance"]`` — explicit
+         per-security override (e.g. Nestlé "NESN" → "NESN.SW").
+      2. ``suggest_yfinance_symbol(ticker, exchange_mic)`` — canonical
+         MIC-to-suffix mapping (XNYS/XNAS unaffected — empty suffix).
+      3. Unknown or missing MIC → ``None`` (fail closed; callers must never
+         fall back to the bare ticker for a non-US MIC).
+
+    Args:
+        ticker: Local/canonical ticker symbol (e.g. "NESN").
+        exchange_mic: The security's exchange MIC (e.g. "XSWX"), or falsy
+            if unknown/unavailable.
+        security_master_doc: Optional security_master projection/document
+            that may carry a ``provider_symbols`` override map.
+
+    Returns:
+        The resolved Yahoo Finance symbol, or None if it cannot be resolved
+        safely (unknown MIC, missing MIC, and no override present).
+    """
+    if security_master_doc:
+        override = (security_master_doc.get("provider_symbols") or {}).get("yfinance")
+        if override:
+            return override
+
+    if not exchange_mic:
+        return None
+
+    if exchange_mic.strip().upper() in _LEGACY_US_EXCHANGE_ALIASES:
+        return ticker.upper()
+
+    return suggest_yfinance_symbol(ticker, exchange_mic)
+
+
+# ---------------------------------------------------------------------------
 # §5 — Validation
 # ---------------------------------------------------------------------------
 

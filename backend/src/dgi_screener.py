@@ -45,15 +45,20 @@ def _load_symbols(symbols_str: str) -> list[str]:
 
 
 
-def analyze_single_symbol(symbol: str, filters: dict = None) -> dict:
+def analyze_single_symbol(symbol: str, filters: dict = None, yf_symbol: str = None) -> dict:
     """Run the DGI scoring pipeline for a single symbol (no CosmosDB writes).
 
     Returns a dict with metrics, technicals, quality score breakdown,
     category, and entry tag — or an ``"error"`` key on failure.
 
     Args:
-        symbol: Ticker symbol to analyze.
+        symbol: Ticker symbol to analyze (used for the returned "symbol"
+            field, logging, and as the default data-provider query).
         filters: Optional filter overrides (from config.yaml dgi_screener.filters).
+        yf_symbol: Optional resolved Yahoo Finance symbol to use for the
+            actual data fetch (e.g. "NESN.SW" for local ticker "NESN").
+            Defaults to ``symbol`` for backward compatibility with the
+            US-only DGI screener universe, which never needed this.
     """
     from .yfinance_fetcher import YFinanceFetcher
     from . import dgi_metrics
@@ -62,8 +67,10 @@ def analyze_single_symbol(symbol: str, filters: dict = None) -> dict:
     if not symbol:
         return {"error": "No symbol provided"}
 
+    fetch_symbol = (yf_symbol or symbol).strip().upper()
+
     fetcher = YFinanceFetcher()
-    item = fetcher.get_ticker_data(symbol)
+    item = fetcher.get_ticker_data(fetch_symbol)
     if item is None:
         return {"error": f"No data available for {symbol}. Verify the ticker symbol is correct."}
 

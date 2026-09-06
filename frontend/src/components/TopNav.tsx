@@ -20,7 +20,6 @@ import {
   Menu,
   X,
   ChevronDown,
-  LayoutList,
   ArrowLeftRight,
   Landmark,
   type LucideIcon,
@@ -31,8 +30,7 @@ type Item = { href: string; label: string; icon: LucideIcon };
 
 const DROPDOWNS: Record<string, Item[]> = {
   Symbols: [
-    { href: "/portfolio/holdings", label: "Portfolio", icon: LayoutList },
-    { href: "/symbols", label: "Watchlist", icon: LineChart },
+    { href: "/symbols", label: "Symbols", icon: LineChart },
     { href: "/portfolio/movements", label: "Movements", icon: ArrowLeftRight },
     { href: "/portfolio/accounts", label: "Accounts", icon: Landmark },
     { href: "/symbols/calendar", label: "Calendar", icon: CalendarDays },

@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 import { API_BASE_URL } from "@/lib/api";
+import { decodeSymbolParam } from "@/lib/symbolEncoding";
 
 /** BFF proxy: close a position. Mirrors PUT /api/symbols/{symbol}/positions/{positionId}/close. */
 export async function PUT(
   req: Request,
   { params }: { params: Promise<{ symbol: string; positionId: string }> },
 ) {
-  const { symbol, positionId } = await params;
+  const { symbol: _rawSym, positionId } = await params;
+  const symbol = decodeSymbolParam(_rawSym);
   try {
     const body = await req.text();
     const res = await fetch(

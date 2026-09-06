@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 import { API_BASE_URL } from "@/lib/api";
+import { decodeSymbolParam } from "@/lib/symbolEncoding";
 
 /** BFF proxy: update a position's premium. Mirrors PATCH /api/symbols/{symbol}/positions/{positionId}/premium. */
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ symbol: string; positionId: string }> },
 ) {
-  const { symbol, positionId } = await params;
+  const { symbol: _rawSym, positionId } = await params;
+  const symbol = decodeSymbolParam(_rawSym);
   try {
     const body = await req.text();
     const res = await fetch(

@@ -85,6 +85,11 @@ class EndpointCosmos:
         self.failure = failure
         self.writes = []
 
+    def get_symbol(self, symbol):
+        if symbol == "AAPL":
+            return {**_symbol_doc(), "exchange": "XNAS"}
+        return None
+
     def _update(self, field, symbol, position_id, value):
         if self.failure:
             raise self.failure

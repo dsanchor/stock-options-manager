@@ -5,6 +5,7 @@ import ForecastCharts from "@/components/ForecastCharts";
 import ForecastHistory from "@/components/ForecastHistory";
 import { HORIZONS } from "@/types/forecasts";
 import type { ForecastsResponse, ForecastCalibration, Horizon } from "@/types/forecasts";
+import { decodeSymbolParam } from "@/lib/symbolEncoding";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +36,8 @@ export default async function ForecastsPage({
   params: Promise<{ symbol: string }>;
   searchParams: Promise<{ range?: string }>;
 }) {
-  const { symbol } = await params;
+  const { symbol: _rawSymbol } = await params;
+  const symbol = decodeSymbolParam(_rawSymbol);
   const sp = await searchParams;
   const range = RANGES.includes((sp.range ?? "") as (typeof RANGES)[number]) ? sp.range! : "30d";
   const d = await getData(symbol, range);

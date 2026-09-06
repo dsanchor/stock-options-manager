@@ -95,7 +95,10 @@ class FakeCosmos:
         self.ex_dividend_dates = {}
 
     def get_symbol(self, symbol):
-        return self.symbols.get(symbol)
+        doc = self.symbols.get(symbol)
+        if doc is not None and "exchange" not in doc:
+            doc = {**doc, "exchange": "XNAS"}
+        return doc
 
     def get_next_earnings_date(self, symbol):
         return self.earnings_dates.get(symbol)

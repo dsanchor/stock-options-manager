@@ -77,6 +77,12 @@ class FakePortfolioContainer:
         self._store[item] = dict(body)
         return dict(body)
 
+    def delete_item(self, item=None, partition_key=None, **kw):
+        if item is None:
+            item = kw.get("item")
+        if item in self._store:
+            del self._store[item]
+
 
 class FakeSymbolsContainer:
     def __init__(self):
@@ -454,7 +460,8 @@ class TestPortfolioEndpoints:
         assert resp.status_code == 200
         data = resp.json()
         assert data["id"] == "txn_test_001"
-        assert "deleted_at" in data
+        assert data.get("deleted") is True
+        assert "txn_test_001" not in fake.portfolio_container._store
 
 
 # ---------------------------------------------------------------------------
@@ -475,7 +482,8 @@ class TestF6DeleteMovementAccountId:
         assert resp.status_code == 200
         data = resp.json()
         assert data["id"] == "txn__unassigned_20240101_AAPL_BUY_001"
-        assert "deleted_at" in data
+        assert data.get("deleted") is True
+        assert "txn__unassigned_20240101_AAPL_BUY_001" not in fake.portfolio_container._store
 
     def test_delete_movement_explicit_account_id(self, client):
         """DELETE with explicit ?account_id=broker1 uses that partition — returns 200."""
@@ -490,7 +498,8 @@ class TestF6DeleteMovementAccountId:
         assert resp.status_code == 200
         data = resp.json()
         assert data["id"] == "txn_broker1_20240101_AAPL_BUY_001"
-        assert "deleted_at" in data
+        assert data.get("deleted") is True
+        assert "txn_broker1_20240101_AAPL_BUY_001" not in fake.portfolio_container._store
 
     def test_delete_movement_wrong_account_returns_404(self, client):
         """DELETE with wrong ?account_id targets wrong partition — returns 404."""
@@ -504,6 +513,58 @@ class TestF6DeleteMovementAccountId:
         resp = c.delete("/api/portfolio/movements/txn_broker1_20240101_AAPL_BUY_001?account_id=wrong")
         assert resp.status_code == 404
         assert resp.json()["error"] == "not_found"
+
+
+# ---------------------------------------------------------------------------
+# Corporate-action group delete
+# ---------------------------------------------------------------------------
+
+class TestCorporateActionGroupDelete:
+    def test_delete_ca_group_returns_200_with_count(self, client):
+        """DELETE /api/portfolio/corporate-actions/{ca_group_id} removes all legs."""
+        c, fake = client
+        fake.portfolio_container._store["cag_leg_1"] = {
+            "id": "cag_leg_1",
+            "doc_type": "ledger_txn",
+            "account_id": "_unassigned",
+            "ca_group_id": "cag_abc",
+            "txn_type": "DIVIDEND",
+        }
+        fake.portfolio_container._store["cag_leg_2"] = {
+            "id": "cag_leg_2",
+            "doc_type": "ledger_txn",
+            "account_id": "_unassigned",
+            "ca_group_id": "cag_abc",
+            "txn_type": "SELL",
+        }
+        resp = c.delete("/api/portfolio/corporate-actions/cag_abc")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["deleted_count"] == 2
+        assert set(data["ids"]) == {"cag_leg_1", "cag_leg_2"}
+        assert "cag_leg_1" not in fake.portfolio_container._store
+        assert "cag_leg_2" not in fake.portfolio_container._store
+
+    def test_delete_ca_group_not_found_returns_404(self, client):
+        """DELETE for unknown ca_group_id returns 404."""
+        c, _ = client
+        resp = c.delete("/api/portfolio/corporate-actions/cag_nonexistent")
+        assert resp.status_code == 404
+        assert resp.json()["error"] == "not_found"
+
+    def test_delete_movement_with_ca_group_id_returns_400(self, client):
+        """Direct DELETE on a CA group leg returns 400 (must use group endpoint)."""
+        c, fake = client
+        fake.portfolio_container._store["cag_single_leg"] = {
+            "id": "cag_single_leg",
+            "doc_type": "ledger_txn",
+            "account_id": "_unassigned",
+            "ca_group_id": "cag_xyz",
+            "txn_type": "DIVIDEND",
+        }
+        resp = c.delete("/api/portfolio/movements/cag_single_leg?account_id=_unassigned")
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "group_leg_hard_delete_required"
 
 
 # ---------------------------------------------------------------------------

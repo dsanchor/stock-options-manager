@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { API_BASE_URL, apiFetch } from "@/lib/api";
+import { decodeSymbolParam } from "@/lib/symbolEncoding";
 
 /**
  * BFF proxy for a single symbol: browser → this Next route → internal Python API.
@@ -9,7 +10,8 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ symbol: string }> },
 ) {
-  const { symbol } = await params;
+  const { symbol: _rawSym } = await params;
+  const symbol = decodeSymbolParam(_rawSym);
   try {
     const data = await apiFetch<unknown>(`/api/symbols/${encodeURIComponent(symbol)}`);
     return NextResponse.json(data);
@@ -25,7 +27,8 @@ export async function PUT(
   req: Request,
   { params }: { params: Promise<{ symbol: string }> },
 ) {
-  const { symbol } = await params;
+  const { symbol: _rawSym } = await params;
+  const symbol = decodeSymbolParam(_rawSym);
   try {
     const body = await req.text();
     const res = await fetch(`${API_BASE_URL}/api/symbols/${encodeURIComponent(symbol)}`, {
@@ -48,7 +51,8 @@ export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ symbol: string }> },
 ) {
-  const { symbol } = await params;
+  const { symbol: _rawSym } = await params;
+  const symbol = decodeSymbolParam(_rawSym);
   try {
     const res = await fetch(`${API_BASE_URL}/api/symbols/${encodeURIComponent(symbol)}`, {
       method: "DELETE",

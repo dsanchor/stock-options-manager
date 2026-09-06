@@ -502,6 +502,69 @@ class CosmosPortfolioService:
         except CosmosResourceNotFoundError:
             return None
 
+    def delete_movement(self, movement_id: str, account_id: str) -> Dict[str, Any]:
+        """Permanently delete a single ledger_txn document from Cosmos.
+
+        Allowed on any movement regardless of correction_status.
+        Rejected if the movement belongs to a CA group (ca_group_id present);
+        use delete_corporate_action_group() to purge the whole group.
+
+        Returns {"deleted": True, "id": movement_id}.
+        Raises LookupError if not found.
+        Raises ValueError with 'group_leg_hard_delete_required' if group leg.
+        """
+        self._require_portfolio()
+        try:
+            doc = self.portfolio_container.read_item(
+                item=movement_id, partition_key=account_id
+            )
+        except CosmosResourceNotFoundError:
+            raise LookupError(f"Movement {movement_id} not found in account {account_id}")
+        if doc.get("doc_type") != "ledger_txn":
+            raise LookupError(f"Movement {movement_id} not found in account {account_id}")
+        if doc.get("ca_group_id"):
+            raise ValueError(
+                f"group_leg_hard_delete_required: Movement {movement_id} belongs to "
+                f"CA group {doc['ca_group_id']!r}. Delete the whole group via "
+                f"DELETE /api/portfolio/corporate-actions/{doc['ca_group_id']}"
+            )
+        self.portfolio_container.delete_item(item=movement_id, partition_key=account_id)
+        return {"deleted": True, "id": movement_id}
+
+    def delete_corporate_action_group(
+        self, ca_group_id: str, account_id: str
+    ) -> Dict[str, Any]:
+        """Permanently delete all ledger_txn documents belonging to a CA group.
+
+        Deletes every document (any correction_status) that carries ca_group_id.
+        All-or-nothing: on partial failure, already-deleted docs are gone but the
+        operation raises so the caller knows it was incomplete.
+
+        Returns {"deleted_count": N, "ids": [...]}.
+        Raises ValueError("no_legs_found") if no docs exist for the group.
+        """
+        self._require_portfolio()
+        query = (
+            "SELECT * FROM c WHERE c.doc_type = 'ledger_txn' "
+            "AND c.ca_group_id = @ca_group_id"
+        )
+        params = [{"name": "@ca_group_id", "value": ca_group_id}]
+        legs = list(self.portfolio_container.query_items(
+            query=query, parameters=params, enable_cross_partition_query=True,
+        ))
+        if not legs:
+            raise ValueError(
+                f"no_legs_found: No documents found for ca_group_id {ca_group_id!r}"
+            )
+        deleted_ids: List[str] = []
+        for leg in legs:
+            leg_account = leg.get("account_id", account_id)
+            self.portfolio_container.delete_item(
+                item=leg["id"], partition_key=leg_account
+            )
+            deleted_ids.append(leg["id"])
+        return {"deleted_count": len(deleted_ids), "ids": deleted_ids}
+
     def create_manual_movement(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a manual ledger_txn document.
 

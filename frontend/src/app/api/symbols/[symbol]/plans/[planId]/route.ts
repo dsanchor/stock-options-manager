@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 import { API_BASE_URL } from "@/lib/api";
+import { decodeSymbolParam } from "@/lib/symbolEncoding";
 
 /** BFF proxy: get one plan. Mirrors GET /api/symbols/{symbol}/plans/{planId}. */
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ symbol: string; planId: string }> },
 ) {
-  const { symbol, planId } = await params;
+  const { symbol: _rawSym, planId } = await params;
+  const symbol = decodeSymbolParam(_rawSym);
   try {
     const res = await fetch(
       `${API_BASE_URL}/api/symbols/${encodeURIComponent(symbol)}/plans/${encodeURIComponent(planId)}`,
@@ -27,7 +29,8 @@ export async function PUT(
   req: Request,
   { params }: { params: Promise<{ symbol: string; planId: string }> },
 ) {
-  const { symbol, planId } = await params;
+  const { symbol: _rawSym, planId } = await params;
+  const symbol = decodeSymbolParam(_rawSym);
   try {
     const body = await req.text();
     const res = await fetch(

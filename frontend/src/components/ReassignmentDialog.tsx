@@ -5,6 +5,7 @@ import { X } from "lucide-react";
 import { reassignMovement, batchReassignMovements, getBatchReassignmentPreview, listAccounts, listSecurities } from "@/lib/portfolio-api";
 import type { BrokerAccount, BatchReassignmentPreviewResponse } from "@/types/portfolio";
 import type { SecurityMaster } from "@/types/portfolio";
+import { formatAccountLabel } from "@/lib/accountDisplay";
 
 const inputCls =
   "w-full rounded-[var(--radius)] border border-border bg-bg-input px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-accent-blue focus:outline-none";
@@ -13,8 +14,6 @@ const labelCls = "mb-1 block text-xs font-medium text-text-muted";
 function accountLabel(id: string): string {
   return id === "_unassigned" ? "Sin asignar" : id;
 }
-
-// ─── Individual Reassignment Mode ─────────────────────────────────────────────
 
 interface IndividualModeProps {
   movementId: string;
@@ -64,7 +63,7 @@ function IndividualMode({ movementId, currentAccountId, accounts, onReassigned, 
         <select value={newAccountId} onChange={(e) => setNewAccountId(e.target.value)} className={inputCls} required>
           <option value="_unassigned">Sin asignar</option>
           {accounts.map((a) => (
-            <option key={a.account_id} value={a.account_id}>{a.name}</option>
+            <option key={a.account_id} value={a.account_id}>{formatAccountLabel(a)}</option>
           ))}
         </select>
       </div>
@@ -98,12 +97,13 @@ function IndividualMode({ movementId, currentAccountId, accounts, onReassigned, 
 interface BatchModeProps {
   accounts: BrokerAccount[];
   securities: SecurityMaster[];
+  lockedSecurityId?: string;
   onReassigned: () => void;
   onCancel: () => void;
 }
 
-function BatchMode({ accounts, securities, onReassigned, onCancel }: BatchModeProps) {
-  const [securityId, setSecurityId] = useState("");
+function BatchMode({ accounts, securities, lockedSecurityId, onReassigned, onCancel }: BatchModeProps) {
+  const [securityId, setSecurityId] = useState(lockedSecurityId ?? "");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [sourceAccountId, setSourceAccountId] = useState("_unassigned");
@@ -199,17 +199,29 @@ function BatchMode({ accounts, securities, onReassigned, onCancel }: BatchModePr
       {/* ── Step 1: Filters ── */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="sm:col-span-2">
-          <label className={labelCls}>Security (optional filter)</label>
-          <select
-            value={securityId}
-            onChange={(e) => { setSecurityId(e.target.value); resetPreview(); }}
-            className={inputCls}
-          >
-            <option value="">All securities</option>
-            {securities.map((s) => (
-              <option key={s.security_id} value={s.security_id}>{s.ticker} — {s.company_name}</option>
-            ))}
-          </select>
+          <label className={labelCls}>Security{lockedSecurityId ? "" : " (optional filter)"}</label>
+          {lockedSecurityId ? (
+            <div
+              className={`${inputCls} bg-bg-hover text-text cursor-default select-none font-mono`}
+              aria-label="Security (locked)"
+            >
+              {(() => {
+                const s = securities.find((s) => s.security_id === lockedSecurityId);
+                return s ? `${s.ticker} — ${s.company_name}` : lockedSecurityId;
+              })()}
+            </div>
+          ) : (
+            <select
+              value={securityId}
+              onChange={(e) => { setSecurityId(e.target.value); resetPreview(); }}
+              className={inputCls}
+            >
+              <option value="">All securities</option>
+              {securities.map((s) => (
+                <option key={s.security_id} value={s.security_id}>{s.ticker} — {s.company_name}</option>
+              ))}
+            </select>
+          )}
         </div>
         <div>
           <label className={labelCls}>Date from</label>
@@ -239,7 +251,7 @@ function BatchMode({ accounts, securities, onReassigned, onCancel }: BatchModePr
           >
             <option value="_unassigned">Sin asignar</option>
             {accounts.map((a) => (
-              <option key={a.account_id} value={a.account_id}>{a.name}</option>
+              <option key={a.account_id} value={a.account_id}>{formatAccountLabel(a)}</option>
             ))}
           </select>
         </div>
@@ -253,7 +265,7 @@ function BatchMode({ accounts, securities, onReassigned, onCancel }: BatchModePr
           >
             <option value="_unassigned">Sin asignar</option>
             {accounts.map((a) => (
-              <option key={a.account_id} value={a.account_id}>{a.name}</option>
+              <option key={a.account_id} value={a.account_id}>{formatAccountLabel(a)}</option>
             ))}
           </select>
         </div>
@@ -401,6 +413,8 @@ export interface ReassignmentDialogProps {
   mode: ReassignmentMode;
   movementId?: string;
   currentAccountId?: string;
+  /** When provided, batch mode is prefilled and locked to this security. */
+  lockedSecurityId?: string;
   onClose: () => void;
   onReassigned: () => void;
 }
@@ -409,6 +423,7 @@ export default function ReassignmentDialog({
   mode: initialMode,
   movementId,
   currentAccountId = "_unassigned",
+  lockedSecurityId,
   onClose,
   onReassigned,
 }: ReassignmentDialogProps) {
@@ -496,6 +511,7 @@ export default function ReassignmentDialog({
             <BatchMode
               accounts={accounts}
               securities={securities}
+              lockedSecurityId={lockedSecurityId}
               onReassigned={onReassigned}
               onCancel={onClose}
             />

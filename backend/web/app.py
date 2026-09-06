@@ -637,6 +637,26 @@ def _get_cosmos(request: Request):
     return cosmos
 
 
+def _ticker_from_symbol_param(symbol: str) -> str:
+    """Extract bare TICKER from a MIC:TICKER or bare TICKER URL parameter.
+
+    Examples:
+        "XMAD:IBE" → "IBE"
+        "AAPL"     → "AAPL"
+    """
+    s = symbol.strip().upper()
+    if ":" in s:
+        return s.split(":", 1)[1]
+    return s
+
+
+def _get_symbol_doc_for_guard(cosmos, symbol: str) -> "dict | None":
+    """Load the symbol_config document for a URL parameter that may be
+    a canonical MIC:TICKER or bare TICKER.  Returns None when not found.
+    """
+    return cosmos.get_symbol(_ticker_from_symbol_param(symbol))
+
+
 # ===========================================================================
 # REST API — Symbol Management
 # ===========================================================================
@@ -653,22 +673,45 @@ async def api_list_symbols(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-def _compute_symbols_overview(cosmos, portfolio_container=None):
-    """View-model for the Symbols list page.
+def _is_watchlist_member(config: dict) -> bool:
+    """Return True if the symbol has explicit watchlist membership.
 
-    Returns per-symbol rows with enrichment-derived columns plus active-position
-    exposure, sorted by DGI quality score descending, and aggregate totals.
+    Explicit membership = manually added OR any watchlist toggle on OR
+    telegram enabled.  An auto-enrolled symbol with no interactions is
+    purely historical (not explicit).
 
-    Extended for Symbol Unification rev 3: splits rows into `portfolio_rows`
-    (symbols with any ledger history, including zero-share/historical) and
-    `watchlist_rows` (symbols with no ledger history).  The legacy flat `rows`
-    array is preserved for backward compatibility.
+    Contract: danny-unified-watchlist-contract.md §1.2
+    """
+    if not config.get("_auto_enrolled", False):
+        return True  # manually added
+    wl = config.get("watchlist") or {}
+    if wl.get("covered_call") or wl.get("cash_secured_put") or wl.get("buy_tracker"):
+        return True
+    if config.get("telegram_notifications_enabled", False):
+        return True
+    return False
+
+
+def _compute_symbols_overview(cosmos, portfolio_container=None, include_zero_portfolio: bool = False):
+    """View-model for the Symbols list page — Unified Watchlist (rev 4).
+
+    Returns a single flat ``rows`` array merging portfolio holdings and
+    watchlist symbols, plus ``portfolio_summary`` KPI totals.
+
+    Row visibility predicate (§1.1 danny-unified-watchlist-contract.md):
+    - shares != 0 → always visible
+    - explicit watchlist member → always visible
+    - auto-enrolled only + zero shares → hidden by default (include_zero_portfolio=False)
+
+    Legacy fields (``portfolio_rows``, ``watchlist_rows``, ``portfolio_count``,
+    ``watchlist_count``) are preserved for backward-compatible rollout.
     """
     symbols = cosmos.list_symbols() if cosmos else []
 
     # ── Load portfolio holdings for classification and enrichment ──────────
     holdings_by_ticker: Dict[str, Any] = {}
     portfolio_tickers: set = set()
+    holdings_summary: Dict[str, Any] = {}
     if portfolio_container is not None:
         try:
             from src.portfolio.cosmos_portfolio import CosmosPortfolioService
@@ -687,6 +730,7 @@ def _compute_symbols_overview(cosmos, portfolio_container=None):
 
             # Holdings data for portfolio-derived fields (active movements only)
             holdings_result = holdings_svc.compute_holdings()
+            holdings_summary = holdings_result.get("summary") or {}
             for h in holdings_result.get("holdings", []):
                 ticker = h.get("ticker", "").upper()
                 if ticker:
@@ -722,12 +766,50 @@ def _compute_symbols_overview(cosmos, portfolio_container=None):
         # Determine portfolio classification and add portfolio-derived fields
         is_portfolio = sym in portfolio_tickers
         holding = holdings_by_ticker.get(sym)
+        is_auto_enrolled = bool(s.get("_auto_enrolled", False))
+        explicit_watchlist = _is_watchlist_member(s)
+
+        # Resolve portfolio_shares for visibility predicate
+        portfolio_shares_str: str | None = holding.get("total_shares") if holding else None
+
+        # Visibility predicate (§1.1): skip auto-enrolled zero-share rows when toggled off
+        if portfolio_shares_str is not None:
+            try:
+                from decimal import Decimal as _D
+                shares_val = _D(str(portfolio_shares_str))
+            except Exception:
+                shares_val = _D("0")
+        else:
+            shares_val = None  # type: ignore[assignment]
+
+        has_nonzero_shares = shares_val is not None and shares_val != 0
+        is_hidden_by_default = (
+            is_auto_enrolled
+            and not explicit_watchlist
+            and (shares_val is None or shares_val == 0)
+        )
+
+        if is_hidden_by_default and not include_zero_portfolio:
+            continue  # skip — will not appear in rows
+
+        # Determine row_source
+        if is_portfolio and explicit_watchlist:
+            row_source = "both"
+        elif is_portfolio:
+            row_source = "portfolio"
+        else:
+            row_source = "watchlist"
+
+        # Legacy list_section for backward compat
+        list_section = "portfolio" if is_portfolio else "watchlist"
 
         row: Dict[str, Any] = {
             "symbol": s.get("symbol"),
             "display_name": s.get("display_name", ""),
             "security_id": s.get("security_id"),  # from symbol_config (populated by ensure)
-            "list_section": "portfolio" if is_portfolio else "watchlist",
+            "list_section": list_section,          # legacy compat
+            "row_source": row_source,
+            "is_auto_enrolled": is_auto_enrolled,
             "category": enr.get("category", "") or "",
             "dgi_score": enr.get("quality_score"),
             "tech_timing": technicals.get("score"),
@@ -745,9 +827,12 @@ def _compute_symbols_overview(cosmos, portfolio_container=None):
                 "buy_tracker": bool(wl.get("buy_tracker", False)),
             },
             # Portfolio-derived fields (null for watchlist-only rows)
-            "portfolio_shares": holding.get("total_shares") if holding else None,
+            "portfolio_shares": portfolio_shares_str,
             "portfolio_avg_cost_eur": holding.get("avg_cost_basis_eur") if holding else None,
-            "portfolio_invested_eur": holding.get("current_invested_eur") if holding else None,
+            # remaining_cost_basis_eur = CMP cost of currently held lots
+            "portfolio_invested_eur": holding.get("remaining_cost_basis_eur") if holding else None,
+            "portfolio_dividends_eur": holding.get("total_dividends_eur") if holding else None,
+            "portfolio_realized_eur": holding.get("realized_result_eur") if holding else None,
         }
         all_rows.append(row)
 
@@ -756,28 +841,52 @@ def _compute_symbols_overview(cosmos, portfolio_container=None):
         reverse=True,
     )
 
+    # Legacy section splits (preserved for atomic frontend rollout)
     portfolio_rows = [r for r in all_rows if r["list_section"] == "portfolio"]
     watchlist_rows = [r for r in all_rows if r["list_section"] == "watchlist"]
 
+    # Portfolio-wide summary (§2.3) — computed over ALL holdings, unaffected by row filter
+    portfolio_summary: Dict[str, Any] | None = None
+    if holdings_summary:
+        portfolio_summary = {
+            "remaining_cost_basis_eur": holdings_summary.get("remaining_cost_basis_eur", "0.00"),
+            "realized_result_eur": holdings_summary.get("realized_result_eur", "0.00"),
+            "total_dividends_eur": holdings_summary.get("total_dividends_eur", "0.00"),
+            "has_incomplete_cost_basis": bool(holdings_summary.get("has_incomplete_cost_basis", False)),
+        }
+
     return {
-        "portfolio_rows": portfolio_rows,
-        "watchlist_rows": watchlist_rows,
-        "rows": all_rows,  # backward-compat flat union
+        # Unified flat list (primary — replaces two-section split)
+        "rows": all_rows,
         "symbol_count": len(all_rows),
-        "portfolio_count": len(portfolio_rows),
-        "watchlist_count": len(watchlist_rows),
+        # Portfolio-wide KPI summary (Row 2 in UI)
+        "portfolio_summary": portfolio_summary,
+        # Options exposure (Row 1 in UI, unchanged)
         "total_call_exposure": total_call_exposure,
         "total_put_exposure": total_put_exposure,
         "last_update_ts": enrichment_ts,
+        # Legacy two-section fields (preserved for backward-compatible rollout)
+        "portfolio_rows": portfolio_rows,
+        "watchlist_rows": watchlist_rows,
+        "portfolio_count": len(portfolio_rows),
+        "watchlist_count": len(watchlist_rows),
     }
 
 
 @app.get("/api/symbols/overview")
-async def api_symbols_overview(request: Request):
+async def api_symbols_overview(
+    request: Request,
+    include_zero_portfolio: bool = Query(default=False),
+):
     try:
         cosmos = _get_cosmos(request)
         portfolio_container = getattr(cosmos, "portfolio_container", None)
-        return JSONResponse(_compute_symbols_overview(cosmos, portfolio_container))
+        return JSONResponse(
+            _compute_symbols_overview(
+                cosmos, portfolio_container,
+                include_zero_portfolio=include_zero_portfolio,
+            )
+        )
     except RuntimeError as e:
         return JSONResponse({"error": str(e)}, status_code=503)
     except Exception as e:
@@ -1116,6 +1225,8 @@ def _compute_symbol_detail(
             "status": security_doc.get("status", "ACTIVE"),
         }
         symbol_state = "portfolio_only" if portfolio_field else "watchlist_only"
+        from src.us_exchange_eligibility import is_us_options_eligible as _is_elig
+        _po_mic = security_doc.get("exchange_mic") or ""
         return {
             "symbol": sym,
             "display_name": security_doc.get("company_name", sym),
@@ -1137,6 +1248,7 @@ def _compute_symbol_detail(
             "security": security_field,
             "portfolio": portfolio_field,
             "symbol_state": symbol_state,
+            "us_options_eligible": _is_elig(_po_mic),
         }
 
     plans = _sort_by_updated_at_desc(cosmos.get_plans(sym))
@@ -1302,6 +1414,15 @@ def _compute_symbol_detail(
     else:
         symbol_state = "portfolio_only"
 
+    # ── US-options eligibility flag (§J.2 danny-unified-watchlist-contract.md) ──
+    from src.us_exchange_eligibility import is_us_options_eligible
+    _effective_mic = (
+        (security_field.get("exchange_mic") if security_field else None)
+        or clean.get("exchange")
+        or ""
+    )
+    us_options_eligible = is_us_options_eligible(_effective_mic)
+
     return {
         "symbol": clean.get("symbol", sym),
         "display_name": clean.get("display_name", ""),
@@ -1330,13 +1451,15 @@ def _compute_symbol_detail(
         },
         "next_earnings_date": cosmos.get_next_earnings_date(sym),
         "is_paused": is_watchlist_paused(doc),
-        # NEW: canonical identity
+        # canonical identity
         "security_id": security_id_from_config,
         "security": security_field,
-        # NEW: portfolio holdings (null if no ledger history)
+        # portfolio holdings (null if no ledger history)
         "portfolio": portfolio_field,
-        # NEW: symbol state classification
+        # symbol state classification
         "symbol_state": symbol_state,
+        # US-options eligibility (Amendment J)
+        "us_options_eligible": us_options_eligible,
     }
 
 
@@ -1440,7 +1563,7 @@ async def api_symbol_detail(request: Request, symbol: str):
 async def api_update_symbol(request: Request, symbol: str):
     try:
         cosmos = _get_cosmos(request)
-        doc = cosmos.get_symbol(symbol.upper())
+        doc = _get_symbol_doc_for_guard(cosmos, symbol)
         if not doc:
             return JSONResponse({"error": f"Symbol {symbol} not found"},
                                 status_code=404)
@@ -1455,6 +1578,14 @@ async def api_update_symbol(request: Request, symbol: str):
                 {"error": "total_shares or another supported update field is required"},
                 status_code=400,
             )
+
+        # Guard option-related toggles for non-US symbols (§J.4.3)
+        _OPTION_TOGGLE_KEYS = {"covered_call", "cash_secured_put", "buy_tracker", "telegram_notifications_enabled"}
+        if any(k in body for k in _OPTION_TOGGLE_KEYS):
+            from src.us_exchange_eligibility import enforce_us_options_eligible
+            _guard = enforce_us_options_eligible(doc)
+            if _guard:
+                return _guard
         if "display_name" in body:
             doc["display_name"] = body["display_name"]
         if "covered_call" in body:
@@ -1498,11 +1629,17 @@ async def api_update_symbol(request: Request, symbol: str):
 async def api_pause_symbol_watchlist(request: Request, symbol: str):
     try:
         cosmos = _get_cosmos(request)
-        symbol = symbol.upper()
+        symbol = _ticker_from_symbol_param(symbol)
         doc = cosmos.get_symbol(symbol)
         if not doc:
             return JSONResponse({"error": f"Symbol {symbol} not found"},
                                 status_code=404)
+
+        # US-options eligibility guard (§J.4.2)
+        from src.us_exchange_eligibility import enforce_us_options_eligible
+        _guard = enforce_us_options_eligible(doc)
+        if _guard:
+            return _guard
 
         body = {}
         raw_body = await request.body()
@@ -1544,11 +1681,16 @@ async def api_pause_symbol_watchlist(request: Request, symbol: str):
 async def api_clear_symbol_watchlist_pause(request: Request, symbol: str):
     try:
         cosmos = _get_cosmos(request)
-        symbol = symbol.upper()
+        symbol = _ticker_from_symbol_param(symbol)
         doc = cosmos.get_symbol(symbol)
         if not doc:
             return JSONResponse({"error": f"Symbol {symbol} not found"},
                                 status_code=404)
+        # US-options eligibility guard (§J.4.2)
+        from src.us_exchange_eligibility import enforce_us_options_eligible
+        _guard = enforce_us_options_eligible(doc)
+        if _guard:
+            return _guard
         updated = cosmos.clear_watchlist_pause(symbol)
         return JSONResponse(_clean_doc(updated))
     except RuntimeError as e:
@@ -1583,6 +1725,16 @@ async def api_delete_symbol(request: Request, symbol: str):
 async def api_add_position(request: Request, symbol: str):
     try:
         cosmos = _get_cosmos(request)
+
+        # US-options eligibility guard (§J.4.2)
+        _sym_doc = _get_symbol_doc_for_guard(cosmos, symbol)
+        if not _sym_doc:
+            return JSONResponse({"error": f"Symbol {symbol} not found"}, status_code=404)
+        from src.us_exchange_eligibility import enforce_us_options_eligible
+        _guard = enforce_us_options_eligible(_sym_doc)
+        if _guard:
+            return _guard
+
         body = await request.json()
         position_type = body.get("type", "").strip().lower()
         strike = body.get("strike")
@@ -1651,6 +1803,16 @@ async def api_add_position_from_activity(request: Request, symbol: str,
     Activities are preserved (CosmosDB TTL handles cleanup)."""
     try:
         cosmos = _get_cosmos(request)
+
+        # US-options eligibility guard (§J.4.2)
+        _fa_doc = _get_symbol_doc_for_guard(cosmos, symbol)
+        if not _fa_doc:
+            return JSONResponse({"error": f"Symbol {symbol} not found"}, status_code=404)
+        from src.us_exchange_eligibility import enforce_us_options_eligible
+        _guard = enforce_us_options_eligible(_fa_doc)
+        if _guard:
+            return _guard
+
         activity = cosmos.get_activity_by_id(activity_id)
         if activity is None:
             return JSONResponse({"error": f"Activity {activity_id} not found"},
@@ -1688,12 +1850,12 @@ async def api_add_position_from_activity(request: Request, symbol: str,
         }
 
         doc = cosmos.add_position(
-            symbol.upper(), position_type, float(strike),
+            _fa_doc["symbol"], position_type, float(strike),
             expiration, notes="", source=source,
         )
 
         # Disable the watchlist for this agent type
-        sym_doc = cosmos.get_symbol(symbol.upper())
+        sym_doc = cosmos.get_symbol(_fa_doc["symbol"])
         if agent_type in ("covered_call", "cash_secured_put"):
             sym_doc["watchlist"][agent_type] = False
             sym_doc["updated_at"] = datetime.utcnow().isoformat() + "Z"
@@ -1714,6 +1876,16 @@ async def api_roll_position_from_activity(request: Request, symbol: str,
     """Roll a position from a monitor-agent activity: close old + open new."""
     try:
         cosmos = _get_cosmos(request)
+
+        # US-options eligibility guard (§J.4.2)
+        _rfa_doc = _get_symbol_doc_for_guard(cosmos, symbol)
+        if not _rfa_doc:
+            return JSONResponse({"error": f"Symbol {symbol} not found"}, status_code=404)
+        from src.us_exchange_eligibility import enforce_us_options_eligible
+        _guard = enforce_us_options_eligible(_rfa_doc)
+        if _guard:
+            return _guard
+
         activity = cosmos.get_activity_by_id(activity_id)
         if activity is None:
             return JSONResponse({"error": f"Activity {activity_id} not found"},
@@ -1787,10 +1959,15 @@ async def api_manual_roll_position(request: Request, symbol: str,
             )
 
         # Determine position type from existing position
-        sym_doc = cosmos.get_symbol(symbol.upper())
+        sym_doc = _get_symbol_doc_for_guard(cosmos, symbol)
         if sym_doc is None:
             return JSONResponse({"error": f"Symbol {symbol} not found"},
                                 status_code=404)
+        # US-options eligibility guard (§J.4.2)
+        from src.us_exchange_eligibility import enforce_us_options_eligible
+        _guard = enforce_us_options_eligible(sym_doc)
+        if _guard:
+            return _guard
         pos = None
         for p in sym_doc.get("positions", []):
             if p["position_id"] == position_id:
@@ -1874,6 +2051,16 @@ async def api_manual_roll_position(request: Request, symbol: str,
 async def api_close_position(request: Request, symbol: str, position_id: str):
     try:
         cosmos = _get_cosmos(request)
+
+        # US-options eligibility guard (§J.4.2)
+        _cp_doc = _get_symbol_doc_for_guard(cosmos, symbol)
+        if not _cp_doc:
+            return JSONResponse({"error": f"Symbol {symbol} not found"}, status_code=404)
+        from src.us_exchange_eligibility import enforce_us_options_eligible
+        _guard = enforce_us_options_eligible(_cp_doc)
+        if _guard:
+            return _guard
+
         body = {}
         try:
             body = await request.json()
@@ -1907,6 +2094,16 @@ async def api_update_position_notes(request: Request, symbol: str,
     """Update notes on a position."""
     try:
         cosmos = _get_cosmos(request)
+
+        # US-options eligibility guard (§J.4.2)
+        _un_doc = _get_symbol_doc_for_guard(cosmos, symbol)
+        if not _un_doc:
+            return JSONResponse({"error": f"Symbol {symbol} not found"}, status_code=404)
+        from src.us_exchange_eligibility import enforce_us_options_eligible
+        _guard = enforce_us_options_eligible(_un_doc)
+        if _guard:
+            return _guard
+
         body = await request.json()
         notes = body.get("notes", "")
         if not isinstance(notes, str):
@@ -1928,6 +2125,16 @@ async def api_update_position_premium(request: Request, symbol: str,
     """Update premium on a position."""
     try:
         cosmos = _get_cosmos(request)
+
+        # US-options eligibility guard (§J.4.2)
+        _up_doc = _get_symbol_doc_for_guard(cosmos, symbol)
+        if not _up_doc:
+            return JSONResponse({"error": f"Symbol {symbol} not found"}, status_code=404)
+        from src.us_exchange_eligibility import enforce_us_options_eligible
+        _guard = enforce_us_options_eligible(_up_doc)
+        if _guard:
+            return _guard
+
         try:
             body = await request.json()
         except Exception:
@@ -1960,6 +2167,16 @@ async def api_update_position_buyback_cost(request: Request, symbol: str,
     """Update buyback cost on a rolled position."""
     try:
         cosmos = _get_cosmos(request)
+
+        # US-options eligibility guard (§J.4.2)
+        _ubc_doc = _get_symbol_doc_for_guard(cosmos, symbol)
+        if not _ubc_doc:
+            return JSONResponse({"error": f"Symbol {symbol} not found"}, status_code=404)
+        from src.us_exchange_eligibility import enforce_us_options_eligible
+        _guard = enforce_us_options_eligible(_ubc_doc)
+        if _guard:
+            return _guard
+
         try:
             body = await request.json()
         except Exception:
@@ -1991,6 +2208,14 @@ async def api_update_position_buyback_cost(request: Request, symbol: str,
 async def api_delete_position(request: Request, symbol: str, position_id: str):
     try:
         cosmos = _get_cosmos(request)
+        # US-options eligibility guard (§J.4.2)
+        _dp_doc = _get_symbol_doc_for_guard(cosmos, symbol)
+        if not _dp_doc:
+            return JSONResponse({"error": f"Symbol {symbol} not found"}, status_code=404)
+        from src.us_exchange_eligibility import enforce_us_options_eligible
+        _guard = enforce_us_options_eligible(_dp_doc)
+        if _guard:
+            return _guard
         doc = cosmos.delete_position(symbol.upper(), position_id)
         return JSONResponse(_clean_doc(doc))
     except ValueError as e:
@@ -2007,6 +2232,14 @@ async def api_position_snapshots(request: Request, symbol: str, position_id: str
     """Return time-series snapshots for a position (for charting)."""
     try:
         cosmos = _get_cosmos(request)
+        # US-options eligibility guard (§J.4.2)
+        _ps_doc = _get_symbol_doc_for_guard(cosmos, symbol)
+        if not _ps_doc:
+            return JSONResponse({"error": f"Symbol {symbol} not found"}, status_code=404)
+        from src.us_exchange_eligibility import enforce_us_options_eligible
+        _guard = enforce_us_options_eligible(_ps_doc)
+        if _guard:
+            return _guard
         snapshots = cosmos.get_position_snapshots(symbol.upper(), position_id,
                                                   limit=limit)
         snapshots.reverse()
@@ -2028,6 +2261,12 @@ async def api_dps_analysis(request: Request, symbol: str, position_id: str):
         sym_doc = cosmos.get_symbol(symbol)
         if not sym_doc:
             return JSONResponse({"error": f"Symbol {symbol} not found"}, status_code=404)
+
+        # US-options eligibility guard (§J.4.2)
+        from src.us_exchange_eligibility import enforce_us_options_eligible
+        _guard = enforce_us_options_eligible(sym_doc)
+        if _guard:
+            return _guard
 
         position = None
         for pos in sym_doc.get("positions", []):
@@ -2108,6 +2347,12 @@ async def api_dps_insights(request: Request, symbol: str, position_id: str):
         if not sym_doc:
             return JSONResponse({"error": f"Symbol {symbol} not found"}, status_code=404)
 
+        # US-options eligibility guard (§J.4.2)
+        from src.us_exchange_eligibility import enforce_us_options_eligible
+        _guard = enforce_us_options_eligible(sym_doc)
+        if _guard:
+            return _guard
+
         position = None
         for pos in sym_doc.get("positions", []):
             if pos.get("position_id") == position_id:
@@ -2168,6 +2413,12 @@ async def api_roll_table(request: Request, symbol: str, position_id: str):
         sym_doc = cosmos.get_symbol(symbol)
         if not sym_doc:
             return JSONResponse({"error": f"Symbol {symbol} not found"}, status_code=404)
+
+        # US-options eligibility guard (§J.4.2)
+        from src.us_exchange_eligibility import enforce_us_options_eligible
+        _guard = enforce_us_options_eligible(sym_doc)
+        if _guard:
+            return _guard
 
         position = None
         for pos in sym_doc.get("positions", []):
@@ -3053,10 +3304,16 @@ async def symbol_report_api(request: Request, symbol: str):
     except RuntimeError as e:
         return JSONResponse({"error": str(e)}, status_code=503)
 
-    symbol_doc = cosmos.get_symbol(symbol)
+    symbol_doc = _get_symbol_doc_for_guard(cosmos, symbol)
     if not symbol_doc:
         return JSONResponse({"error": f"Symbol {symbol} not found"},
                             status_code=404)
+
+    # US-options eligibility guard (§J.4.2)
+    from src.us_exchange_eligibility import enforce_us_options_eligible
+    _guard = enforce_us_options_eligible(symbol_doc)
+    if _guard:
+        return _guard
 
     config_obj, err_resp = _llm_settings_response("report")
     if err_resp:
@@ -3176,6 +3433,16 @@ async def api_symbol_forecasts(request: Request, symbol: str,
         return JSONResponse({"error": str(e)}, status_code=503)
 
     sym = symbol.upper()
+
+    # US-options eligibility guard (§J.4.2)
+    _fc_doc = _get_symbol_doc_for_guard(cosmos, symbol)
+    if not _fc_doc:
+        return JSONResponse({"error": f"Symbol {symbol} not found"}, status_code=404)
+    from src.us_exchange_eligibility import enforce_us_options_eligible
+    _guard = enforce_us_options_eligible(_fc_doc)
+    if _guard:
+        return _guard
+
     date_from, date_to = _resolve_forecast_range(range, from_, to)
     preds = cosmos.get_price_forecasts(sym, date_from, date_to)
 
@@ -3236,6 +3503,15 @@ async def api_symbol_forecast_detail(request: Request, symbol: str, forecast_id:
     except RuntimeError as e:
         return JSONResponse({"error": str(e)}, status_code=503)
 
+    # US-options eligibility guard (§J.4.2)
+    _fd_doc = _get_symbol_doc_for_guard(cosmos, symbol)
+    if not _fd_doc:
+        return JSONResponse({"error": f"Symbol {symbol} not found"}, status_code=404)
+    from src.us_exchange_eligibility import enforce_us_options_eligible
+    _guard = enforce_us_options_eligible(_fd_doc)
+    if _guard:
+        return _guard
+
     doc = cosmos.get_price_forecast(symbol.upper(), forecast_id)
     if not doc:
         return JSONResponse(
@@ -3251,10 +3527,16 @@ async def api_symbol_options_chain(request: Request, symbol: str):
     except RuntimeError as e:
         return JSONResponse({"error": str(e)}, status_code=503)
 
-    doc = cosmos.get_symbol(symbol.upper())
+    doc = _get_symbol_doc_for_guard(cosmos, symbol)
     if not doc:
         return JSONResponse({"error": f"Symbol {symbol} not found"},
                             status_code=404)
+
+    # US-options eligibility guard (§J.4.2)
+    from src.us_exchange_eligibility import enforce_us_options_eligible as _oc_enforce
+    _oc_guard = _oc_enforce(doc)
+    if _oc_guard:
+        return _oc_guard
 
     provider = getattr(request.app.state, "yf_provider", None)
     if provider is None:
@@ -3333,10 +3615,16 @@ async def api_symbol_best_options(
      except RuntimeError as e:
          return JSONResponse({"error": str(e)}, status_code=503)
 
-     sym_upper = symbol.upper()
+     sym_upper = _ticker_from_symbol_param(symbol)
      sym_doc = cosmos.get_symbol(sym_upper)
      if not sym_doc:
          return JSONResponse({"error": f"Symbol {sym_upper} not found"}, status_code=404)
+
+     # US-options eligibility guard (§J.4.2)
+     from src.us_exchange_eligibility import enforce_us_options_eligible
+     _guard = enforce_us_options_eligible(sym_doc)
+     if _guard:
+         return _guard
 
      # Check if canonical parameters (precomputed path)
      is_canonical = (
@@ -4001,10 +4289,16 @@ async def api_symbol_best_options_refresh(request: Request, symbol: str):
     except RuntimeError as e:
         return JSONResponse({"error": str(e)}, status_code=503)
 
-    sym_upper = symbol.upper()
+    sym_upper = _ticker_from_symbol_param(symbol)
     sym_doc = cosmos.get_symbol(sym_upper)
     if not sym_doc:
         return JSONResponse({"error": f"Symbol {sym_upper} not found"}, status_code=404)
+
+    # US-options eligibility guard (§J.4.2)
+    from src.us_exchange_eligibility import enforce_us_options_eligible
+    _guard = enforce_us_options_eligible(sym_doc)
+    if _guard:
+        return _guard
 
     from src.best_options_precompute import refresh_symbol, _symbol_refresh_tasks
 
@@ -7626,6 +7920,16 @@ async def symbol_chat_context(request: Request, symbol: str):
     symbol = symbol.upper()
     cosmos = getattr(request.app.state, "cosmos", None)
 
+    # US-options eligibility guard (§J.4.2)
+    if cosmos:
+        _cc_doc = _get_symbol_doc_for_guard(cosmos, symbol)
+        if not _cc_doc:
+            return JSONResponse({"error": f"Symbol {symbol} not found"}, status_code=404)
+        from src.us_exchange_eligibility import enforce_us_options_eligible
+        _guard = enforce_us_options_eligible(_cc_doc)
+        if _guard:
+            return _guard
+
     # Get preferences from request body
     try:
         body = await request.json()
@@ -7654,6 +7958,17 @@ async def symbol_chat_api(request: Request, symbol: str):
                             status_code=400)
 
     symbol = symbol.upper()
+
+    # US-options eligibility guard (§J.4.2)
+    _chat_cosmos = getattr(request.app.state, "cosmos", None)
+    if _chat_cosmos:
+        _chat_doc = _get_symbol_doc_for_guard(_chat_cosmos, symbol)
+        if not _chat_doc:
+            return JSONResponse({"error": f"Symbol {symbol} not found"}, status_code=404)
+        from src.us_exchange_eligibility import enforce_us_options_eligible
+        _guard = enforce_us_options_eligible(_chat_doc)
+        if _guard:
+            return _guard
 
     # Use pre-fetched context if provided, otherwise fetch fresh
     pre_context = body.get("context")

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { symbolHref } from "@/lib/symbolEncoding";
 import type { DisambiguationChoice } from "@/types/symbol-detail";
 
 interface Props {
@@ -34,7 +35,7 @@ export default function SymbolDisambiguation({ query, choices }: Props) {
                 <td className="px-4 py-3 font-mono text-text-muted">{c.exchange_mic}</td>
                 <td className="px-4 py-3 text-right">
                   <Link
-                    href={`/symbols/${encodeURIComponent(c.security_id)}`}
+                    href={symbolHref(c.security_id)}
                     className="inline-flex items-center gap-1 rounded-[var(--radius-pill)] bg-accent-blue px-3 py-1 text-xs font-medium text-white hover:opacity-90 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-blue/60"
                   >
                     View →

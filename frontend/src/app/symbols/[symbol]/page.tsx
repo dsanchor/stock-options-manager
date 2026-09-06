@@ -1,4 +1,6 @@
 import { API_BASE_URL } from "@/lib/api";
+import { decodeSymbolParam } from "@/lib/symbolEncoding";
+import { isUSOptionsEligible } from "@/lib/exchangeEligibility";
 import SymbolActions from "@/components/SymbolActions";
 import RecentActivities from "@/components/RecentActivities";
 import PositionsTable from "@/components/PositionsTable";
@@ -22,8 +24,9 @@ type DetailResult =
   | { kind: "error"; message: string };
 
 async function getData(symbol: string): Promise<DetailResult> {
+  const safeSymbol = decodeSymbolParam(symbol);
   try {
-    const url = `${API_BASE_URL}/api/symbols/${encodeURIComponent(symbol)}/detail`;
+    const url = `${API_BASE_URL}/api/symbols/${encodeURIComponent(safeSymbol)}/detail`;
     const res = await fetch(url, { headers: { Accept: "application/json" } });
 
     if (res.status === 300) {
@@ -51,7 +54,8 @@ export default async function SymbolDetailPage({
 }: {
   params: Promise<{ symbol: string }>;
 }) {
-  const { symbol } = await params;
+  const { symbol: _rawSymbol } = await params;
+  const symbol = decodeSymbolParam(_rawSymbol);
   const result = await getData(symbol);
 
   if (result.kind === "error") {
@@ -88,6 +92,12 @@ export default async function SymbolDetailPage({
 
   const hasOptions = hasAgentContent || positions.length > 0 || activities.length > 0;
 
+  // Use backend-resolved flag when available (fail-closed); fall back to local helper.
+  const usOptionsEligible =
+    d.us_options_eligible != null
+      ? d.us_options_eligible
+      : isUSOptionsEligible(d.security?.exchange_mic);
+
   // security_id to query movements — prefer canonical form from security master
   const stocksSecurityId = d.security?.security_id ?? d.security_id ?? null;
 
@@ -121,18 +131,20 @@ export default async function SymbolDetailPage({
         </div>
       )}
 
-      {/* Toolbar: actions */}
-      <div className="flex flex-wrap items-center justify-end gap-4">
-        <SymbolActions
-          symbol={d.symbol}
-          covered_call={d.watchlist?.covered_call ?? false}
-          cash_secured_put={d.watchlist?.cash_secured_put ?? false}
-          buy_tracker={d.watchlist?.buy_tracker ?? false}
-          telegram_notifications_enabled={d.telegram_notifications_enabled ?? false}
-          isPaused={d.is_paused ?? false}
-          nextEarningsDate={d.next_earnings_date ?? null}
-        />
-      </div>
+      {/* Toolbar: actions — US exchanges (XNYS/XNAS) only */}
+      {usOptionsEligible && (
+        <div className="flex flex-wrap items-center justify-end gap-4">
+          <SymbolActions
+            symbol={d.symbol}
+            covered_call={d.watchlist?.covered_call ?? false}
+            cash_secured_put={d.watchlist?.cash_secured_put ?? false}
+            buy_tracker={d.watchlist?.buy_tracker ?? false}
+            telegram_notifications_enabled={d.telegram_notifications_enabled ?? false}
+            isPaused={d.is_paused ?? false}
+            nextEarningsDate={d.next_earnings_date ?? null}
+          />
+        </div>
+      )}
 
       {/* TradingView symbol info + RT chart */}
       <TradingViewSymbolInfo symbol={d.symbol} exchange={d.exchange} />
@@ -148,8 +160,8 @@ export default async function SymbolDetailPage({
         />
       </DetailSection>
 
-      {/* ── Options Section ────────────────────────────────────────────── */}
-      {hasOptions && (
+      {/* ── Options Section — US exchanges (XNYS/XNAS) only ──────────── */}
+      {hasOptions && usOptionsEligible && (
         <DetailSection title="Options">
           <PositionsTable symbol={symbol} positions={positions} />
           <AddPositionForm symbol={symbol} />

@@ -6,6 +6,8 @@ import { getMovements, listAccounts } from "@/lib/portfolio-api";
 import type { LedgerMovement, BrokerAccount } from "@/types/portfolio";
 import { SALES_TYPE_LABELS } from "@/types/portfolio";
 import MovementDetailDialog from "./MovementDetailDialog";
+import ReassignmentDialog from "./ReassignmentDialog";
+import { formatAccountLabel } from "@/lib/accountDisplay";
 
 const PAGE_SIZE = 20;
 
@@ -55,6 +57,7 @@ export default function StockTransactionsTable({ securityId }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<BrokerAccount[]>([]);
   const [selected, setSelected] = useState<LedgerMovement | null>(null);
+  const [showReassign, setShowReassign] = useState(false);
 
   const load = useCallback(async (pg: number, tf: TypeFilter) => {
     setLoading(true);
@@ -86,7 +89,7 @@ export default function StockTransactionsTable({ securityId }: Props) {
   }, []);
 
   const accountMap = useMemo(() =>
-    Object.fromEntries(accounts.map((a) => [a.account_id, a.name])),
+    Object.fromEntries(accounts.map((a) => [a.account_id, formatAccountLabel(a)])),
     [accounts]
   );
 
@@ -105,8 +108,8 @@ export default function StockTransactionsTable({ securityId }: Props) {
 
   return (
     <div className="space-y-3">
-      {/* Type filter pills */}
-      <div className="flex flex-wrap gap-2">
+      {/* Toolbar: type filter pills + batch reassign */}
+      <div className="flex flex-wrap items-center gap-2">
         {TYPE_PILLS.map((p) => (
           <button
             key={p.value}
@@ -121,6 +124,14 @@ export default function StockTransactionsTable({ securityId }: Props) {
             {p.label}
           </button>
         ))}
+        <button
+          type="button"
+          onClick={() => setShowReassign(true)}
+          className="ml-auto rounded-[var(--radius-pill)] border border-border px-3 py-1 text-xs font-medium text-text-muted hover:bg-bg-hover hover:text-text transition-colors"
+          aria-label={`Batch reassign movements for ${securityId}`}
+        >
+          Reassign accounts
+        </button>
       </div>
 
       {error && (
@@ -253,6 +264,16 @@ export default function StockTransactionsTable({ securityId }: Props) {
             setSelected(null);
             load(page, typeFilter);
           }}
+        />
+      )}
+
+      {/* Batch account reassignment — prefilled and locked to this security */}
+      {showReassign && (
+        <ReassignmentDialog
+          mode="batch"
+          lockedSecurityId={securityId}
+          onClose={() => setShowReassign(false)}
+          onReassigned={() => { setShowReassign(false); load(page, typeFilter); }}
         />
       )}
     </div>

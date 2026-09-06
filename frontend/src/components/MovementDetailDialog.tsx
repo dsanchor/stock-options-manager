@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback } from "react";
 import { X, History, Link2, Trash2 } from "lucide-react";
 import type { LedgerMovement, WarningType } from "@/types/portfolio";
 import { SALES_TYPE_LABELS } from "@/types/portfolio";
+import type { BrokerAccount } from "@/types/portfolio";
+import { getAccountLabel } from "@/lib/accountDisplay";
 import { getMovements, voidCorporateActionGroup } from "@/lib/portfolio-api";
 import MovementCorrectionDialog from "./MovementCorrectionDialog";
 import ReassignmentDialog from "./ReassignmentDialog";
@@ -49,13 +51,9 @@ function formatEurAmount(amount: string | null | undefined, currency?: string): 
   return eur;
 }
 
-function accountDisplay(accountId: string): string {
-  if (!accountId || accountId === "_unassigned") return "Sin asignar";
-  return accountId;
-}
-
 export interface MovementDetailDialogProps {
   movement: LedgerMovement;
+  accounts?: BrokerAccount[];
   onClose: () => void;
   onRefresh: () => void;
 }
@@ -79,7 +77,7 @@ const CA_EVENT_LABEL: Record<string, string> = {
   RIGHTS_ISSUE: "Rights Issue",
 };
 
-export default function MovementDetailDialog({ movement: m, onClose, onRefresh }: MovementDetailDialogProps) {
+export default function MovementDetailDialog({ movement: m, accounts = [], onClose, onRefresh }: MovementDetailDialogProps) {
   const [showCorrect, setShowCorrect] = useState(false);
   const [showReassign, setShowReassign] = useState(false);
   const [showGroupCorrect, setShowGroupCorrect] = useState(false);
@@ -182,6 +180,7 @@ export default function MovementDetailDialog({ movement: m, onClose, onRefresh }
     return (
       <MovementCorrectionDialog
         movement={m}
+        accounts={accounts}
         onClose={() => setShowCorrect(false)}
         onCorrected={() => { setShowCorrect(false); onRefresh(); onClose(); }}
       />
@@ -251,7 +250,7 @@ export default function MovementDetailDialog({ movement: m, onClose, onRefresh }
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
             <Field label="Date" value={m.trade_date} mono />
             <Field label="Symbol ID" value={m.security_id} mono />
-            <Field label="Account" value={accountDisplay(m.account_id)} />
+            <Field label="Account" value={getAccountLabel(m.account_id, accounts)} />
             {m.quantity != null && (
               <Field
                 label="Quantity"
@@ -337,10 +336,10 @@ export default function MovementDetailDialog({ movement: m, onClose, onRefresh }
               <div className="grid grid-cols-2 gap-4 rounded-[var(--radius)] border border-border bg-bg-card/50 p-3">
                 <Field label="Direction" value={m.txn_type === "TRANSFER_OUT" ? "Out → destination" : "In ← source"} />
                 {m.transfer_source_account_id && (
-                  <Field label="From account" value={accountDisplay(m.transfer_source_account_id)} />
+                  <Field label="From account" value={getAccountLabel(m.transfer_source_account_id!, accounts)} />
                 )}
                 {m.transfer_dest_account_id && (
-                  <Field label="To account" value={accountDisplay(m.transfer_dest_account_id)} />
+                  <Field label="To account" value={getAccountLabel(m.transfer_dest_account_id!, accounts)} />
                 )}
                 {m.transfer_cost_basis_eur && (
                   <Field

@@ -951,3 +951,78 @@ class TestCorporateActionModels:
         assert CorporateActionCreateRequest is not CorporateActionCorrectRequest
         assert CorporateActionCreateRequest.__name__ == "CorporateActionCreateRequest"
         assert CorporateActionCorrectRequest.__name__ == "CorporateActionCorrectRequest"
+
+
+# ---------------------------------------------------------------------------
+# HD-1: Hard delete — individual movements and CA groups
+# ---------------------------------------------------------------------------
+
+class TestHardDelete:
+    """Hard-delete tests: DELETE /movements/{id} and DELETE /ca-groups/{id}."""
+
+    def test_hd1_delete_active_movement(self, svc):
+        """HD-1a: Hard-delete an ACTIVE movement removes it permanently."""
+        doc = svc.create_manual_movement({
+            "txn_type": "BUY", "security_id": _SECURITY_ID,
+            "trade_date": "2024-01-10", "account_id": _ACCOUNT_ID,
+            "quantity": "5",
+            "gross": {"amount": "500.00", "currency": "EUR", "eur_amount": "500.00"},
+        })
+        result = svc.delete_movement(doc["id"], _ACCOUNT_ID)
+        assert result == {"deleted": True, "id": doc["id"]}
+        assert svc.get_movement(doc["id"], _ACCOUNT_ID) is None
+
+    def test_hd2_delete_voided_movement(self, svc):
+        """HD-2: Hard-delete also works on VOIDED movements."""
+        doc = svc.create_manual_movement({
+            "txn_type": "BUY", "security_id": _SECURITY_ID,
+            "trade_date": "2024-01-10", "account_id": _ACCOUNT_ID,
+            "quantity": "3",
+            "gross": {"amount": "300.00", "currency": "EUR", "eur_amount": "300.00"},
+        })
+        svc.soft_delete_movement(doc["id"], _ACCOUNT_ID)
+        result = svc.delete_movement(doc["id"], _ACCOUNT_ID)
+        assert result["deleted"] is True
+
+    def test_hd3_delete_not_found_raises(self, svc):
+        """HD-3: Deleting a non-existent movement raises LookupError."""
+        with pytest.raises(LookupError):
+            svc.delete_movement("mvt_nonexistent", _ACCOUNT_ID)
+
+    def test_hd4_group_leg_rejected(self, svc):
+        """HD-4: Trying to hard-delete a CA group leg individually raises ValueError."""
+        group = svc.create_corporate_action(_CA_SIMPLE)
+        leg = group["movements"][0]
+        with pytest.raises(ValueError, match="group_leg_hard_delete_required"):
+            svc.delete_movement(leg["id"], _ACCOUNT_ID)
+
+    def test_hd5_delete_ca_group(self, svc):
+        """HD-5: Deleting a CA group removes all its legs."""
+        group = svc.create_corporate_action(_CA_SIMPLE)
+        ca_id = group["ca_group_id"]
+        leg_ids = [m["id"] for m in group["movements"]]
+        result = svc.delete_corporate_action_group(ca_id, _ACCOUNT_ID)
+        assert result["deleted_count"] == len(leg_ids)
+        assert set(result["ids"]) == set(leg_ids)
+        for lid in leg_ids:
+            assert svc.get_movement(lid, _ACCOUNT_ID) is None
+
+    def test_hd6_delete_ca_group_all_statuses(self, svc):
+        """HD-6: Group delete removes legs regardless of correction_status (ACTIVE+SUPERSEDED)."""
+        group = svc.create_corporate_action(_CA_SIMPLE)
+        ca_id = group["ca_group_id"]
+        leg = group["movements"][0]
+        # Make a non-financial correction so one leg becomes SUPERSEDED
+        svc.correct_movement(leg["id"], _ACCOUNT_ID, {
+            "account_id": _ACCOUNT_ID,
+            "correction_note": "fix date",
+            "trade_date": "2024-04-01",
+        })
+        # Group now has original (SUPERSEDED) + replacement (ACTIVE)
+        result = svc.delete_corporate_action_group(ca_id, _ACCOUNT_ID)
+        assert result["deleted_count"] >= 2
+
+    def test_hd7_delete_ca_group_not_found(self, svc):
+        """HD-7: Deleting a non-existent CA group raises ValueError with no_legs_found."""
+        with pytest.raises(ValueError, match="no_legs_found"):
+            svc.delete_corporate_action_group("cag_nonexistent", _ACCOUNT_ID)
