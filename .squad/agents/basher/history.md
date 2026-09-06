@@ -28,6 +28,102 @@
 
 ## Recent Learnings
 
+### 2026-09-06 — Portfolio Phase 2 Regression Suite — Livingston Contract Reconciliation
+
+**Scope:** Reconciled all Phase 2 tests against `livingston-phase2-api-contract.md` and `livingston-phase2-implementation-decisions.md`. Updated 4 tests; added 4 new contract coverage tests.
+
+**Changes made (tests only):**
+- `test_portfolio_phase2_transfers.py`: Fixed `transfer_fee` from string `"25.00"` → object `{"amount": "25.00", "currency": "EUR", "eur_amount": "25.00"}` per contract.
+- Added `test_transfer_has_peer_id_on_both_legs` — verifies `transfer_peer_id` cross-links both legs.
+- Added `test_transfer_has_source_dest_account_fields` — verifies `transfer_source_account_id` / `transfer_dest_account_id` on both legs.
+- Added `test_transfer_has_cost_basis_derived_eur` — verifies `transfer_cost_basis_derived_eur` auto-computed field on TRANSFER_IN.
+- `test_portfolio_phase2_reassignment.py`: Added `test_batch_response_has_ids_list` — verifies `"ids": [...]` in batch response per contract.
+- Updated xfail for `total_purchases_eur` to cite Livingston Decision 7 explicitly.
+
+**Final result: 168 passed · 4 xfailed (intentional defect markers) · 0 unexpected failures · Phase 1 baseline 210/210 intact**
+
+**Confirmed contract mismatches (not implementation defects):**
+- `transfer_fee` must be sent as `{"amount", "currency", "eur_amount"}` dict, not a flat number/string. Route accepts any JSON value passthrough — no route-level shape validation.
+- `transfer_peer_id`, `transfer_source_account_id`, `transfer_dest_account_id`, `transfer_cost_basis_derived_eur` are all present on both legs per contract.
+
+**Confirmed genuine defects (4 xfail markers, unchanged):**
+1. **`total_purchases_eur` includes TRANSFER_IN carried basis** — contradicts Livingston Decision 7 which explicitly says TRANSFER_IN "does NOT count toward total_purchases_eur". Implementation sets `total_purchases_eur = total_cost_eur`; fix requires a separate `total_buy_eur` accumulator.
+2. **`reason` not validated in individual reassign** — defaults to empty string.
+3. **`reason` not validated in batch reassign** — same gap.
+4. **Batch reassign not atomic** — per-item try/except silently skips failures.
+
+### 2026-09-06 — Portfolio Phase 2 Regression Suite (copilot-directive-20260906-phase2-portfolio)
+
+**Scope:** Complete Phase 2 regression suite — Account CRUD, manual movement entry, corrections, transfers, reassignment, FX, and Phase 1 guards.
+
+**Files created (tests only, no production code touched):**
+- `backend/tests/conftest_portfolio_p2.py` — shared fakes: `FakePortfolioContainer`, `FakeImportSessionsContainer`, `FakeSymbolsContainer`, `FakeCosmos`. All support keyword-arg `read_item(item=..., partition_key=...)` to match the actual Cosmos SDK calling convention.
+- `backend/tests/test_portfolio_phase2_accounts.py` — 30 tests: list, create (valid/invalid brokers, duplicate, currency normalization, description), get, delete hard-block (active vs SUPERSEDED movements), `_unassigned` compatibility.
+- `backend/tests/test_portfolio_phase2_manual_movements.py` — 35 tests: BUY/SELL/DIVIDEND endpoint contracts; ACCIONES vs DERECHOS share-count invariants; movement detail response shape `{"movement": {...}, "superseded_by": null}`.
+- `backend/tests/test_portfolio_phase2_corrections.py` — 30 tests: response shape `{"original": {...}, "replacement": {...}}`; SUPERSEDED marking in store; `corrects_movement_id` pointer; double-correction 409; holdings exclusion of SUPERSEDED movements.
+- `backend/tests/test_portfolio_phase2_transfers.py` — 40 tests: pair creation, quantity/group-id consistency, cost-basis auto/override, transfer_fee separate, insufficient-shares 409, atomicity (no half-pair), global/per-account share invariants. One `xfail(strict=True)` for defect.
+- `backend/tests/test_portfolio_phase2_reassignment.py` — 25 tests: individual and batch reassignment, account scoping, date/security filters, atomicity defect. Two `xfail(strict=True)` for defects.
+- `backend/tests/test_portfolio_phase2_fx.py` — 25 tests: EUR→EUR no-network path, successful rate mock, validation errors (400/422), rate-not-found 404, ECB unavailable 503.
+- `backend/tests/test_portfolio_phase2_legacy_compat.py` — 25 tests (pre-existing, all pass).
+
+**Final result: 165 passed · 4 xfailed (intentional defect markers) · 0 unexpected failures · Phase 1 baseline 210/210 intact**
+
+**Confirmed implementation contracts (correct values found by reading actual code):**
+- Brokers: `{fidelity, heytrade, ing, interactive_brokers, other}` — NOT ibkr/degiro/robinhood/custom
+- `account_id` is server-generated as `acct_{slugify(broker)}_{slugify(name)}`
+- DELETE _unassigned → 404 (no stored account doc for virtual partition)
+- Delete hard-block checks `correction_status = 'ACTIVE'` or undefined; SUPERSEDED docs do NOT block
+- Correction route: POST `/correct` (not `/corrections`); body: `{account_id, correction_note, ...overrides}` (not nested)
+- Correction response: `{"original": {...}, "replacement": {...}}`
+- Replacement pointer field: `corrects_movement_id` (NOT `corrects` or `original_movement_id`)
+- Transfer body: `dest_account_id`, `cost_basis_override_eur`, `transfer_fee` (NOT destination/carried_/fees_eur)
+- Transfer response: `{"transfer_out": {...}, "transfer_in": {...}, "transfer_group_id": "..."}`
+- Transfer quantity returned as `"75.000000"` not `"75"` — always compare via `Decimal()`
+- Reassign individual: `POST /{id}/reassign`; body needs `source_account_id, dest_account_id`; same-account → **409** "same_account" (not 400)
+- Batch: `POST /movements/batch-reassign`; no preview endpoint
+- `get_fx_rate()` returns **str** not Decimal — mock must return str; mock path is `web.portfolio_routes.get_fx_rate`
+- `from_currency` missing → FastAPI 422 (required Query param), not custom 400
+- FX 503 body: `{"error": "fx_unavailable", "detail": "..."}` — key is `detail` not `message`
+- `FxRateNotFoundError(currency, rate_date)` takes 2 positional args
+
+**Genuine defects confirmed (4 xfail markers):**
+1. **Batch reassign not atomic** — `batch_reassign_movements()` has per-item try/except; silently skips failures with `skipped_count++`. Phase 2 spec requires no partial result. Fix: atomic transaction or rollback on first failure in `cosmos_portfolio.py`.
+2. **Reason not required in individual reassign** — route defaults `reason` to `""`. Spec mandates non-empty. Fix: validate and return 400 if empty.
+3. **Reason not required in batch reassign** — same issue in batch-reassign route handler.
+4. **TRANSFER_IN carried basis counted in `total_purchases_eur`** — `total_purchases_eur = total_cost_eur` which includes TRANSFER_IN `transfer_cost_basis_eur`. Cross-account queries double-count. Phase 2 spec says transfers excluded from purchase totals. Fix: separate cost-basis fields or filter TRANSFER movements from purchase aggregate.
+
+**Pattern notes:**
+- FakePortfolioContainer must support `read_item(item=None, partition_key=None, **kw)` keyword args — the Cosmos service calls with keyword args; old positional-only fakes break new service methods.
+- `_mock_rate_error()` and `_mock_rate()` must patch `web.portfolio_routes.get_fx_rate` (where it is used), NOT `src.portfolio.fx_service.get_fx_rate` (the source module).
+- Defect markers use `@pytest.mark.xfail(strict=True, reason="KNOWN DEFECT: ...")` — strict=True means the test fails if the defect is accidentally fixed without updating the test (forces explicit acknowledgement).
+- Transfer quantity returned as decimal string (`"75.000000"`) — all quantity comparisons in transfer tests must use `Decimal()`.
+
+
+
+**Scope:** Added focused regression tests per design doc for the `Tipo` column in sales CSV.
+
+**Files changed (tests only):**
+- `backend/tests/test_portfolio_parsers.py` — `TestSalesParserSalesType` (13 tests)
+- `backend/tests/test_portfolio_holdings.py` — `TestRightsSaleHoldings` + `_make_movement_with_sales_type` helper (7 tests)
+- `backend/tests/test_portfolio_import_service.py` — `TestImportSalesSalesType` + `TestImportSalesDerechosNegativeInventory` + 2 CSV helpers (11 tests)
+
+**Authoritative 7-column header (confirmed):**
+```
+Año | Empresa | Fecha venta | Tipo | Acciones | Comisión | Total Venta
+```
+Tipo is the **4th column** (between Fecha venta and Acciones). Initial fixtures incorrectly placed Tipo last; corrected after review.
+
+**Results: 31/31 new tests PASS · 164/164 total tests PASS (0 regressions)**
+
+**What is verified:**
+- Parser: 6-col defaults to ACCIONES; 7-col header accepted; Acciones/ACCIONES/Derechos/derechos all normalize correctly; accent-insensitive normalization; whitespace-stripped; empty Tipo → ACCIONES silently; invalid Tipo → ValueError; `sales_type_raw` preserved; DERECHOS_WITH_QUANTITY and ACCIONES_ZERO_QUANTITY warnings emitted correctly; 6-col produces no sales-type warnings.
+- Holdings: DERECHOS does not decrement shares; ACCIONES does; mixed types: only ACCIONES decrements; `total_sales_eur` includes both types; legacy SELL without `sales_type` defaults to ACCIONES; design-doc §4.3 exact-value example.
+- Import round-trip: 6-col commits `sales_type="ACCIONES"`, `is_rights_sale=False`; 7-col ACCIONES and DERECHOS rows both round-trip correctly through preview and commit; mixed CSV: each row carries its own type; DERECHOS-only import does NOT produce NEGATIVE_INVENTORY warning; ACCIONES-only import preserves the existing NEGATIVE_INVENTORY warning.
+
+**Pattern notes:**
+- `_make_movement_with_sales_type()` wraps `_make_movement()` to inject `sales_type` — reusable for future sales-type holdings tests.
+- `_sales_csv_7col()` / `_sales_csv_7col_derechos()` are helpers for 7-column import service tests.
+
 ### 2026-09-06 — Portfolio Ledger / Securities / Import Final Gate: PASS
 
 **Scope:** Contract v1.1 (danny-portfolio-implementation-contract.md). Read-only validation; no production code modified.

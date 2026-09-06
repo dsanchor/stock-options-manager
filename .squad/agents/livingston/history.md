@@ -1441,3 +1441,105 @@ Per strict lockout policy: author of rejected code cannot participate in revisio
 **Result:** 132 portfolio/provider_symbols tests pass (45 new). Pre-existing yfinance/screener failures are unrelated and unchanged. No commit.
 
 **Learning:** Bloomberg MIC codes use `:` (e.g. `ENG:SM`), which is NOT in the contract's value regex `[A-Za-z0-9._^-]`. Do not include colons in multi-provider test fixtures. The `validate_provider_symbols` approach of validating-then-setting `body["provider_symbols"] = None` when cleaned map is empty ensures the Cosmos layer sees `None` (not `{}`), so no empty map is ever stored.
+
+## 2026-09-06 — Rights-sale (Derechos) CSV column extension
+
+**Contract:** `danny-rights-sale-contract.md` — design review awaiting implementation.
+
+**Scope:** added optional Tipo column to the sales CSV parser; extended the
+ledger movement schema with `sales_type`/`is_rights_sale`; updated holdings
+computation to exclude DERECHOS sales from share-count decrements; wired
+the new fields through import preview and API serialization; updated all
+TypeScript types and frontend warning labels/badges.
+
+**Column-layout conflict discovered:** The DESIGN REVIEW SUMMARY and USER SAMPLE
+both describe the 7-column format with Tipo at position 4 (between "Fecha venta"
+and "Acciones"):
+  `Año | Empresa | Fecha venta | Tipo | Acciones | Comisión | Total Venta`
+The design doc §2.1 table and Basher's pre-written test fixtures describe it
+with Tipo appended at position 7 (after "Total Venta"):
+  `Año | Empresa | Fecha venta | Acciones | Comisión | Total Venta | Tipo`
+Resolution: the parser detects both layouts via header inspection (position 4
+`"tipo"` → layout A; position 7 `"tipo"` → layout B). Layout B made all 164
+portfolio tests pass; layout A is preserved so the user's actual data works.
+This ambiguity should be resolved in the design doc by Danny.
+
+**Files changed:**
+- `backend/src/portfolio/models.py`: Extended `WarningType` with
+  `DERECHOS_WITH_QUANTITY`, `ACCIONES_ZERO_QUANTITY`, `INVALID_SALES_TYPE`.
+- `backend/src/portfolio/parsers/sales.py`: Full rewrite of column-detection
+  logic; added `_normalize_sales_type()` (accent/case/whitespace insensitive);
+  added dual-layout detection (7A = Tipo at index 3, 7B = Tipo at index 6);
+  returns `sales_type` + `sales_type_raw` per row; emits
+  `DERECHOS_WITH_QUANTITY` / `ACCIONES_ZERO_QUANTITY` row warnings.
+- `backend/src/portfolio/import_service.py`: `_row_to_movement()` reads
+  `sales_type`/`sales_type_raw` from row and persists them + `is_rights_sale`
+  on the movement dict (SELL only); `_build_preview_movements()` skips
+  DERECHOS quantity from the negative-inventory delta; `_build_preview_response()`
+  emits `sales_type` on each SELL preview movement.
+- `backend/src/portfolio/holdings_service.py`: SELL branch now checks
+  `m.get("sales_type") or "ACCIONES"` — only ACCIONES sales decrement
+  `total_shares`; both types still contribute to `total_sales_eur`.
+- `frontend/src/types/portfolio.ts`: Added three new `WarningType` values;
+  added `sales_type?` and `is_rights_sale?` to `LedgerMovement`.
+- `frontend/src/types/import.ts`: Added `sales_type?` to `PreviewMovement`.
+- `frontend/src/components/ImportPreview.tsx`: Added new warning labels;
+  added "Derechos" badge in Type cell for `sales_type === "DERECHOS"` rows.
+- `frontend/src/components/PortfolioMovementsTable.tsx`: Added new warning
+  labels; added "Derechos" badge for `is_rights_sale` SELL rows.
+- `frontend/src/components/PortfolioHoldingsTable.tsx`: Added new warning
+  labels (required by the exhaustive `Record<WarningType, string>` type).
+
+**Backward compatibility:** existing stored SELL movements without `sales_type`
+default to `"ACCIONES"` at read time in both holdings_service and
+_build_preview_movements — no data migration needed.
+
+**Test outcome:** 164/164 portfolio tests pass. TypeScript compiles with zero
+errors. Pre-existing unrelated failure in `test_best_options.py` (wrong path
+for `src/best_options.py`) unchanged. No commit.
+
+
+---
+
+## 2026-09-06 — Portfolio Phase 2 implementation
+
+**Directive:** copilot-directive-20260906-phase2-portfolio.md — full Phase 2 of the portfolio domain: broker accounts CRUD, manual movement creation, audited correction workflow, paired custody transfers, FX service, holdings-per-account, and individual/batch reassignment.
+
+**Approach:**
+All work additive — no breaking changes to existing API surface. Extended existing files in place; added one new file (`fx_service.py`).
+
+### Key implementation decisions
+
+**Account IDs:** Stable slugs derived from broker + name via `_slugify()` (ASCII-safe, normalized, `acct_{broker}_{name}`). `_unassigned` is a virtual account that requires no document.
+
+**Correction/audit chain:** New movements get `correction_status = "ACTIVE"` by default (field absent on legacy docs is treated as ACTIVE for backward compatibility). Corrections write a new doc with `corrects_movement_id` pointing to the original; original is marked `SUPERSEDED` with `superseded_by = new_id`. VOIDED is available for future explicit voiding. Holdings computation excludes SUPERSEDED and VOIDED. The filter `(NOT IS_DEFINED(c.correction_status) OR c.correction_status = 'ACTIVE')` covers old and new docs.
+
+**Transfers:** TRANSFER_OUT + TRANSFER_IN created as a pair in one API call, linked by `transfer_group_id`. Source shares are computed from the account's chronological ledger up to and including the transfer date (including prior TRANSFER_IN/OUT). Cost basis auto-derived as `avg_cost_per_share × quantity`; override stored alongside derived value with `transfer_cost_basis_overridden` flag. Transfer fees stored in `transfer_fee` field and do not affect acquisition cost. Global holdings net to zero (OUT and IN cancel).
+
+**Holdings with TRANSFER:** `TRANSFER_IN` adds shares + carries cost basis (counted in `total_cost_eur` but not in `total_purchases_eur`). `TRANSFER_OUT` subtracts shares + removes proportional cost. Neither counts as a purchase or sale for `total_sales_eur`/`total_purchases_eur`.
+
+**Reassignment safety protocol:** Write new doc in dest partition first (with `reassigned_from` audit field), then mark original SUPERSEDED. If step 2 fails after step 1, the orphaned new doc carries `reassigned_from` provenance for manual recovery. This is the safest achievable behavior without cross-partition transactions.
+
+**FX Service:** ECB daily 90d CSV (free, no auth, using existing `requests` dependency). Rates expressed as EUR per 1 unit of foreign currency (consistent with existing ledger convention). EUR always returns 1.0. Cached once per calendar day. Falls back up to 5 days prior for weekends/holidays. Explicit `FxUnavailableError` and `FxRateNotFoundError` (no silent fallbacks).
+
+**Route ordering (FastAPI):** `POST /api/portfolio/movements/batch-reassign` must be declared BEFORE `POST /api/portfolio/movements/{movement_id}/correct` and `POST /api/portfolio/movements/{movement_id}/reassign` to avoid FastAPI treating `"batch-reassign"` as a path parameter `movement_id`. Confirmed by test passing.
+
+### Files changed
+- `backend/src/portfolio/models.py`: Added `AccountBroker`, `CorrectionStatus` enums; extended `TxnType` with `TRANSFER_OUT`/`TRANSFER_IN`; added `AccountCreate`, `AccountDoc`, `ManualMovementCreate`, `MovementCorrectionRequest`, `TransferCreateRequest`, `MovementReassignRequest`, `BatchReassignRequest`, `FxRateResponse` models.
+- `backend/src/portfolio/cosmos_portfolio.py`: Major extension — account CRUD (with active-movement guard), `create_manual_movement` (with net computation, DERECHOS validation, cost_basis_status), `correct_movement` (replacement + SUPERSEDED chain), `create_transfer_pair` (shares check, derived cost basis, linked peers), `reassign_movement` + `batch_reassign_movements`, extended `get_movements` / `get_all_movements_for_holdings` to filter SUPERSEDED/VOIDED. Added `InsufficientSharesError`. Removed duplicate class definition artifact from the edit operation.
+- `backend/src/portfolio/holdings_service.py`: Extended `compute_holdings` to handle `TRANSFER_IN` (adds shares + carries cost basis) and `TRANSFER_OUT` (subtracts shares + deducts cost).
+- `backend/web/portfolio_routes.py`: Added 10 new routes: accounts CRUD (`GET/POST/GET/{id}/DELETE/{id}`), `POST /movements` (manual), `GET /movements/{id}`, `POST /movements/{id}/correct`, `POST /transfers`, `POST /movements/{id}/reassign`, `POST /movements/batch-reassign`, `GET /fx/rates`. Imported `InsufficientSharesError` and `fx_service`.
+- `backend/src/portfolio/fx_service.py`: **NEW** — ECB daily FX rate service with in-memory cache, adjacent-day fallback, explicit error hierarchy.
+- `backend/tests/test_portfolio_phase2.py`: **NEW** — 60 hermetic tests covering all new functionality.
+- `.squad/decisions/inbox/livingston-phase2-api-contract.md`: **NEW** — API contract note for Rusty.
+
+### Test outcome
+- Phase 2 tests: **60/60 pass**
+- Existing portfolio tests: **210/210 pass** (test_portfolio_endpoints, test_portfolio_holdings, test_portfolio_import_service, test_portfolio_parsers)
+- No regression in existing behavior. No commit.
+
+### Known limitations / future work
+- FX rate cache is in-process memory; restarting the server clears it. A Cosmos-backed rate cache could be added in Phase 3.
+- Transfer cost basis only uses average-cost method (FIFO/LIFO deferred to Phase 3 per design).
+- `get_movement` endpoint currently requires `account_id` query param; a cross-partition lookup option could be added later.
+- `batch-reassign` route must remain declared before `{movement_id}/reassign` in the router to avoid path param collision — this is a FastAPI routing constraint to preserve.

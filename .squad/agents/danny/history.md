@@ -1048,6 +1048,37 @@ The first version stated `cost_basis = reference_price` as a system invariant an
 - **Reusable pattern:** When a feature crosses domain boundaries (options + portfolio both need security identity), create a shared canonical entity rather than duplicating identity in each domain. The bridge pattern (`legacy_symbol`) allows incremental migration without breaking the existing system.
 - **Error pattern to avoid:** Making identity ticker-only from day one. Ticker collisions are rare but architecturally fatal when they occur. `MIC:TICKER` costs nothing extra and prevents an entire class of future bugs.
 
+### 2026-09-06 — Phase 2 Planning: Manual Forms + Broker Accounts + Transfers (planning context, not decision)
+
+**Planning review of current implementation state for next-phase proposal.**
+
+**Implemented (confirmed by code inspection 2026-09-06):**
+- Securities catalog (`security_master` in `symbols` container), CRUD + inline creation during import
+- Portfolio ledger (`portfolio` container, partition `/account_id`): `BUY`, `SELL`, `DIVIDEND` transactions
+- CSV import pipeline: conversational chat, purchases/sales/dividends parsers, entity resolution, preview/commit
+- Sales distinguish `ACCIONES` vs `DERECHOS`; rights proceeds do not decrement shares
+- Holdings derivation: computed on read from ledger, avg cost basis, warnings
+- Soft-delete for movements; paginated movement queries with filters
+- Frontend: Holdings table, Movements table, Import chat, portfolio navigation under Symbols dropdown
+- Provider symbols (`provider_symbols` on `security_master`)
+- 5 test files covering endpoints, holdings, import service, parsers, chat calendar
+
+**Not implemented (confirmed absent from routes + models):**
+- No `account` document type CRUD (broker profiles)
+- No manual movement forms (BUY/SELL/DIVIDEND entry without CSV)
+- No `TRANSFER_OUT`/`TRANSFER_IN` transaction types
+- No dedicated dividends view/summary
+- No FX rate fetch endpoint
+- No per-account holdings filter in frontend (backend supports `?account_id=`)
+- TxnType enum: only `BUY`, `SELL`, `DIVIDEND` — no transfer types
+
+**Key ordering consideration for next phase:**
+- Without accounts/broker profiles, all movements go to `_unassigned` — functional but loses broker provenance
+- Transfers require accounts to exist first (source/destination are account IDs)
+- Manual forms need accounts dropdown even if optional (to record broker correctly)
+- User explicitly requested broker transfers in roadmap because custody differs from purchase broker
+- Conclusion: Accounts + Manual Forms + Transfers form a natural atomic phase
+
 ### 2026-09-05 — Chat-Based Import Architecture (replaces wizard shell)
 
 - **Trigger:** User directive — import via conversational chat; group reusable questions; ask each once; system analyzes file and asks clarifying questions.
@@ -1137,4 +1168,156 @@ All findings resolved with high-confidence fixes and comprehensive test coverage
 - Final: All 7 fixes verified, contract sealed, feature approved
 
 **Final Outcome:** ✅ APPROVED — No conditions. Ready for production deployment.
+
+---
+
+## Rights Sales CSV Column Design (2026-09-06 11:58 UTC+02:00)
+
+**Role:** Lead / Architect
+**Status:** DESIGN REVIEW — awaiting implementation
+
+**Trigger:** User requirement — Sales CSV needs 7th column "Tipo" to distinguish between share sales (Acciones) and rights sales (Derechos). Key constraint: Acciones decrements holdings; Derechos does NOT (only records proceeds).
+
+**Deliverable:** `.squad/decisions/inbox/danny-rights-sale-contract.md` — 530-line comprehensive design spec
+
+**Key Design Decisions:**
+1. **No new TxnType:** Both remain SELL; differentiation via `sales_type` field ("ACCIONES" | "DERECHOS")
+2. **Backward compatibility:** 6-column CSVs default to "ACCIONES" transparently (no change to existing behavior)
+3. **Normalization rules:** Case-insensitive, accent-insensitive (Unicode NFKD), whitespace-trimmed
+4. **Persistence:** Extend `LedgerMovement` with `sales_type` and `is_rights_sale` (optional, read-only) fields
+5. **Holdings rule:** `total_shares = SUM(BUY) - SUM(SELL[ACCIONES])`; DERECHOS sales do NOT decrement
+6. **Warning strategy:** DERECHOS_WITH_QUANTITY (rights should have no qty), ACCIONES_ZERO_QUANTITY (shares should have qty), INVALID_SALES_TYPE (parse-time validation)
+7. **Duplicate detection:** Idempotency hash excludes `sales_type` (same security+date+amount = duplicate regardless of type; if user imports both, second flagged as dup — correct behavior)
+
+**Pattern:** Distinguishing financial transaction behavior (share impact vs. proceeds-only) while maintaining parsing simplicity and API compatibility. Extendable for future transaction types (e.g., DIVIDEND→CASH vs. RIGHTS, BUY→BROKER_FEE vs. PRINCIPAL).
+
+**Implementation Assigned to:**
+- **Livingston (backend):** Parser extension (6/7 column support, normalization), ledger model (`sales_type` field), holdings computation (DERECHOS logic), API serialization
+- **Basher (testing):** Unit tests (parser, holdings, import), integration tests (API, full flow), fixtures (edge cases)
+- **Danny (review):** Approval gate, decision record consolidation
+
+**Risks Mitigated:**
+- Backward compat: 6-column CSVs default to ACCIONES (tested)
+- Silent failure: Warnings + preview badges clarify DERECHOS behavior
+- Data loss: Read-time defaults safe (no Cosmos updates needed)
+
+**Reusable Insight:** When adding classification to a CSV row that changes downstream computation (e.g., affects holdings), use a normalized enum field, default to existing behavior for backward compat, emit warnings for edge cases (quantity mismatch), and extend holdings logic with `if field == value: do_X; else: do_Y` conditionals. Avoid new TxnTypes unless the transaction's fundamental nature changes (e.g., new account type, new currency, new asset class).
+
+**Status:** Ready for Livingston → Basher → Danny review cycle
+
+### 2026-09-06 — Final Reviewer Gate: Sales Tipo Feature — APPROVED
+
+**Files reviewed (production):**
+- `backend/src/portfolio/parsers/sales.py` — dual-layout (7A/7B) detection, `_normalize_sales_type`, per-row warnings
+- `backend/src/portfolio/models.py` — `WarningType` enum additions
+- `backend/src/portfolio/holdings_service.py` — DERECHOS conditional in SELL branch
+- `backend/src/portfolio/import_service.py` — `_row_to_movement` sales_type plumbing, preview shape, NEGATIVE_INVENTORY delta fix
+- `frontend/src/components/ImportPreview.tsx` — Derechos badge
+- `frontend/src/components/PortfolioHoldingsTable.tsx` — WARNING_SHORT additions
+- `frontend/src/components/PortfolioMovementsTable.tsx` — Derechos badge + WARNING_SHORT
+- `frontend/src/types/import.ts` — `PreviewMovement.sales_type`
+- `frontend/src/types/portfolio.ts` — `LedgerMovement.sales_type`, `is_rights_sale`, `WarningType` union
+
+**Files reviewed (tests):**
+- `backend/tests/test_portfolio_parsers.py` — 13 new `TestSalesParserSalesType` tests
+- `backend/tests/test_portfolio_holdings.py` — 7 new `TestRightsSaleHoldings` tests
+- `backend/tests/test_portfolio_import_service.py` — 11 new tests across `TestImportSalesSalesType` and `TestImportSalesDerechosNegativeInventory`
+
+**Verification:** 164/164 tests pass, TypeScript compiles clean (0 errors).
+
+**Requirement checklist — all PASS:**
+1. Legacy 6-column files default to ACCIONES ✓
+2. Normalize valid Acciones/Derechos robustly (case, accent, whitespace) ✓
+3. Invalid non-empty Tipo raises ValueError (never silently becomes shares) ✓
+4. Rights sales preserve proceeds/commission, appear in movements/preview ✓
+5. Rights sales never affect share quantity or avg acquisition cost ✓
+6. Share sales continue decrementing holdings ✓
+7. All sales contribute to financial sales totals (`total_sales_eur`) ✓
+8. Old stored SELL records without `sales_type` behave as shares (`or "ACCIONES"`) ✓
+9. No unrelated behavior regression (all pre-existing tests green) ✓
+
+**Architecture notes:**
+- Dual-layout support (7A: Tipo at col 4, 7B: Tipo at col 7) is pragmatic. Both user sample and design-doc fixture work. Low risk, slightly more parser surface.
+- `m.get("sales_type") or "ACCIONES"` correctly handles None, empty string, and missing key — safe for legacy Cosmos documents.
+- `avg_cost_basis_eur` computed from BUY `paid_buy_shares` / `total_cost` only — DERECHOS sales cannot affect it.
+- `is_rights_sale` convenience flag set in `_row_to_movement`, surfaced in frontend `LedgerMovement` type.
+
+**Decision:** APPROVED — ship as-is.
+
+### 2026-09-06 — Phase 2 Backend Rejection Retrospective (4 defects + 1 gap)
+
+**Trigger:** Basher rejected Livingston's Phase 2 backend with 4 confirmed defects; Rusty flagged 1 missing endpoint.
+
+**Defects:**
+1. `total_purchases_eur` includes TRANSFER_IN carried basis (contradicts Livingston's own Decision 7).
+2. Individual reassignment accepts blank/missing reason (no validation).
+3. Batch reassignment accepts blank/missing reason (same gap).
+4. Batch reassignment per-item try/except silently skips failures (non-atomic, contradicts "no silent bulk action" requirement).
+
+**Gap:** Missing batch reassignment preview/count endpoint (Livingston partially implemented before lockout).
+
+**Lockout:** Livingston (original author) barred from revising. Linus assigned as independent revision author.
+
+**Root-cause pattern (third occurrence):** The implementation diverges from the documented design decision. Livingston writes the correct intent (Decision 7: "TRANSFER_IN does NOT count toward total_purchases_eur") then implements a simpler version that loses the invariant (`total_purchases_eur = total_cost_eur`). Same pattern as F1 fees=0 and F7 avg_cost÷transactions.
+
+**Structural lesson:** Every design decision introducing a numeric invariant must include an explicit "test assertion" line — the exact comparison a test should make. This forces the author to think about the output value, not just the code path. Adopted as team policy going forward.
+
+**Cosmos cross-partition atomicity decision:** Batch reassignment crosses partition keys (source → dest). Cosmos transactional batch cannot span partitions. Chose fail-fast with compensating rollback: on first failure, reverse all prior reassignments in the batch (delete new docs, un-SUPERSEDE originals). Best-effort rollback with per-item error logging. Rejected saga/staged-operation (overkill for Phase 2 volumes) and same-partition constraint (defeats the purpose).
+
+**Preview/execution predicate sharing:** Both share `_fetch_reassign_candidates()`. Execution re-derives at call time, never trusts client counts. Stale preview acceptable (idempotent per-movement).
+
+**Revision contract:** `.squad/decisions/inbox/danny-phase2-rejection-retro.md` — FROZEN, assigned to Linus with exact acceptance criteria and file scope.
+
+### 2026-09-06 — Phase 2 Revision Cycle 2 Final Review: APPROVED
+
+**Trigger:** Linus completed revision of 4 defects from Danny's rejection retrospective. Basher confirmed 505→291 tests pass (after xfail removal + suite scoping). Cycle 2 final review requested.
+
+**Files reviewed (backend):** `cosmos_portfolio.py` (full: accounts, transfers, reassignment, rollback), `holdings_service.py` (full: BUY-only accumulator, transfer cost handling), `models.py` (full: Pydantic models), `portfolio_routes.py` (full: all Phase 2 routes). **Files reviewed (frontend):** `portfolio-api.ts`, `portfolio.ts` types, `PortfolioHoldingsTable.tsx`, `PortfolioMovementsTable.tsx`, `ReassignmentDialog.tsx`, `AccountsView.tsx`, `TopNav.tsx`. **Files reviewed (tests):** `test_portfolio_phase2_reassignment.py`, `test_portfolio_phase2_transfers.py`, `test_portfolio_holdings.py`, `conftest_portfolio_p2.py`.
+
+**Defect verification:**
+- D1 (`total_purchases_eur` BUY-only): ✅ Separate `total_buy_cost_eur` accumulator. Global transfers net zero. Per-account semantics correct.
+- D2 (individual reason required): ✅ `.strip()` + empty check → 400.
+- D3 (batch reason required): ✅ Same pattern.
+- D4 (batch all-or-nothing): ✅ Fail-fast + `_rollback_batch_reassign()` → 500. Rollback uses correct cross-partition IDs. `skipped_count` always 0.
+
+**Test results:** 291 passed, 0 failed. TypeScript clean (exit 0).
+
+**Flagged integration gaps (non-blocking, outside Linus's scope):**
+1. `GET /api/portfolio/movements` rejects TRANSFER_OUT/TRANSFER_IN txn_type filter (line 445, pre-existing Phase 1 validation not updated).
+2. No `PUT /api/portfolio/accounts/{account_id}` route — frontend `AccountsView.tsx` calls it but backend never had it.
+Both assigned for follow-up micro-patch.
+
+**Verdict:** APPROVED. No lockout. Review record: `.squad/decisions/inbox/danny-phase2-revision2-review.md`.
+
+---
+
+### Phase 2 — Integration Gap Closure Review (2026-09-06)
+
+**Trigger:** Livingston closed both integration gaps flagged in the Phase 2 revision 2 review.
+
+**Scope:** Targeted review of the two gap fixes in uncommitted working tree.
+
+**Gap A — TRANSFER_OUT / TRANSFER_IN movement filter:**
+- `_ALLOWED_TXN_TYPES` in `portfolio_routes.py:446` now includes `TRANSFER_OUT` and `TRANSFER_IN`. ✅
+- `get_movements` passes `txn_type` straight to Cosmos query — correct filtering. ✅
+- Frontend `PortfolioMovementsTable.tsx` dropdown sends exact `TRANSFER_OUT` / `TRANSFER_IN` values. ✅
+- `TxnType` union in `portfolio.ts` extended. `TXN_BADGE` styled for both. ✅
+- Tests: `test_transfer_out_filter_200`, `test_transfer_in_filter_200`, `test_generic_transfer_rejected_400` all verify correctness. ✅
+
+**Gap B — PUT /api/portfolio/accounts/{account_id}:**
+- Route registered at line 588, correctly after GET/{id} (line 570) and before DELETE/{id} (line 641). No path conflict. ✅
+- Body whitelist: only `broker`, `name`, `currency`, `description` extracted. `id` and `account_id` from body are **ignored** — identity immutable by construction. ✅
+- Validation: invalid broker → 400, blank name → 400, empty body → 400. ✅
+- Service `update_account()`: reads full doc, applies only whitelisted fields, sets `updated_at`, preserves `created_at`/`id`/`account_id`/`doc_type`. ✅
+- 404 for missing accounts and soft-deleted accounts. ✅
+- Frontend `AccountsView.tsx` calls `updateAccount(account.account_id, {...})` and `portfolio-api.ts` sends PUT with `encodeURIComponent`. Shapes match. ✅
+- Tests: `test_update_preserves_account_id_immutable` explicitly injects `account_id` in body and asserts it is ignored. ✅
+
+**Route conflict analysis (full tree):**
+- Accounts: static `/accounts` before parameterized `/accounts/{account_id}`. No conflict. ✅
+- Movements: `POST batch-reassign/preview` (5 segments) doesn't match `POST {movement_id}/correct` or `{movement_id}/reassign` (different literal tail). `POST batch-reassign` (4 segments) has no competing 4-segment POST. ✅
+
+**Cross-file consistency:** Frontend types, API client, components, backend routes, and Cosmos service all align. No accidental parallel-edit conflicts in working tree.
+
+**Verdict:** APPROVED. Both integration gaps correctly closed. Zero high-confidence blockers.
 

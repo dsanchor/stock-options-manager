@@ -1,0 +1,11 @@
+docs: consolidate rights-sale feature orchestration and decisions (Portfolio unified)
+
+- Added orchestration log entry (2026-09-06T10:27:57Z) documenting Danny, Livingston, and Basher work on Tipo column extension
+- Added session log entry summarizing documentation consolidation scope and status
+- Merged danny-rights-sale-contract.md into decisions.md as Active Decision §2 (COMPLETE & SHIPPED)
+- Merged livingston-rights-sales.md into decisions.md as Active Decision §3 (RESOLVED, canonical layout confirmed)
+- Updated .squad/identity/now.md to reflect current Portfolio ledger/import focus (Tipo feature shipped, commit 031464c)
+- Test results: 164 portfolio + 232 options regression = 392/392 PASS; TypeScript 0 errors
+- Deployment: GitHub Actions run 34027265195 succeeded; API/frontend healthy on sha-031464c
+
+Documentation-only commit. No production/test files modified.

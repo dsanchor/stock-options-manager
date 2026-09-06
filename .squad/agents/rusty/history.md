@@ -1717,3 +1717,84 @@ Initial feature rejected by Basher (D0) with D2 defect: TypeScript types and too
 - `tsc --noEmit`: zero errors
 - `npm run build`: all 7 new portfolio routes appeared in route manifest; exit 0 (EIO cleanup error on OneDrive path is pre-existing env artifact, not a code issue)
 - `npm run lint` on new files: zero errors in created/modified files (only pre-existing codebase violations in unrelated files)
+
+
+---
+
+### 2026-09-06 — Portfolio Phase 2 Frontend Implementation
+
+**Task:** Implement Phase 2 frontend per `copilot-directive-20260906-phase2-portfolio.md`. Livingston's Phase 2 API contract was not yet available; implemented typed adapters against assumed endpoint shapes (documented in `rusty-phase2-ui-contract.md`).
+
+**Files created (6 new):**
+
+| File | Purpose |
+|------|---------|
+| `frontend/src/app/portfolio/accounts/page.tsx` | Accounts page — dedicated Portfolio page (not Settings) |
+| `frontend/src/components/AccountsView.tsx` | Broker account CRUD: create/edit/delete; Fidelity, HeyTrade, ING, IBKR, OTHER; deletion blocked when movements exist (409 surfaced clearly) |
+| `frontend/src/components/AddMovementDialog.tsx` | Adaptive add-movement form: BUY/SELL/DIVIDEND/TRANSFER in one form; SELL shows ACCIONES/DERECHOS with explanation that rights don't reduce shares; TRANSFER validates source≠dest; FX helper inline |
+| `frontend/src/components/MovementDetailDialog.tsx` | Complete movement detail dialog: all fields, amount breakdown, warnings; "Correct movement" and "Reassign account" actions |
+| `frontend/src/components/MovementCorrectionDialog.tsx` | Auditable correction: original preserved, corrected replacement created; clear notice; reason required |
+| `frontend/src/components/ReassignmentDialog.tsx` | Individual + batch reassignment: preview shows affected count, confirmation checkbox required before batch action |
+
+**Files modified (4):**
+
+| File | Change |
+|------|--------|
+| `frontend/src/types/portfolio.ts` | Extended `TxnType` with `TRANSFER`; added Phase 2 types: `BrokerType`, `BrokerAccount`, account CRUD request types, `ManualMovementRequest`, `MovementCorrectionRequest`, reassignment types, `FxRateResponse` |
+| `frontend/src/lib/portfolio-api.ts` | Added Phase 2 API functions: account CRUD, `createMovement`, `correctMovement`, `reassignMovement`, `getBatchReassignmentPreview`, `batchReassignMovements`, `getFxRate` |
+| `frontend/src/components/TopNav.tsx` | Added "Accounts" link (Landmark icon) to Symbols/Portfolio dropdown; inserted after Movements |
+| `frontend/src/components/PortfolioHoldingsTable.tsx` | Added account filter dropdown; `_unassigned` now displays as "Sin asignar" (Phase 2 spec, replaces Phase 1's "—"); "Batch reassign" button opens ReassignmentDialog |
+| `frontend/src/components/PortfolioMovementsTable.tsx` | Added account filter dropdown; `_unassigned` displays as "Sin asignar"; "Add movement" button opens AddMovementDialog; clicking any row opens MovementDetailDialog; TRANSFER badge added |
+
+**Key decisions:**
+- **D7 — "Sin asignar" replaces "—"**: Phase 2 UX spec explicitly requires `_unassigned` to display as "Sin asignar". This supersedes Phase 1 D6 which used "—". Both tables updated.
+- **D8 — Livingston Phase 2 API assumed**: API shapes documented in `rusty-phase2-ui-contract.md`. Frontend will need reconciliation once backend implements these endpoints. All new API calls gracefully surface errors via existing `ApiError` pattern.
+- **D9 — Transfer stored as single movement type**: Frontend submits `txn_type: "TRANSFER"` with `source_account_id` and `dest_account_id` as one POST to `/api/portfolio/movements`. Backend decides whether to split into two movements internally.
+- **D10 — FX helper is advisory**: FX helper fetches rate and pre-fills price field but user can override. For SELL/DIVIDEND it shows the rate without auto-filling (user enters final amount). For BUY it pre-fills `price_per_share`.
+- **D11 — Row click opens detail**: Movements table rows are clickable (cursor-pointer) and open MovementDetailDialog. Delete button uses `e.stopPropagation()` to prevent accidental detail open.
+- **D12 — Batch reassignment requires explicit confirmation**: BatchMode shows preview count, then requires checkbox confirmation before the apply button appears. No silent bulk action.
+
+**Validation:**
+- `npm run build` (clean, .next deleted): ✅ exit 0, TypeScript pass, `/portfolio/accounts` in route manifest
+- All 4 existing portfolio routes preserved: `/portfolio`, `/portfolio/holdings`, `/portfolio/movements`, `/portfolio/import`
+
+**Pending (Livingston reconciliation):**
+- Backend must implement 8 new endpoint groups (accounts CRUD, manual movement creation, correction, individual/batch reassignment, FX rate).
+- When Livingston finalizes `livingston-phase2-api-contract.md`, compare to `rusty-phase2-ui-contract.md` and patch any shape differences in `portfolio-api.ts`.
+
+---
+
+## Phase 2 Reconciliation Pass — Livingston Contract (September 2026)
+
+**Trigger:** Livingston published `livingston-phase2-api-contract.md` and `livingston-phase2-implementation-decisions.md` after Phase 2 initial implementation. 12 shape divergences identified vs. assumed shapes. Full reconciliation pass applied.
+
+**Changes applied (all files validated TypeScript-clean):**
+
+| File | Reconciliation change |
+|------|----------------------|
+| `frontend/src/types/portfolio.ts` | `TxnType`: `"TRANSFER"` → `"TRANSFER_OUT" \| "TRANSFER_IN"`; `BrokerType`: UPPER→lowercase slugs (`"fidelity"` etc.); `BrokerAccount`: `broker_type`→`broker`, `notes`→`description`, removed `account_number`; `ManualMovementRequest`: flat fields → `gross: AmountInput`, `fees?: FeesInput`; added `TransferRequest`/`TransferResponse` for POST /api/portfolio/transfers; `MovementCorrectionRequest`: `correction_reason`→`correction_note`, `corrections` object → flat optional fields; `MovementCorrectionResponse`: `{original, replacement}` not `{original_id, corrected_id}`; reassignment types: added `source_account_id`, renamed to `dest_account_id`; removed `ReassignmentPreviewRequest/Response`; `BatchReassignmentResponse`: added `skipped_count`, `ids`; extended `LedgerMovement` with correction audit chain and transfer fields; `FxRateResponse`: added optional `note` |
+| `frontend/src/lib/portfolio-api.ts` | Removed `getBatchReassignmentPreview`; added `createTransfer()`; `batchReassignMovements` path: `reassign/batch`→`batch-reassign`; `getFxRate` path: `/api/portfolio/fx-rate`→`/api/fx/rates`, params: `from`/`to`→`from_currency`/`to_currency`; all request/response types updated to match contract |
+| `frontend/src/app/api/fx/[[...slug]]/route.ts` | **NEW** — BFF proxy for `/api/fx/*` (separate router from portfolio) |
+| `frontend/src/components/AccountsView.tsx` | `broker_type`→`broker`; `notes`→`description`; removed `account_number` field from form+display; broker values → lowercase slugs |
+| `frontend/src/components/MovementCorrectionDialog.tsx` | `correction_reason`→`correction_note`; response access: `result.original.id`/`result.replacement.id`; removed `currency` state (not sent in correction); simplified hasChanges check |
+| `frontend/src/components/ReassignmentDialog.tsx` | Removed `getBatchReassignmentPreview` import; individual mode: `new_account_id`→`dest_account_id`, added `source_account_id`; batch mode: replaced preview-then-confirm flow with direct confirm (no endpoint); renamed `current_account_id`→`source_account_id`, `new_account_id`→`dest_account_id`; added "no preview available" warning banner |
+| `frontend/src/components/PortfolioMovementsTable.tsx` | `TXN_BADGE`: `TRANSFER`→`TRANSFER_OUT`/`TRANSFER_IN`; filter dropdown updated to match |
+| `frontend/src/components/MovementDetailDialog.tsx` | `TXN_BADGE` updated to `TRANSFER_OUT`/`TRANSFER_IN`; added `correction_status` badge in header; added transfer detail section; added correction audit chain section |
+| `frontend/src/components/AddMovementDialog.tsx` | Import: added `createTransfer`, `TransferRequest`; UI type `UiMovementType` (TRANSFER is UI-only, not a backend TxnType); TRANSFER now calls `createTransfer()` to POST `/api/portfolio/transfers`; BUY/SELL/DIVIDEND now send `gross: AmountInput` and `fees: FeesInput` (nested objects); DIVIDEND withholding matches `WithholdingInput` shape |
+
+**Durable decisions added:**
+
+- **D13 — TRANSFER is UI-only:** The UI dropdown shows "Transfer" but it maps to `createTransfer()` which creates `TRANSFER_OUT`+`TRANSFER_IN` paired movements. No single `TRANSFER` TxnType exists in the backend.
+- **D14 — No batch reassignment preview:** Backend has no `/preview` endpoint. UI replaced the 2-step preview→confirm flow with a single-step confirmation checkbox plus a prominent "no count preview available" warning. Flag raised to Danny/Livingston.
+- **D15 — Gross/fees are nested objects:** ManualMovementRequest requires `gross: {amount, currency, eur_amount}` and `fees: {total, currency, total_eur}`. Frontend form collects flat fields and composes the nested objects in the submit handler. For non-EUR currencies, `eur_amount` defaults to "0" (backend recomputes using FX rate from the `fx` field if provided).
+- **D16 — FX proxy at /api/fx/:** FX rates router is separate from portfolio in the backend. Added `frontend/src/app/api/fx/[[...slug]]/route.ts` as a dedicated BFF proxy.
+
+**Genuine contract gap flagged:**
+- Accepted UX (item 7): "Include a preview/confirmation of affected count; no silent bulk action."
+- Livingston's backend: no preview endpoint implemented.
+- Frontend resolution: added prominent warning banner + mandatory confirmation checkbox, but cannot show count pre-execution.
+- Action required: Livingston or Danny should either add `GET /api/portfolio/movements/batch-reassign/preview` or formally accept "no count preview" as the implementation.
+
+**Validation:**
+- `npm run build` (clean, .next deleted): ✅ exit 0, TypeScript clean (41s), all 80+ routes in manifest including `/api/fx/[[...slug]]`, `/portfolio/accounts`
+

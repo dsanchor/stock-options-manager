@@ -1,9 +1,13 @@
 ---
-updated_at: 2026-03-26T14:46:00.000Z
-focus_area: Building options trading agents
+updated_at: 2026-09-06T11:59:49.000Z
+focus_area: Symbol Details ↔ Portfolio movements ↔ symbol_config unification
 active_issues: []
 ---
 
 # What We're Focused On
 
-Building two periodic options trading agents (covered call + cash-secured put) using Microsoft Agent Framework with Azure Foundry (gpt-5.4-mini) and iflow-mcp for market data. Local runtime, configurable polling, decision logs, sell signal alerts.
+**Completed:** Portfolio Phase 2 (accounts, transfers, reassignment, FX, filters) — released commit 08809eb with 478 tests passing; both API and frontend revisions deployed and healthy on 2026-09-06.
+
+**Next Priority:** Symbol Details ↔ Portfolio movements ↔ symbol_config unification — consolidate three currently separate symbol management areas. Enable Watchlist-only symbols (no portfolio holdings required); auto-add Portfolio symbols to Watchlist with agents/notifications disabled.
+
+**Secondary:** Options trading agents (covered call + cash-secured put) — deferred during portfolio MVP phase.

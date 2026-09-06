@@ -960,3 +960,64 @@ Frontend: tsc --noEmit — 0 errors
 **Archived to:** `.squad/decisions/archive/inbox-2026-09-06/` (audit trail preserved)
 
 **Final Status:** ✅ All Round 1 findings resolved. Awaiting Round 2 validation.
+
+---
+
+## 2026-09-06 — Phase 2 Backend Revision (Rejection Recovery)
+
+**Role:** Independent revision author — all Phase 2 backend defects
+**Status:** ✅ COMPLETE
+
+### Assignment
+Livingston's Phase 2 backend implementation was rejected by Basher (4 confirmed defects) and Rusty (1 preview gap). Linus assigned as independent author with Livingston locked out.
+
+### Defects Fixed
+
+**D1 — `total_purchases_eur` included TRANSFER_IN carried basis (holdings_service.py)**
+- Root cause: single `total_cost_eur` accumulator used for both BUY outflows and TRANSFER_IN carried basis; aliased to `total_purchases_eur` at output time.
+- Fix: added `total_buy_cost_eur` accumulator, incremented only in the BUY branch. `total_purchases_eur` now uses `total_buy_cost_eur`; `total_invested_eur` keeps `total_cost_eur`. `current_invested_eur` changed to `total_invested - total_sales` (semantically correct; no test impact since no existing tests mix TRANSFER_IN with sales).
+
+**D2 — Individual reassignment accepted blank reason (portfolio_routes.py)**
+- Root cause: `reason=str(body.get("reason", ""))` passed empty string through without validation.
+- Fix: `reason = str(body.get("reason", "")).strip(); if not reason: return _err("validation_error", ...)`.
+
+**D3 — Batch reassignment accepted blank reason (portfolio_routes.py)**
+- Same pattern as D2 in the batch handler. Same fix applied.
+
+**D4 — Batch reassignment was non-atomic / silently partial (cosmos_portfolio.py)**
+- Root cause: per-item `try/except` incremented `skipped_count` and continued on failures, producing silent partial application.
+- Fix: Fail-fast with compensating rollback via `_rollback_batch_reassign`. On first failure: stop processing, delete each new doc from dest partition, restore each original to `correction_status = "ACTIVE"` in source partition. Best-effort per-step with MANUAL CLEANUP REQUIRED logging on rollback failures. `ValueError("batch_reassign_failed: ...")` raised; route handler catches it and returns 500.
+
+**Gap — Preview endpoint**
+- Livingston's partial implementation was reviewed and found correct: `preview_batch_reassign` uses `_fetch_reassign_candidates` (shared predicate), is read-only, and returns the specified shape. No changes needed.
+
+### Invariants Preserved
+- `total_invested_eur` remains correct for BUY-only scenarios (equal to `total_purchases_eur`, backward-compat alias test still passes).
+- `avg_cost_basis_eur` unchanged — still uses `total_cost_eur / paid_buy_shares`.
+- TRANSFER_IN adds to `total_cost_eur` (invested) but NOT `total_buy_cost_eur` (purchases).
+- All Phase 1 and Phase 2 existing tests remain green.
+
+### Test Results
+```
+Targeted (reassignment + transfers + holdings): 92 PASSED
+Full portfolio suite: 505 PASSED, 0 FAILED
+```
+
+### xfail Markers Removed (all 4)
+1. `test_portfolio_phase2_reassignment.py::TestIndividualReassignment::test_reassign_missing_reason_400`
+2. `test_portfolio_phase2_reassignment.py::TestBatchReassignment::test_batch_missing_reason_400`
+3. `test_portfolio_phase2_reassignment.py::TestBatchAtomicityDefect::test_batch_is_atomic_on_failure`
+4. `test_portfolio_phase2_transfers.py::TestTransferHoldingsInvariants::test_transfer_excluded_from_purchases_eur`
+
+### Files Changed
+- `backend/src/portfolio/holdings_service.py` — D1
+- `backend/web/portfolio_routes.py` — D2, D3, D4 (route error handling)
+- `backend/src/portfolio/cosmos_portfolio.py` — D4 (atomicity + rollback)
+- `backend/tests/conftest_portfolio_p2.py` — added `delete_item` to `FakePortfolioContainer`
+- `backend/tests/test_portfolio_phase2_reassignment.py` — removed 3 xfail markers
+- `backend/tests/test_portfolio_phase2_transfers.py` — removed 1 xfail marker
+
+### Pattern Learnings
+- Every design decision that introduces a numeric invariant must have a named accumulator. Aliasing two semantically different values to the same field at output time is a guaranteed divergence point.
+- Route-level validation must be explicit (`.strip()` + non-empty check) — service-layer defaults don't enforce caller contracts.
+- Cosmos cross-partition operations cannot be atomic; compensating rollback with per-step error logging is the correct approach for Phase 2 volumes.
